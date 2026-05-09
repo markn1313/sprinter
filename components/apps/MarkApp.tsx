@@ -134,16 +134,7 @@ export default function MarkApp({ token, name }: { token: string; name: string }
 }
 
 function ScrollableTab({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <header className="sticky top-0 z-20 border-b border-zinc-900 bg-zinc-950/95 px-4 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-2">
-          <span className="text-sm font-medium text-zinc-100">Sprinter</span>
-        </div>
-      </header>
-      {children}
-    </div>
-  );
+  return <div className="flex-1 overflow-y-auto">{children}</div>;
 }
 
 function FocusBtn({ label, onClick, title }: { label: React.ReactNode; onClick: () => void; title?: string }) {
@@ -744,12 +735,6 @@ function getGps(): Promise<{ lat: number; lng: number }> {
 
 function TripsTab({ trips, origin, token, refresh, onOpenTrip }: { trips: Trip[]; origin: string; token: string; refresh: () => void; onOpenTrip: (id: string) => void }) {
   const [open, setOpen] = useState(false);
-  const todayPay = trips
-    .filter((t) => t.completed_at && Date.now() - new Date(t.completed_at).getTime() < 86400_000)
-    .reduce((acc, t) => acc + (t.driver_pay_cents ?? 0), 0);
-  const weekPay = trips
-    .filter((t) => t.completed_at && Date.now() - new Date(t.completed_at).getTime() < 7 * 86400_000)
-    .reduce((acc, t) => acc + (t.driver_pay_cents ?? 0), 0);
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
       <button
@@ -758,10 +743,6 @@ function TripsTab({ trips, origin, token, refresh, onOpenTrip }: { trips: Trip[]
       >
         <Send size={16} /> New trip — Dispatch
       </button>
-      <div className="grid grid-cols-2 gap-2">
-        <Stat label="Today's driver pay" value={dollars(todayPay)} />
-        <Stat label="Week driver pay" value={dollars(weekPay)} />
-      </div>
       <TripList trips={trips} role="mark" origin={origin} token={token} onOpenTrip={onOpenTrip} />
       {open && <DispatchSheet token={token} onClose={() => setOpen(false)} onDispatched={() => { setOpen(false); refresh(); }} />}
     </main>
