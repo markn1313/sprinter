@@ -29,10 +29,21 @@ export async function lookupLink(token: string): Promise<LinkLookup> {
   if (!token) return { status: "missing", link: null };
   const sb = supabaseAdmin();
   const { data, error } = await sb.from("links").select("*").eq("token", token).maybeSingle();
-  if (error || !data) return { status: "missing", link: null };
+  if (error) {
+    console.warn(`[auth] lookup error for token ${token.slice(0, 6)}…:`, error.message);
+    return { status: "missing", link: null };
+  }
+  if (!data) {
+    console.warn(`[auth] no row for token ${token.slice(0, 6)}…`);
+    return { status: "missing", link: null };
+  }
   const link = data as Link;
-  if (link.revoked_at) return { status: "revoked", link };
+  if (link.revoked_at) {
+    console.warn(`[auth] token ${token.slice(0, 6)}… revoked at ${link.revoked_at}`);
+    return { status: "revoked", link };
+  }
   if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) {
+    console.warn(`[auth] token ${token.slice(0, 6)}… expired at ${link.expires_at}`);
     return { status: "expired", link };
   }
   return { status: "valid", link };
