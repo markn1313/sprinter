@@ -117,7 +117,6 @@ export default function TvApp({ token }: { token: string }) {
       {!focus && (
         <div className="absolute bottom-12 left-8 right-8 z-30 rounded-3xl border border-zinc-800 bg-zinc-950/80 px-12 py-10 text-center backdrop-blur shadow-2xl">
           <div className="text-3xl font-semibold text-zinc-200">No active trip</div>
-          <div className="mt-2 text-lg text-zinc-500">The TV will light up when Mark dispatches the van.</div>
         </div>
       )}
     </div>
