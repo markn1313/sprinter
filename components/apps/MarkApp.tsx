@@ -57,7 +57,7 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       )}
       {tab === "trips" && (
         <ScrollableTab>
-          <TripsTab trips={trips} origin={origin} />
+          <TripsTab trips={trips} origin={origin} token={token} />
         </ScrollableTab>
       )}
       {tab === "chat" && (
@@ -432,7 +432,7 @@ function getGps(): Promise<{ lat: number; lng: number }> {
   });
 }
 
-function TripsTab({ trips, origin }: { trips: Trip[]; origin: string }) {
+function TripsTab({ trips, origin, token }: { trips: Trip[]; origin: string; token: string }) {
   const todayPay = trips
     .filter((t) => t.completed_at && Date.now() - new Date(t.completed_at).getTime() < 86400_000)
     .reduce((acc, t) => acc + (t.driver_pay_cents ?? 0), 0);
@@ -445,7 +445,7 @@ function TripsTab({ trips, origin }: { trips: Trip[]; origin: string }) {
         <Stat label="Today's Dio pay" value={dollars(todayPay)} />
         <Stat label="Week Dio pay" value={dollars(weekPay)} />
       </div>
-      <TripList trips={trips} role="mark" origin={origin} />
+      <TripList trips={trips} role="mark" origin={origin} token={token} onChanged={() => window.location.reload()} />
     </main>
   );
 }

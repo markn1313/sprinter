@@ -2,17 +2,21 @@
 
 import { Trip, Role } from "@/lib/types";
 import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
-import { Copy, ExternalLink, MessageSquare } from "lucide-react";
+import { Copy, ExternalLink, MessageSquare, Pencil } from "lucide-react";
 import { useState } from "react";
+import EditTripModal from "./EditTripModal";
 
 interface Props {
   trips: Trip[];
   role: Role;
   origin?: string;
+  token?: string;
+  onChanged?: () => void;
 }
 
-export default function TripList({ trips, role, origin }: Props) {
+export default function TripList({ trips, role, origin, token, onChanged }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Trip | null>(null);
   if (!trips.length) {
     return (
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-6 text-center text-sm text-zinc-500">
@@ -51,11 +55,21 @@ export default function TripList({ trips, role, origin }: Props) {
                 {t.actual_minutes != null && ` · ${t.actual_minutes} min`}
               </div>
             </div>
-            {showMoney && t.driver_pay_cents != null && (
-              <div className="text-right text-sm font-mono tabular-nums text-emerald-300">
-                {dollars(t.driver_pay_cents)}
-              </div>
-            )}
+            <div className="flex flex-col items-end gap-1.5">
+              {showMoney && t.driver_pay_cents != null && (
+                <div className="text-sm font-mono tabular-nums text-emerald-300">
+                  {dollars(t.driver_pay_cents)}
+                </div>
+              )}
+              {role === "mark" && token && (
+                <button
+                  onClick={() => setEditing(t)}
+                  className="rounded-lg bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-700"
+                >
+                  <Pencil size={11} className="inline mr-1" /> Edit
+                </button>
+              )}
+            </div>
           </div>
           {showMoney && t.passenger_link_token && origin && (
             <div className="mt-2 flex items-center gap-2">
@@ -84,6 +98,17 @@ export default function TripList({ trips, role, origin }: Props) {
           )}
         </li>
       ))}
+      {editing && token && (
+        <EditTripModal
+          token={token}
+          trip={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            onChanged?.();
+          }}
+        />
+      )}
     </ul>
   );
 }
