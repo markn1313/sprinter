@@ -115,7 +115,15 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       <nav className="z-40 border-t border-zinc-900 bg-zinc-950/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl">
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Map" />
-          <TabButton active={tab === "trips"} onClick={() => setTab("trips")} icon={<List size={20} />} label="Trips" />
+          <TabButton
+            active={tab === "trips"}
+            onClick={() => {
+              setSelectedTripId(null);
+              setTab("trips");
+            }}
+            icon={<List size={20} />}
+            label="Trips"
+          />
           <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
           <TabButton active={tab === "help"} onClick={() => setTab("help")} icon={<HelpCircle size={20} />} label="Help" />
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={20} />} label="Settings" />
