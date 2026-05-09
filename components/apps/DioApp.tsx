@@ -25,10 +25,12 @@ export default function DioApp({ token, name: _name }: { token: string; name: st
   useDriverGpsReporter(token, true);
   const { trips, refresh } = useTrips(token, 4000);
   const live = activeTrip(trips);
-  const upcoming = trips
-    .filter((t) => t.status === "scheduled")
-    .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
-  const focus: Trip | null = live ?? upcoming[0] ?? null;
+  const focus: Trip | null =
+    live ??
+    trips
+      .filter((t) => t.status === "scheduled")
+      .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())[0] ??
+    null;
   const { eta } = useEta(token, focus?.id ?? null, 25_000);
 
   return (
@@ -50,8 +52,6 @@ export default function DioApp({ token, name: _name }: { token: string; name: st
         )}
 
         <ChatBlock token={token} />
-
-        {!live && upcoming.length > 1 && <UpcomingStrip trips={upcoming.slice(1, 5)} />}
       </div>
     </div>
   );
@@ -289,23 +289,3 @@ function ChatBlock({ token }: { token: string }) {
   );
 }
 
-function UpcomingStrip({ trips }: { trips: Trip[] }) {
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3">
-      <div className="mb-2 px-1 text-xs uppercase tracking-wider text-zinc-500">Later today</div>
-      <ul className="space-y-1.5">
-        {trips.map((t) => (
-          <li key={t.id} className="flex items-center justify-between rounded-xl bg-zinc-900/60 px-3 py-2">
-            <div>
-              <div className="text-base font-medium text-zinc-100">{t.passenger_name}</div>
-              {t.pickup_address && (
-                <div className="text-xs text-zinc-500">{t.pickup_address.split(",")[0]}</div>
-              )}
-            </div>
-            <div className="text-sm text-zinc-400">{shortTime(t.scheduled_at)}</div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
