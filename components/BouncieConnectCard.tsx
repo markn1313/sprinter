@@ -65,19 +65,11 @@ export default function BouncieConnectCard({ token }: { token: string }) {
 
   if (status.connected) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-300">
-        <div className="flex items-center gap-2">
-          <Check size={14} /> Bouncie connected
-          {status.vehicle_vin && (
-            <span className="text-emerald-500/60">· VIN ···{status.vehicle_vin.slice(-6)}</span>
-          )}
-        </div>
-        <a
-          href={`/api/bouncie/connect?t=${token}`}
-          className="text-[10px] text-emerald-500/70 hover:text-emerald-300"
-        >
-          Reconnect
-        </a>
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-300">
+        <Check size={14} /> Bouncie connected
+        {status.vehicle_vin && (
+          <span className="text-emerald-500/60">· VIN ···{status.vehicle_vin.slice(-6)}</span>
+        )}
       </div>
     );
   }

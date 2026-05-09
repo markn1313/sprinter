@@ -75,27 +75,73 @@ async function refreshAccessToken(refreshToken: string): Promise<{
   }
 }
 
+// Refresh proactively 10 minutes before expiry, not 1 minute, so the token
+// is renewed when it's still valid. With short-lived Vercel functions this
+// also means callers within that 10-min window all hit the warm cached token.
+const PROACTIVE_REFRESH_SKEW_MS = 10 * 60_000;
+// Only one instance refreshes at a time — if another just claimed the slot
+// in the last 30s, we wait briefly and re-read instead of double-refreshing
+// (which Bouncie rejects because the rotated refresh_token is consumed).
+const CLAIM_WINDOW_MS = 30_000;
+
 async function ensureFreshToken(): Promise<string | null> {
   const creds = await loadCreds();
   if (!creds?.access_token) return null;
   const expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : null;
-  const skewMs = 60_000;
-  if (!expiresAt || expiresAt - Date.now() > skewMs) {
+  if (!expiresAt || expiresAt - Date.now() > PROACTIVE_REFRESH_SKEW_MS) {
     return creds.access_token;
   }
-  if (!creds.refresh_token) return creds.access_token; // try anyway
-  const refreshed = await refreshAccessToken(creds.refresh_token);
-  if (!refreshed) return creds.access_token;
+  if (!creds.refresh_token) return creds.access_token;
+
+  const sb = supabaseAdmin();
+  const claimCutoff = new Date(Date.now() - CLAIM_WINDOW_MS).toISOString();
+  const claimedAt = new Date().toISOString();
+
+  // Atomic claim: bump last_refreshed_at to now ONLY if no one else just did
+  // it within the claim window. Update affects 0 rows when we lose the race.
+  const { data: claimRows, error: claimErr } = await sb
+    .from("bouncie_credentials")
+    .update({ last_refreshed_at: claimedAt })
+    .eq("id", 1)
+    .or(`last_refreshed_at.lt.${claimCutoff},last_refreshed_at.is.null`)
+    .select("id");
+
+  if (claimErr) {
+    console.warn(`[bouncie] claim failed: ${claimErr.message}`);
+    return creds.access_token;
+  }
+
+  if (!claimRows || claimRows.length === 0) {
+    // Another invocation is refreshing — wait briefly and use whatever
+    // they save. Better than racing them to invalid_grant.
+    await new Promise((r) => setTimeout(r, 1200));
+    const latest = await loadCreds();
+    return latest?.access_token ?? creds.access_token;
+  }
+
+  // We won the claim. Re-read so we use the freshest refresh_token possible
+  // (in case it was rotated in a hand-off we missed).
+  const latest = (await loadCreds()) ?? creds;
+  const rt = latest.refresh_token ?? creds.refresh_token;
+  if (!rt) return creds.access_token;
+
+  const refreshed = await refreshAccessToken(rt);
+  if (!refreshed) {
+    // Refresh actually failed (Bouncie 4xx/5xx). Don't blow away the existing
+    // token — the cached-position fallback will keep the UI honest until the
+    // next successful refresh attempt.
+    console.warn("[bouncie] refresh failed, keeping existing token");
+    return latest.access_token ?? creds.access_token;
+  }
   const newExpires = refreshed.expires_in
     ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
     : null;
-  await supabaseAdmin()
+  await sb
     .from("bouncie_credentials")
     .update({
       access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token ?? creds.refresh_token,
+      refresh_token: refreshed.refresh_token ?? rt,
       expires_at: newExpires,
-      last_refreshed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq("id", 1);
