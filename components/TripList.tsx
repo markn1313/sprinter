@@ -6,6 +6,20 @@ import { Copy, ExternalLink, MessageSquare, Pencil } from "lucide-react";
 import { useState } from "react";
 import EditTripModal from "./EditTripModal";
 
+function buildInviteBody(trip: Trip, url: string): string {
+  const time = new Date(trip.scheduled_at).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const dest = trip.dropoff_address ? ` to ${trip.dropoff_address.split(",")[0]}` : "";
+  return `You're riding in the Sprinter with Mark${dest} — pickup ${time}. Live tracker + ETA: ${url}`;
+}
+
+
 interface Props {
   trips: Trip[];
   role: Role;
@@ -74,10 +88,11 @@ export default function TripList({ trips, role, origin, token, onChanged }: Prop
           {showMoney && t.passenger_link_token && origin && (
             <div className="mt-2 flex items-center gap-2">
               <a
-                href={`sms:&body=${encodeURIComponent(`Your Sprinter ride status: ${origin}/p/${t.passenger_link_token}`)}`}
-                className="flex items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
+                href={`sms:&body=${encodeURIComponent(buildInviteBody(t, `${origin}/p/${t.passenger_link_token}`))}`}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600"
+                title="Opens iMessage — pick one or more contacts and hit send"
               >
-                <MessageSquare size={11} /> Text {t.passenger_name}
+                <MessageSquare size={11} /> Invite via iMessage
               </a>
               <button
                 onClick={() => copy(t.id, `${origin}/p/${t.passenger_link_token}`)}
