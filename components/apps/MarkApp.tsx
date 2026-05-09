@@ -167,11 +167,10 @@ function MapTab({
 }) {
   const { eta } = useEta(token, live?.id ?? null, 25_000);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
-  const [dropPinMode, setDropPinMode] = useState(false);
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
   const onMapClick = async (lat: number, lng: number) => {
-    setDropPinMode(false);
     setDroppedPin({ lat, lng });
+    setSheet("droppedPin");
     try {
       const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -243,7 +242,6 @@ function MapTab({
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
-        dropPinMode={dropPinMode}
         droppedPin={droppedPin}
         onMapClick={onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
@@ -280,22 +278,14 @@ function MapTab({
           <FocusBtn label={<span className="text-base">📍↔🏁</span>} onClick={() => focus("me-dest")} title="Me + destination" />
         )}
         <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
-        <FocusBtn
-          label={<span className="text-2xl leading-none">{dropPinMode ? "✕" : "📌"}</span>}
-          onClick={() => {
-            setDropPinMode((v) => !v);
-            if (droppedPin) setDroppedPin(null);
-          }}
-          title={dropPinMode ? "Cancel pin drop" : "Drop a pin (then tap map)"}
-        />
+        {droppedPin && (
+          <FocusBtn
+            label={<span className="text-2xl leading-none">✕</span>}
+            onClick={() => setDroppedPin(null)}
+            title="Clear dropped pin"
+          />
+        )}
       </div>
-      {dropPinMode && (
-        <div className="pointer-events-none absolute inset-x-0 top-1/2 z-30 text-center">
-          <div className="inline-block rounded-full bg-amber-500/90 px-3 py-1 text-xs font-semibold text-zinc-900 shadow-lg">
-            Tap anywhere on the map to drop a pin
-          </div>
-        </div>
-      )}
 
       {/* Vitals strip — top-right, no zoom controls in the way */}
       {pos && (

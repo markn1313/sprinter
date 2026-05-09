@@ -270,19 +270,61 @@ export default function MapboxMap({
     map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
   }, [allPoints, fitBounds, focusMode]);
 
-  // Map click → drop a pin (when in drop-pin mode)
+  // Long-press / right-click on the map → drop a pin at that point.
+  // Mapbox's `contextmenu` event fires on long-press for touch devices and
+  // right-click on desktop. Also supports the legacy `dropPinMode` toggle as a fallback.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    const handler = (e: mapboxgl.MapMouseEvent) => {
-      if (dropPinMode && onMapClick) {
+    if (!map || !onMapClick) return;
+    const longPressHandler = (e: mapboxgl.MapMouseEvent) => {
+      onMapClick(e.lngLat.lat, e.lngLat.lng);
+      e.preventDefault?.();
+    };
+    map.on("contextmenu", longPressHandler);
+
+    // Backup: manually detect long touchstart on the map canvas, since some iOS
+    // PWAs swallow the contextmenu event.
+    let touchTimer: ReturnType<typeof setTimeout> | null = null;
+    let touchLngLat: { lng: number; lat: number } | null = null;
+    const onTouchStart = (e: mapboxgl.MapTouchEvent) => {
+      if (e.originalEvent.touches.length !== 1) return;
+      touchLngLat = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+      touchTimer = setTimeout(() => {
+        if (touchLngLat) {
+          onMapClick(touchLngLat.lat, touchLngLat.lng);
+          if ("vibrate" in navigator) try { navigator.vibrate?.(40); } catch {}
+        }
+      }, 550);
+    };
+    const cancelTouch = () => {
+      if (touchTimer) {
+        clearTimeout(touchTimer);
+        touchTimer = null;
+      }
+      touchLngLat = null;
+    };
+    map.on("touchstart", onTouchStart);
+    map.on("touchmove", cancelTouch);
+    map.on("touchend", cancelTouch);
+    map.on("touchcancel", cancelTouch);
+
+    // Also handle the explicit drop-pin mode (legacy) — single click drops pin
+    const clickHandler = (e: mapboxgl.MapMouseEvent) => {
+      if (dropPinMode) {
         onMapClick(e.lngLat.lat, e.lngLat.lng);
       }
     };
-    map.on("click", handler);
+    map.on("click", clickHandler);
     map.getCanvas().style.cursor = dropPinMode ? "crosshair" : "";
+
     return () => {
-      map.off("click", handler);
+      map.off("contextmenu", longPressHandler);
+      map.off("touchstart", onTouchStart);
+      map.off("touchmove", cancelTouch);
+      map.off("touchend", cancelTouch);
+      map.off("touchcancel", cancelTouch);
+      map.off("click", clickHandler);
+      cancelTouch();
       map.getCanvas().style.cursor = "";
     };
   }, [dropPinMode, onMapClick]);
