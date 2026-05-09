@@ -59,7 +59,7 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       )}
       {tab === "trips" && (
         <ScrollableTab>
-          <TripsTab trips={trips} origin={origin} token={token} />
+          <TripsTab trips={trips} origin={origin} token={token} refresh={refresh} />
         </ScrollableTab>
       )}
       {tab === "chat" && (
@@ -264,12 +264,6 @@ function MapTab({
             className="rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-1.5 text-xs font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
           >
             Pickup
-          </button>
-          <button
-            onClick={() => setSheet("dispatch")}
-            className="flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-emerald-500"
-          >
-            <Send size={12} /> Dispatch
           </button>
         </div>
       </header>
@@ -631,7 +625,8 @@ function getGps(): Promise<{ lat: number; lng: number }> {
   });
 }
 
-function TripsTab({ trips, origin, token }: { trips: Trip[]; origin: string; token: string }) {
+function TripsTab({ trips, origin, token, refresh }: { trips: Trip[]; origin: string; token: string; refresh: () => void }) {
+  const [open, setOpen] = useState(false);
   const todayPay = trips
     .filter((t) => t.completed_at && Date.now() - new Date(t.completed_at).getTime() < 86400_000)
     .reduce((acc, t) => acc + (t.driver_pay_cents ?? 0), 0);
@@ -640,11 +635,18 @@ function TripsTab({ trips, origin, token }: { trips: Trip[]; origin: string; tok
     .reduce((acc, t) => acc + (t.driver_pay_cents ?? 0), 0);
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
+      <button
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-900/40 hover:bg-emerald-500"
+      >
+        <Send size={16} /> New trip — Dispatch
+      </button>
       <div className="grid grid-cols-2 gap-2">
         <Stat label="Today's driver pay" value={dollars(todayPay)} />
         <Stat label="Week driver pay" value={dollars(weekPay)} />
       </div>
       <TripList trips={trips} role="mark" origin={origin} token={token} onChanged={() => window.location.reload()} />
+      {open && <DispatchSheet token={token} onClose={() => setOpen(false)} onDispatched={() => { setOpen(false); refresh(); }} />}
     </main>
   );
 }
