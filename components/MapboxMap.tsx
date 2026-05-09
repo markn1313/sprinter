@@ -27,6 +27,8 @@ interface Props {
   polyline?: string | null;
   className?: string;
   fitBounds?: boolean;
+  fitPadding?: number | { top: number; bottom: number; left: number; right: number };
+  fitMaxZoom?: number;
   focusMode?: FocusMode;
   focusKey?: number;
   dropPinMode?: boolean;
@@ -58,6 +60,8 @@ export default function MapboxMap({
   polyline,
   className,
   fitBounds = true,
+  fitPadding = 60,
+  fitMaxZoom = 14,
   focusMode = "auto",
   focusKey = 0,
   dropPinMode = false,
@@ -273,13 +277,16 @@ export default function MapboxMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !fitBounds || focusMode !== "auto" || allPoints.length < 2) return;
-    const key = allPoints.map((p) => p.join(",")).join(";");
+    // Round the dedupe key to ~5m precision so the van's normal jitter doesn't
+    // re-fire fitBounds on every poll. We still re-fit when something
+    // meaningfully moves or a stop is added/removed.
+    const key = allPoints.map((p) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(";");
     if (key === fittedRef.current) return;
     fittedRef.current = key;
     const bounds = new mapboxgl.LngLatBounds();
     allPoints.forEach((p) => bounds.extend(p));
-    map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
-  }, [allPoints, fitBounds, focusMode]);
+    map.fitBounds(bounds, { padding: fitPadding, maxZoom: fitMaxZoom, duration: 800 });
+  }, [allPoints, fitBounds, focusMode, fitPadding, fitMaxZoom]);
 
   // Long-press / right-click on the map → drop a pin at that point.
   // Mapbox's `contextmenu` event fires on long-press for touch devices and

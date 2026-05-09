@@ -52,7 +52,22 @@ export default function TvApp({ token }: { token: string }) {
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
       {/* Map fills the whole screen */}
       <div className="absolute inset-0">
-        <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" fitBounds={true} />
+        <ClientMap
+          position={pos}
+          pins={pins}
+          polyline={polyline}
+          className="h-full w-full"
+          fitBounds={true}
+          fitPadding={{
+            // Reserve space under the floating overlays so pins don't slide
+            // under the branding strip, vitals, or ETA cards.
+            top: 160,
+            bottom: eta && (eta.to_next || eta.to_final) ? 260 : 80,
+            left: 80,
+            right: 80,
+          }}
+          fitMaxZoom={17}
+        />
       </div>
 
       {/* Branding strip — top-left */}
