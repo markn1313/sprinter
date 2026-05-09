@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { Trip } from "@/lib/types";
 import { api, postJson } from "@/lib/api-client";
 import { useEta } from "@/components/useEta";
@@ -12,7 +11,7 @@ import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, statusLabel, statusColor, shortTime, shortDate } from "@/lib/format";
 import { googleMapsMultiStop } from "@/lib/maps-link";
-import { ArrowLeft, Trash2, Navigation, X, Plus, Pencil, Save, Loader2 } from "lucide-react";
+import { ArrowLeft, Trash2, Navigation, X, Pencil, Save, Loader2 } from "lucide-react";
 
 interface Stop {
   id: string;
@@ -29,7 +28,18 @@ interface TripWithStops extends Trip {
   route_polyline?: string | null;
 }
 
-export default function TripDetailApp({ token, tripId }: { token: string; tripId: string }) {
+interface TripDetailProps {
+  token: string;
+  tripId: string;
+  // When provided, rendered as an in-app overlay (no page navigation) and uses
+  // this callback for the back button instead of routing.
+  onBack?: () => void;
+  // When true, the map is omitted (the parent already has one rendered) so we
+  // never have two Mapbox instances racing each other on iOS Safari.
+  hideMap?: boolean;
+}
+
+export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDetailProps) {
   const [trip, setTrip] = useState<TripWithStops | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -173,19 +183,33 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
-    window.location.href = `/m/${token}`;
+    if (onBack) onBack();
+    else window.location.href = `/m/${token}`;
   };
 
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
 
+  // When embedded inside MarkApp (hideMap=true), the parent already shows the
+  // map. When viewed directly via /m/[token]/trip/[id] we still render the map
+  // for shareability — but in-app navigation via the Trips tab uses the
+  // embedded version so we never mount two Mapbox instances at once.
+  const handleBack = () => {
+    if (onBack) onBack();
+    else window.location.href = `/m/${token}`;
+  };
+
   return (
-    <div className="min-h-screen bg-zinc-950 pb-24">
+    <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
       <header className="sticky top-0 z-20 border-b border-zinc-900 bg-zinc-950/95 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-2 px-3 py-3">
-          <Link href={`/m/${token}`} className="flex items-center gap-1 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-900">
+          <button
+            onClick={handleBack}
+            className="flex items-center gap-1 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-900"
+            aria-label="Back"
+          >
             <ArrowLeft size={16} />
-          </Link>
+          </button>
           <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
             <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider text-white ${statusColor(trip.status)}`}>
               {statusLabel(trip.status)}
@@ -202,19 +226,31 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-3 px-3 pt-3">
-        {/* Map */}
-        <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
-          <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
-          {eta && (
-            <div className="absolute left-3 bottom-3"><EtaBadge eta={eta} variant="dual" /></div>
-          )}
-          {navUrl && (
-            <a href={navUrl} target="_blank" rel="noreferrer" className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500">
-              <Navigation size={12} /> Maps
-            </a>
-          )}
-        </div>
+      <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
+        {/* Map — omitted when embedded (parent already has one) */}
+        {!hideMap && (
+          <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
+            <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
+            {eta && (
+              <div className="absolute left-3 bottom-3"><EtaBadge eta={eta} variant="dual" /></div>
+            )}
+            {navUrl && (
+              <a href={navUrl} target="_blank" rel="noreferrer" className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500">
+                <Navigation size={12} /> Maps
+              </a>
+            )}
+          </div>
+        )}
+        {hideMap && eta && (
+          <div className="flex items-center justify-between gap-2">
+            <EtaBadge eta={eta} variant="dual" />
+            {navUrl && (
+              <a href={navUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500">
+                <Navigation size={12} /> Maps
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Trip basics — view or edit */}
         {!editing ? (
@@ -352,39 +388,37 @@ function InsertStop({
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <li className="flex items-center gap-2 pl-9">
+      <li>
         <button
           onClick={() => setOpen(true)}
-          className="flex items-center gap-1.5 rounded-full border border-dashed border-zinc-700 bg-zinc-900/50 px-3 py-1 text-[11px] text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40 px-3 py-2.5 text-[11px] text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"
         >
-          <span className="text-sm leading-none">+</span> add stop here
+          <span className="text-base leading-none">+</span> add stop here
         </button>
       </li>
     );
   }
   return (
-    <li className="flex items-start gap-2 pl-9">
-      <div className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/60 p-2">
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">
-            Insert stop at position {index + 1}
-          </span>
-          <button
-            onClick={() => setOpen(false)}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
-          >
-            <X size={12} />
-          </button>
-        </div>
-        <AddressAutocomplete
-          token={token}
-          placeholder="Type any address — autocompletes"
-          onSelect={(r) => {
-            onAdd(index, r);
-            setOpen(false);
-          }}
-        />
+    <li className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+          Insert stop at position {index + 1}
+        </span>
+        <button
+          onClick={() => setOpen(false)}
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
+        >
+          <X size={12} />
+        </button>
       </div>
+      <AddressAutocomplete
+        token={token}
+        placeholder="Type any address — autocompletes"
+        onSelect={(r) => {
+          onAdd(index, r);
+          setOpen(false);
+        }}
+      />
     </li>
   );
 }

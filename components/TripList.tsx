@@ -4,7 +4,6 @@ import { Trip, Role } from "@/lib/types";
 import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
 import { Copy, MessageSquare, ExternalLink } from "lucide-react";
 import { useState, MouseEvent } from "react";
-import { useRouter } from "next/navigation";
 
 function buildInviteBody(_trip: Trip, url: string): string {
   return `Click for details on your trip:\n${url}`;
@@ -16,11 +15,13 @@ interface Props {
   origin?: string;
   token?: string;
   onChanged?: () => void;
+  // Preferred: callback for in-app open (no page navigation, footer stays).
+  // If not provided, no row-tap action.
+  onOpenTrip?: (tripId: string) => void;
 }
 
-export default function TripList({ trips, role, origin, token }: Props) {
+export default function TripList({ trips, role, origin, token, onOpenTrip }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
-  const router = useRouter();
 
   if (!trips.length) {
     return (
@@ -44,9 +45,9 @@ export default function TripList({ trips, role, origin, token }: Props) {
   return (
     <ul className="divide-y divide-zinc-900 rounded-2xl border border-zinc-800 bg-zinc-950/60">
       {trips.map((t) => {
-        const tappable = role === "mark" && !!token;
+        const tappable = role === "mark" && !!onOpenTrip;
         const openTrip = () => {
-          if (tappable) router.push(`/m/${token}/trip/${t.id}`);
+          if (tappable) onOpenTrip!(t.id);
         };
         return (
           <li

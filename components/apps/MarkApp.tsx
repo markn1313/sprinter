@@ -21,6 +21,7 @@ import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
 import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
+import TripDetailApp from "@/components/apps/TripDetailApp";
 import VanIcon from "@/components/VanIcon";
 import { rangeMiles } from "@/lib/range";
 import {
@@ -55,6 +56,7 @@ export default function MarkApp({ token, name }: { token: string; name: string }
 
   const live = activeTrip(trips);
   const unreadDriver = useUnreadDriverChat(token, "mark");
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
   // All tabs stay mounted so the Mapbox GL instance is never torn down on tab
   // switch. Inactive tabs are hidden via CSS instead of conditionally rendered.
@@ -63,10 +65,30 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       <div className={tab === "map" ? "relative flex-1 overflow-hidden" : "hidden"}>
         <MapTab token={token} pos={pos} live={live} trips={trips} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} />
       </div>
-      <div className={tab === "trips" ? "flex-1 overflow-y-auto" : "hidden"}>
-        <ScrollableTab>
-          <TripsTab trips={trips} origin={origin} token={token} refresh={refresh} />
-        </ScrollableTab>
+      <div className={tab === "trips" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
+        {selectedTripId ? (
+          <TripDetailApp
+            token={token}
+            tripId={selectedTripId}
+            hideMap
+            onBack={() => {
+              setSelectedTripId(null);
+              refresh();
+            }}
+          />
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <ScrollableTab>
+              <TripsTab
+                trips={trips}
+                origin={origin}
+                token={token}
+                refresh={refresh}
+                onOpenTrip={(id) => setSelectedTripId(id)}
+              />
+            </ScrollableTab>
+          </div>
+        )}
       </div>
       <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
         <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
@@ -712,7 +734,7 @@ function getGps(): Promise<{ lat: number; lng: number }> {
   });
 }
 
-function TripsTab({ trips, origin, token, refresh }: { trips: Trip[]; origin: string; token: string; refresh: () => void }) {
+function TripsTab({ trips, origin, token, refresh, onOpenTrip }: { trips: Trip[]; origin: string; token: string; refresh: () => void; onOpenTrip: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const todayPay = trips
     .filter((t) => t.completed_at && Date.now() - new Date(t.completed_at).getTime() < 86400_000)
@@ -732,7 +754,7 @@ function TripsTab({ trips, origin, token, refresh }: { trips: Trip[]; origin: st
         <Stat label="Today's driver pay" value={dollars(todayPay)} />
         <Stat label="Week driver pay" value={dollars(weekPay)} />
       </div>
-      <TripList trips={trips} role="mark" origin={origin} token={token} onChanged={() => window.location.reload()} />
+      <TripList trips={trips} role="mark" origin={origin} token={token} onOpenTrip={onOpenTrip} />
       {open && <DispatchSheet token={token} onClose={() => setOpen(false)} onDispatched={() => { setOpen(false); refresh(); }} />}
     </main>
   );
