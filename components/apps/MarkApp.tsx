@@ -20,6 +20,7 @@ import { dollars, statusLabel } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
+import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
 import VanIcon from "@/components/VanIcon";
 import { rangeMiles } from "@/lib/range";
 import {
@@ -33,11 +34,12 @@ import {
   Loader2,
   ArrowUp,
   MessageCircle,
+  HelpCircle,
   Fuel,
   Gauge,
 } from "lucide-react";
 
-type Tab = "map" | "trips" | "chat" | "settings";
+type Tab = "map" | "trips" | "chat" | "help" | "settings";
 
 export default function MarkApp({ token, name }: { token: string; name: string }) {
   const { pos } = usePosition(token, 8000);
@@ -52,6 +54,7 @@ export default function MarkApp({ token, name }: { token: string; name: string }
   }, []);
 
   const live = activeTrip(trips);
+  const unreadDriver = useUnreadDriverChat(token, "mark");
 
   // All tabs stay mounted so the Mapbox GL instance is never torn down on tab
   // switch. Inactive tabs are hidden via CSS instead of conditionally rendered.
@@ -68,7 +71,15 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
         <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
           <div className="mx-auto flex max-w-3xl items-center gap-2">
-            <span className="text-sm font-medium text-zinc-100">Cabin assistant</span>
+            <span className="text-sm font-medium text-zinc-100">Driver chat</span>
+          </div>
+        </header>
+        <DriverChat token={token} viewerRole="mark" />
+      </div>
+      <div className={tab === "help" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
+        <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
+          <div className="mx-auto flex max-w-3xl items-center gap-2">
+            <span className="text-sm font-medium text-zinc-100">Cabin help</span>
           </div>
         </header>
         <CabinChat token={token} />
@@ -83,7 +94,8 @@ export default function MarkApp({ token, name }: { token: string; name: string }
         <div className="mx-auto flex max-w-3xl">
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Map" />
           <TabButton active={tab === "trips"} onClick={() => setTab("trips")} icon={<List size={20} />} label="Trips" />
-          <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" />
+          <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
+          <TabButton active={tab === "help"} onClick={() => setTab("help")} icon={<HelpCircle size={20} />} label="Help" />
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={20} />} label="Settings" />
         </div>
       </nav>
@@ -135,13 +147,20 @@ function SpeedChip({ mph }: { mph: number | null }) {
   );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function TabButton({ active, onClick, icon, label, badge }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number }) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition ${active ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
+      className={`relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition ${active ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
     >
-      {icon}
+      <div className="relative">
+        {icon}
+        {badge != null && badge > 0 && (
+          <span className="absolute -right-2 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
+            {badge > 9 ? "9+" : badge}
+          </span>
+        )}
+      </div>
       <span>{label}</span>
     </button>
   );

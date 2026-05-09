@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Trip } from "@/lib/types";
 import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
@@ -8,8 +8,9 @@ import { postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { shortTime } from "@/lib/format";
 import CabinRequestInbox from "@/components/CabinRequestInbox";
+import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
 import VanIcon from "@/components/VanIcon";
-import { Navigation, User, MapPin, Check, Phone } from "lucide-react";
+import { Navigation, User, MapPin, Check, Phone, MessageCircle, X } from "lucide-react";
 
 // Driving-mode Dio app: GIANT buttons, glanceable, single column.
 // Eyes-on-road design: the main action is always the largest visible element.
@@ -19,6 +20,8 @@ export default function DioApp({ token, name }: { token: string; name: string })
   const upcoming = trips.filter((t) => t.status === "scheduled").sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
   const focus: Trip | null = live ?? upcoming[0] ?? null;
   const { eta } = useEta(token, focus?.id ?? null, 25_000);
+  const unreadFromMark = useUnreadDriverChat(token, "dio");
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-zinc-950 pb-24">
@@ -26,6 +29,32 @@ export default function DioApp({ token, name }: { token: string; name: string })
       <div className="sticky top-0 z-30 mx-auto max-w-2xl px-3 pt-3">
         <CabinRequestInbox token={token} />
       </div>
+
+      {/* Floating chat button — bottom right */}
+      <button
+        onClick={() => setChatOpen(true)}
+        className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-2xl shadow-emerald-900/40 active:scale-95"
+        aria-label="Chat with Mark"
+      >
+        <MessageCircle size={26} />
+        {unreadFromMark > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-6 min-w-[24px] items-center justify-center rounded-full border-2 border-zinc-950 bg-red-600 px-1.5 text-xs font-bold text-white">
+            {unreadFromMark > 9 ? "9+" : unreadFromMark}
+          </span>
+        )}
+      </button>
+
+      {chatOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
+          <header className="flex items-center justify-between border-b border-zinc-900 px-4 py-3">
+            <span className="text-sm font-medium text-zinc-100">Chat with Mark</span>
+            <button onClick={() => setChatOpen(false)} className="rounded-full p-1 text-zinc-400 hover:bg-zinc-800">
+              <X size={18} />
+            </button>
+          </header>
+          <DriverChat token={token} viewerRole="dio" />
+        </div>
+      )}
 
       <div className="mx-auto max-w-2xl px-3 pt-3 space-y-3">
         {/* Hero panel */}

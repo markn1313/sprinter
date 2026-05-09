@@ -1,0 +1,71 @@
+import { NextResponse } from "next/server";
+import { loadSession } from "@/lib/auth";
+import { supabaseAdmin } from "@/lib/supabase";
+
+export const dynamic = "force-dynamic";
+
+// Single thread for v1: mark↔driver. Easy to extend with per-trip threads later.
+const DEFAULT_THREAD = "mark-driver";
+
+export async function GET(req: Request) {
+  const auth = req.headers.get("authorization");
+  const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
+  const ctx = await loadSession(token);
+  if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (ctx.role !== "mark" && ctx.role !== "dio") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const thread = url.searchParams.get("thread") ?? DEFAULT_THREAD;
+  const since = url.searchParams.get("since");
+
+  let q = supabaseAdmin()
+    .from("messages")
+    .select("id,thread,sender_role,body,sent_at,read_at")
+    .eq("thread", thread)
+    .order("sent_at", { ascending: true })
+    .limit(200);
+  if (since) q = q.gt("sent_at", since);
+  const { data, error } = await q;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Auto-mark messages from the OTHER party as read
+  const otherRole = ctx.role === "mark" ? "dio" : "mark";
+  await supabaseAdmin()
+    .from("messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("thread", thread)
+    .eq("sender_role", otherRole)
+    .is("read_at", null);
+
+  return NextResponse.json({ messages: data, role: ctx.role });
+}
+
+export async function POST(req: Request) {
+  const auth = req.headers.get("authorization");
+  const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
+  const ctx = await loadSession(token);
+  if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (ctx.role !== "mark" && ctx.role !== "dio") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  const body = (await req.json().catch(() => null)) as { body?: string; thread?: string } | null;
+  if (!body?.body || !body.body.trim()) {
+    return NextResponse.json({ error: "missing body" }, { status: 400 });
+  }
+  const thread = body.thread ?? DEFAULT_THREAD;
+  const { data, error } = await supabaseAdmin()
+    .from("messages")
+    .insert({
+      thread,
+      sender_role: ctx.role,
+      sender_token: ctx.token,
+      body: body.body.trim(),
+    })
+    .select()
+    .single();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ message: data });
+}
