@@ -79,12 +79,12 @@ export default function PassengerApp({ token }: { token: string; name: string })
 
           {/* Map focus controls */}
           <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-20 flex flex-col gap-1.5">
-            <FocusBtn label={<VanIcon size={16} />} onClick={() => focus("van")} title="Show van" />
-            {myGps && <FocusBtn label="📍" onClick={() => focus("me")} title="Show me" />}
+            <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Show van" />
+            {myGps && <FocusBtn label={<span className="text-2xl leading-none">📍</span>} onClick={() => focus("me")} title="Show me" />}
             {(trip?.dropoff_lat != null || trip?.pickup_lat != null) && (
-              <FocusBtn label="🏁" onClick={() => focus("dest")} title="Show destination" />
+              <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Show destination" />
             )}
-            <FocusBtn label="⤢" onClick={() => focus("auto")} title="Auto-fit" />
+            <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
           </div>
 
           {/* Vitals — top-right */}

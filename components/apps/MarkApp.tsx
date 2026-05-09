@@ -264,18 +264,18 @@ function MapTab({
 
       {/* Map focus + drop-pin controls — left edge */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
-        <FocusBtn label={<VanIcon size={16} />} onClick={() => focus("van")} title="Center on van" />
-        {myGps && <FocusBtn label="📍" onClick={() => focus("me")} title="Center on me" />}
+        <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Center on van" />
+        {myGps && <FocusBtn label={<span className="text-2xl leading-none">📍</span>} onClick={() => focus("me")} title="Center on me" />}
         {(live?.dropoff_lat != null || live?.pickup_lat != null) && (
-          <FocusBtn label="🏁" onClick={() => focus("dest")} title="Center on destination" />
+          <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
         )}
-        {myGps && pos && <FocusBtn label={<span className="flex items-center gap-0.5"><VanIcon size={14} />↔📍</span>} onClick={() => focus("van-me")} title="Van + me" />}
+        {myGps && pos && <FocusBtn label={<span className="flex items-center gap-0.5"><VanIcon size={20} /><span className="text-base">↔</span><span className="text-base">📍</span></span>} onClick={() => focus("van-me")} title="Van + me" />}
         {myGps && (live?.dropoff_lat != null || live?.pickup_lat != null) && (
-          <FocusBtn label="📍↔🏁" onClick={() => focus("me-dest")} title="Me + destination" />
+          <FocusBtn label={<span className="text-base">📍↔🏁</span>} onClick={() => focus("me-dest")} title="Me + destination" />
         )}
-        <FocusBtn label="⤢" onClick={() => focus("auto")} title="Auto-fit" />
+        <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
         <FocusBtn
-          label={dropPinMode ? "✕" : "📌"}
+          label={<span className="text-2xl leading-none">{dropPinMode ? "✕" : "📌"}</span>}
           onClick={() => {
             setDropPinMode((v) => !v);
             if (droppedPin) setDroppedPin(null);
