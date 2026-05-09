@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sprinter Ops
 
-## Getting Started
+Live operational dashboard for Mark's 2024 Mercedes Sprinter Van.
 
-First, run the development server:
+Three role-aware experiences served from one Next.js app:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- **`/m/<token>`** — Mark (owner): live map, dispatch bar, trip log with cost, link generator, today/week pay totals, full visibility.
+- **`/d/<token>`** — Dio (driver): next-pickup card, four big trip-state buttons, status emoji bar, issue logger. **No money fields ever rendered.**
+- **`/p/<token>`** — Passenger (one-time guest): live van approach, trip status, in-cabin tips. Auto-expires.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Create Supabase project named `sprinter`. Get the project URL, anon key, service role key.
+2. Apply schema: paste `supabase/schema.sql` into the Supabase SQL editor and run.
+3. Copy `.env.example` to `.env.local` and fill in keys.
+4. `npm install`
+5. `npm run dev` → http://localhost:3000
+6. Create Mark's token:
+   ```
+   curl -XPOST http://localhost:3000/api/bootstrap -H "X-Bootstrap-Secret: $BOOTSTRAP_SECRET"
+   ```
+   Open `http://localhost:3000/m/<token>` and bookmark it.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Live data
 
-## Learn More
+- Bouncie GPS polled every 8s by Mark/Dio dashboards. If `BOUNCIE_ACCESS_TOKEN` isn't set, a deterministic mock orbits Newport Beach so you can develop without real data.
+- Trips poll every 5s. Status badges update across all three modes within ~5 seconds of any state change.
 
-To learn more about Next.js, take a look at the following resources:
+## Money gating
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Cost rendering is gated server-side at the API layer (Dio/Passenger calls to `/api/trips` strip cost fields) AND client-side in the components (`role !== "mark"` hides money). Both layers exist so the API is safe even if a client is modified.

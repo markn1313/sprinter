@@ -1,0 +1,136 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Trip } from "@/lib/types";
+import { usePosition } from "@/components/usePosition";
+import { useTrips } from "@/components/useTrips";
+import ClientMap from "@/components/ClientMap";
+import { statusLabel, shortTime } from "@/lib/format";
+import { MapPin, Wifi, Tv, Car, Music } from "lucide-react";
+
+export default function PassengerApp({ token, name }: { token: string; name: string }) {
+  const { pos } = usePosition(token, 10000);
+  const { trips } = useTrips(token, 6000);
+  const trip = trips[0] ?? null;
+
+  return (
+    <div className="min-h-screen bg-zinc-950 pb-12">
+      <header className="sticky top-0 z-20 border-b border-zinc-900 bg-zinc-950/95 backdrop-blur">
+        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🚐</span>
+            <span className="text-sm font-medium text-zinc-100">Sprinter</span>
+          </div>
+          <div className="text-xs text-zinc-400">Hi, {name}</div>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
+        <div className="h-[44vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
+          <ClientMap
+            position={pos}
+            pickup={
+              trip?.pickup_lat != null && trip?.pickup_lng != null
+                ? { lat: trip.pickup_lat, lng: trip.pickup_lng, label: trip.pickup_address ?? undefined }
+                : null
+            }
+            dropoff={
+              trip?.dropoff_lat != null && trip?.dropoff_lng != null
+                ? { lat: trip.dropoff_lat, lng: trip.dropoff_lng, label: trip.dropoff_address ?? undefined }
+                : null
+            }
+          />
+        </div>
+
+        {trip ? <PassengerTripCard trip={trip} /> : <NoTripCard />}
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+          <div className="mb-3 text-xs uppercase tracking-wider text-zinc-500">In the van</div>
+          <div className="space-y-3 text-sm">
+            <CabinTip
+              icon={<Tv size={16} className="text-emerald-400" />}
+              title="Audio for the TV"
+              body="Push the RD-RGB150A knob to switch to Apple TV (red). Turn the knob to adjust volume."
+            />
+            <CabinTip
+              icon={<Music size={16} className="text-emerald-400" />}
+              title="Play music from your iPhone"
+              body="Tap the Connectivity icon in the bottom-left of the Pioneer screen → pick your phone (or use the magnifying glass to add it for the first time)."
+            />
+            <CabinTip
+              icon={<Car size={16} className="text-emerald-400" />}
+              title="Volume / source knob"
+              body="Located on the driver-side wall between the captain's chair and the bench. Turn = volume; press = switch between Pioneer and Apple TV."
+            />
+            <CabinTip
+              icon={<Wifi size={16} className="text-zinc-500" />}
+              title="WiFi"
+              body="The van's TV runs on cellular and bandwidth is limited — please use your own phone data instead."
+            />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PassengerTripCard({ trip }: { trip: Trip }) {
+  const showLive = trip.status !== "scheduled" && trip.status !== "complete";
+  const headline = (() => {
+    switch (trip.status) {
+      case "scheduled":
+        return `Pickup at ${shortTime(trip.scheduled_at)}`;
+      case "dispatched":
+        return "Van is on the way";
+      case "at_pickup":
+        return "Van has arrived";
+      case "onboard":
+        return trip.dropoff_address ? `Heading to ${trip.dropoff_address}` : "Onboard";
+      case "at_dropoff":
+        return "Arrived";
+      case "complete":
+        return "Trip complete";
+      case "cancelled":
+        return "Trip cancelled";
+    }
+  })();
+
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
+      <div className="text-xs uppercase tracking-wider text-emerald-400">{statusLabel(trip.status)}</div>
+      <div className="mt-1 text-lg font-semibold text-zinc-100">{headline}</div>
+      <div className="mt-3 space-y-1 text-sm">
+        {trip.pickup_address && (
+          <div className="flex items-center gap-2 text-zinc-300">
+            <MapPin size={14} className="text-amber-400" /> {trip.pickup_address}
+          </div>
+        )}
+        {trip.dropoff_address && (
+          <div className="flex items-center gap-2 text-zinc-300">
+            <MapPin size={14} className="text-blue-400" /> {trip.dropoff_address}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NoTripCard() {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-6 text-center text-sm text-zinc-400">
+      Your ride hasn&apos;t been dispatched yet — Mark will let you know when the van is on the way.
+    </div>
+  );
+}
+
+function CabinTip({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="mt-0.5">{icon}</div>
+      <div>
+        <div className="font-medium text-zinc-100">{title}</div>
+        <div className="text-zinc-400">{body}</div>
+      </div>
+    </div>
+  );
+}
