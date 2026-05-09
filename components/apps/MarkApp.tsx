@@ -19,6 +19,7 @@ import { dollars, statusLabel } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
+import VanIcon from "@/components/VanIcon";
 import { rangeMiles } from "@/lib/range";
 import {
   Map as MapIcon,
@@ -101,7 +102,7 @@ function ScrollableTab({ children }: { children: React.ReactNode }) {
   );
 }
 
-function FocusBtn({ label, onClick, title }: { label: string; onClick: () => void; title?: string }) {
+function FocusBtn({ label, onClick, title }: { label: React.ReactNode; onClick: () => void; title?: string }) {
   return (
     <button
       onClick={onClick}
@@ -263,12 +264,12 @@ function MapTab({
 
       {/* Map focus + drop-pin controls — left edge */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
-        <FocusBtn label="🚐" onClick={() => focus("van")} title="Center on van" />
+        <FocusBtn label={<VanIcon size={16} />} onClick={() => focus("van")} title="Center on van" />
         {myGps && <FocusBtn label="📍" onClick={() => focus("me")} title="Center on me" />}
         {(live?.dropoff_lat != null || live?.pickup_lat != null) && (
           <FocusBtn label="🏁" onClick={() => focus("dest")} title="Center on destination" />
         )}
-        {myGps && pos && <FocusBtn label="🚐↔📍" onClick={() => focus("van-me")} title="Van + me" />}
+        {myGps && pos && <FocusBtn label={<span className="flex items-center gap-0.5"><VanIcon size={14} />↔📍</span>} onClick={() => focus("van-me")} title="Van + me" />}
         {myGps && (live?.dropoff_lat != null || live?.pickup_lat != null) && (
           <FocusBtn label="📍↔🏁" onClick={() => focus("me-dest")} title="Me + destination" />
         )}

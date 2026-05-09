@@ -172,9 +172,9 @@ export default function MapboxMap({
     if (!map || !position) return;
     if (!vanMarkerRef.current) {
       const el = document.createElement("div");
-      el.style.cssText = "width:44px;height:32px;display:flex;align-items:center;justify-content:center;";
+      el.style.cssText = "width:36px;height:20px;display:flex;align-items:center;justify-content:center;";
       el.innerHTML = `
-        <svg width="44" height="32" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));">
+        <svg width="36" height="20" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));">
           <!-- Sprinter van silhouette -->
           <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.2"/>
           <!-- Windshield -->

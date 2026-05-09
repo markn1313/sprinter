@@ -8,6 +8,7 @@ import { postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { shortTime } from "@/lib/format";
 import CabinRequestInbox from "@/components/CabinRequestInbox";
+import VanIcon from "@/components/VanIcon";
 import { Navigation, User, MapPin, Check, Phone } from "lucide-react";
 
 // Driving-mode Dio app: GIANT buttons, glanceable, single column.

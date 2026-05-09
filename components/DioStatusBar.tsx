@@ -5,7 +5,7 @@ import { api, postJson } from "@/lib/api-client";
 import { DioStatusEmoji } from "@/lib/types";
 
 const OPTIONS: { key: DioStatusEmoji; emoji: string; label: string }[] = [
-  { key: "driving", emoji: "🚐", label: "Driving" },
+  { key: "driving", emoji: "🛣️", label: "Driving" },
   { key: "idle", emoji: "🟢", label: "Idle" },
   { key: "fueling", emoji: "⛽", label: "Fueling" },
   { key: "lunch", emoji: "🍔", label: "Break" },
