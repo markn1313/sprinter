@@ -90,7 +90,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
 
           {/* Vitals — directly under Mapbox zoom controls (top-right) */}
           {pos && (
-            <div className="absolute right-3 top-20 z-30 flex flex-col gap-1.5">
+            <div className="absolute right-3 top-20 z-30 flex w-fit flex-col gap-1.5">
               <VitalChip>
                 <Fuel size={11} className="text-emerald-400" />
                 <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
@@ -198,8 +198,7 @@ function VitalChip({ children }: { children: React.ReactNode }) {
 
 function SpeedChip({ mph }: { mph: number | null }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2.5 py-1.5 backdrop-blur">
-      <Gauge size={14} className="text-emerald-400" />
+    <div className="flex items-center justify-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2.5 py-1.5 backdrop-blur">
       <span className="font-mono text-base font-bold tabular-nums text-zinc-100">
         {mph != null ? Math.round(mph) : "—"}
       </span>
