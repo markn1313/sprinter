@@ -190,14 +190,14 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
           {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
         </span>
       </div>
-      <div className="mt-2 truncate text-xl text-zinc-300">{label}</div>
+      <div className="mt-2 truncate text-3xl font-medium text-zinc-100">{label}</div>
       <div className="mt-3 flex items-baseline gap-3">
         <span className={`font-mono text-7xl font-bold tabular-nums ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
         <span className="text-2xl font-semibold text-zinc-500">min</span>
-        <span className="ml-auto text-2xl font-mono tabular-nums text-zinc-400">{miles} mi</span>
+        <span className="ml-auto font-mono text-4xl font-semibold tabular-nums text-zinc-200">{miles} mi</span>
       </div>
-      <div className="mt-1 text-base text-zinc-500">
-        Arrive <span className="font-mono tabular-nums text-zinc-300">{arrival}</span>
+      <div className="mt-2 text-2xl text-zinc-400">
+        Arrive <span className="font-mono font-semibold tabular-nums text-zinc-100">{arrival}</span>
       </div>
     </div>
   );
