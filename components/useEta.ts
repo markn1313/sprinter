@@ -3,12 +3,21 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 
-export interface EtaData {
+export interface EtaLeg {
+  kind: "pickup" | "stop" | "dropoff";
+  label: string;
   eta_seconds: number;
   eta_minutes: number;
-  distance_meters: number;
   distance_miles: number;
   polyline: string;
+  traffic_aware: boolean;
+}
+
+export interface EtaData {
+  eta_seconds: number | null;
+  eta_minutes: number | null;
+  distance_miles: number | null;
+  polyline: string | null;
   van: {
     lat: number;
     lng: number;
@@ -16,7 +25,8 @@ export interface EtaData {
     speed_mph: number;
     source: "bouncie" | "mock";
   };
-  target: { lat: number; lng: number };
+  to_next?: EtaLeg | null;
+  to_final?: EtaLeg | null;
   traffic_aware: boolean;
 }
 

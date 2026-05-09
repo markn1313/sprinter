@@ -315,7 +315,7 @@ function MapTab({
           onClick={() => setSheet("trip")}
           className="absolute left-3 bottom-3 z-30"
         >
-          <EtaBadge eta={eta} variant="hero" label={live.status === "onboard" ? "to dropoff" : "to pickup"} />
+          <EtaBadge eta={eta} variant="dual" />
         </button>
       )}
 

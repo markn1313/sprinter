@@ -108,7 +108,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
           {/* ETA badge bottom-left when active */}
           {isLive && eta && (
             <div className="absolute left-3 bottom-3 z-30">
-              <EtaBadge eta={eta} variant="hero" label={trip?.status === "onboard" ? "to your stop" : "until pickup"} />
+              <EtaBadge eta={eta} variant="dual" />
             </div>
           )}
         </div>

@@ -2,9 +2,9 @@
 
 import { Trip, Role } from "@/lib/types";
 import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
-import { Copy, ExternalLink, MessageSquare, Pencil } from "lucide-react";
+import { Copy, MessageSquare, ExternalLink } from "lucide-react";
 import { useState } from "react";
-import EditTripModal from "./EditTripModal";
+import Link from "next/link";
 
 function buildInviteBody(_trip: Trip, url: string): string {
   return `Click for details on your trip:\n${url}`;
@@ -21,7 +21,6 @@ interface Props {
 
 export default function TripList({ trips, role, origin, token, onChanged }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Trip | null>(null);
   if (!trips.length) {
     return (
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-6 text-center text-sm text-zinc-500">
@@ -67,12 +66,12 @@ export default function TripList({ trips, role, origin, token, onChanged }: Prop
                 </div>
               )}
               {role === "mark" && token && (
-                <button
-                  onClick={() => setEditing(t)}
+                <Link
+                  href={`/m/${token}/trip/${t.id}`}
                   className="rounded-lg bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-700"
                 >
-                  <Pencil size={11} className="inline mr-1" /> Edit
-                </button>
+                  Open →
+                </Link>
               )}
             </div>
           </div>
@@ -104,17 +103,6 @@ export default function TripList({ trips, role, origin, token, onChanged }: Prop
           )}
         </li>
       ))}
-      {editing && token && (
-        <EditTripModal
-          token={token}
-          trip={editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => {
-            setEditing(null);
-            onChanged?.();
-          }}
-        />
-      )}
     </ul>
   );
 }
