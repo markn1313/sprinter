@@ -252,60 +252,49 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
           </div>
         )}
 
-        {/* Trip basics — view or edit */}
-        {!editing ? (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wider text-zinc-500">Scheduled</div>
-                <div className="text-base font-semibold text-zinc-100">
-                  {shortDate(trip.scheduled_at)} · {shortTime(trip.scheduled_at)}
-                </div>
-              </div>
-              <button
-                onClick={() => setEditing(true)}
-                className="flex items-center gap-1 rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
-              >
-                <Pencil size={12} /> Edit basics
-              </button>
-            </div>
-            {trip.driver_pay_cents != null && (
-              <div className="mt-2 text-xs text-emerald-300">Driver pay: {dollars(trip.driver_pay_cents)}</div>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4 space-y-3">
-            <Field label="Passenger">
-              <input value={passenger} onChange={(e) => setPassenger(e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Pickup address">
-              <input value={pickup} onChange={(e) => setPickup(e.target.value)} placeholder="home · Wynn lobby · address" className={inputCls} />
-            </Field>
-            <Field label="Dropoff address">
-              <input value={dropoff} onChange={(e) => setDropoff(e.target.value)} placeholder="LAX · Cosmopolitan · etc" className={inputCls} />
-            </Field>
-            <Field label="Scheduled (your local time)">
-              <input type="datetime-local" value={scheduled} onChange={(e) => setScheduled(e.target.value)} className={inputCls} />
-            </Field>
-            <div className="flex gap-2">
-              <button onClick={save} disabled={busy} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-                {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
-              </button>
-              <button onClick={() => setEditing(false)} className="rounded-xl border border-zinc-800 px-3 py-2.5 text-sm text-zinc-300 hover:bg-zinc-900">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Waypoint sequence — tap any + to insert a stop at that position */}
+        {/* Single consolidated trip card — tap any row to edit inline */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-          <div className="mb-3 text-xs uppercase tracking-wider text-zinc-500">Route</div>
           <ul className="flex flex-col gap-3">
-            {trip.pickup_address && (
-              <Waypoint kind="pickup" label={trip.pickup_address} subline="Pickup" />
-            )}
+            {/* Passenger */}
+            <EditableField
+              label="Passenger"
+              value={passenger}
+              onChange={setPassenger}
+              onCommit={save}
+            />
+
+            {/* Scheduled time */}
+            <EditableField
+              label="Scheduled"
+              value={scheduled}
+              displayValue={`${shortDate(trip.scheduled_at)} · ${shortTime(trip.scheduled_at)}`}
+              type="datetime-local"
+              onChange={setScheduled}
+              onCommit={save}
+            />
+
+            {/* Pickup */}
+            <EditableAddress
+              label="Pickup"
+              kind="pickup"
+              value={pickup}
+              displayValue={trip.pickup_address ?? "(not set)"}
+              token={token}
+              onSelect={async (r) => {
+                setPickup(r.display);
+                await fetch(`/api/trips/${tripId}`, {
+                  method: "PATCH",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ pickup_address: r.display }),
+                });
+                refresh();
+              }}
+            />
+
+            {/* Insert stop at position 0 */}
             <InsertStop token={token} index={0} onAdd={addStopAt} />
+
+            {/* Stops */}
             {stops.map((s, i) => (
               <React.Fragment key={s.id}>
                 <Waypoint
@@ -317,8 +306,27 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
                 <InsertStop token={token} index={i + 1} onAdd={addStopAt} />
               </React.Fragment>
             ))}
-            {trip.dropoff_address && (
-              <Waypoint kind="dropoff" label={trip.dropoff_address} subline="Final destination" />
+
+            {/* Final destination */}
+            <EditableAddress
+              label="Final destination"
+              kind="dropoff"
+              value={dropoff}
+              displayValue={trip.dropoff_address ?? "(not set)"}
+              token={token}
+              onSelect={async (r) => {
+                setDropoff(r.display);
+                await fetch(`/api/trips/${tripId}`, {
+                  method: "PATCH",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ dropoff_address: r.display }),
+                });
+                refresh();
+              }}
+            />
+
+            {trip.driver_pay_cents != null && (
+              <div className="mt-1 text-xs text-emerald-300">Driver pay: {dollars(trip.driver_pay_cents)}</div>
             )}
           </ul>
         </div>
@@ -373,6 +381,117 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <div className="mb-1 text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
       {children}
     </label>
+  );
+}
+
+function EditableField({
+  label,
+  value,
+  displayValue,
+  type,
+  onChange,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  displayValue?: string;
+  type?: string;
+  onChange: (v: string) => void;
+  onCommit: () => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (!editing) {
+    return (
+      <li
+        onClick={() => setEditing(true)}
+        className="cursor-pointer rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
+      >
+        <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
+        <div className="mt-0.5 truncate text-sm text-zinc-100">{displayValue ?? value}</div>
+      </li>
+    );
+  }
+  return (
+    <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 px-3 py-3">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-400">{label}</div>
+      <input
+        autoFocus
+        type={type ?? "text"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={async () => {
+          await onCommit();
+          setEditing(false);
+        }}
+        onKeyDown={async (e) => {
+          if (e.key === "Enter") {
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === "Escape") {
+            setEditing(false);
+          }
+        }}
+        className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-emerald-700"
+      />
+    </li>
+  );
+}
+
+function EditableAddress({
+  label,
+  kind,
+  displayValue,
+  token,
+  onSelect,
+}: {
+  label: string;
+  kind: "pickup" | "dropoff";
+  value: string;
+  displayValue: string;
+  token: string;
+  onSelect: (r: { lat: number; lng: number; display: string }) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const glyph = kind === "dropoff" ? "🏁" : "🚩";
+  const accent = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
+  if (!editing) {
+    return (
+      <li
+        onClick={() => setEditing(true)}
+        className="flex cursor-pointer items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex w-7 shrink-0 items-center justify-center text-base leading-none">{glyph}</span>
+          <div className="min-w-0">
+            <div className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</div>
+            <div className="truncate text-sm text-zinc-100">{displayValue}</div>
+          </div>
+        </div>
+      </li>
+    );
+  }
+  return (
+    <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base leading-none">{glyph}</span>
+          <span className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</span>
+        </div>
+        <button
+          onClick={() => setEditing(false)}
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <AddressAutocomplete
+        token={token}
+        placeholder={kind === "pickup" ? "home · Wynn lobby · address" : "LAX · Cosmopolitan · etc"}
+        onSelect={async (r) => {
+          await onSelect(r);
+          setEditing(false);
+        }}
+      />
+    </li>
   );
 }
 
