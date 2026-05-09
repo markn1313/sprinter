@@ -20,6 +20,7 @@ import { dollars, statusLabel } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
+import CabinQuickStrip from "@/components/CabinQuickStrip";
 import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
 import TripDetailApp from "@/components/apps/TripDetailApp";
 import VanIcon from "@/components/VanIcon";
@@ -340,6 +341,15 @@ function MapTab({
             <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
           </VitalChip>
           <SpeedChip mph={pos.speed_mph ?? null} />
+        </div>
+      )}
+
+      {/* Cabin climate quick-strip — bottom-center, only when a trip is active */}
+      {live && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center">
+          <div className="pointer-events-auto">
+            <CabinQuickStrip token={token} tripId={live.id} />
+          </div>
         </div>
       )}
 

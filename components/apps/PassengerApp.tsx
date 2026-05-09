@@ -10,6 +10,7 @@ import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import EtaBottomBar from "@/components/EtaBottomBar";
 import CabinControls from "@/components/CabinControls";
+import CabinQuickStrip from "@/components/CabinQuickStrip";
 import CabinChat from "@/components/CabinChat";
 import { statusLabel, shortTime } from "@/lib/format";
 import { rangeMiles } from "@/lib/range";
@@ -100,6 +101,15 @@ export default function PassengerApp({ token }: { token: string; name: string })
                 <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
               </VitalChip>
               <SpeedChip mph={pos.speed_mph ?? null} />
+            </div>
+          )}
+
+          {/* Cabin climate quick-strip — bottom-center, only when ride is live */}
+          {isLive && trip && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center">
+              <div className="pointer-events-auto">
+                <CabinQuickStrip token={token} tripId={trip.id} />
+              </div>
             </div>
           )}
 
