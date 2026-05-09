@@ -1,170 +1,58 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Trip } from "@/lib/types";
-import { usePosition } from "@/components/usePosition";
 import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
-import { useMarkLocation, useDriverGpsReporter } from "@/components/useMarkLocation";
-import { postJson } from "@/lib/api-client";
+import { useDriverGpsReporter } from "@/components/useMarkLocation";
+import { api, postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { shortTime } from "@/lib/format";
-import { rangeMiles } from "@/lib/range";
-import ClientMap from "@/components/ClientMap";
-import { MapPin as MapPinPin } from "@/components/LiveMap";
-import EtaBottomBar from "@/components/EtaBottomBar";
 import CabinRequestInbox from "@/components/CabinRequestInbox";
-import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
-import VanIcon from "@/components/VanIcon";
-import {
-  Map as MapIcon,
-  List,
-  MessageCircle,
-  Navigation,
-  User,
-  MapPin,
-  Check,
-  Fuel,
-  Gauge,
-} from "lucide-react";
+import { Navigation, User, MapPin, Check, ArrowUp, Loader2 } from "lucide-react";
 
-type Tab = "map" | "schedule" | "chat";
+interface ChatMsg {
+  id: string;
+  sender_role: "mark" | "dio";
+  body: string;
+  sent_at: string;
+  read_at: string | null;
+}
 
-export default function DioApp({ token, name }: { token: string; name: string }) {
+// Driving-mode design: ONE screen, big tap targets, minimal interaction.
+// Cabin requests at top → trip card → giant navigate + advance buttons → chat.
+export default function DioApp({ token, name: _name }: { token: string; name: string }) {
+  useDriverGpsReporter(token, true);
   const { trips, refresh } = useTrips(token, 4000);
-  const { pos } = usePosition(token, 6000);
   const live = activeTrip(trips);
   const upcoming = trips
     .filter((t) => t.status === "scheduled")
     .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
   const focus: Trip | null = live ?? upcoming[0] ?? null;
   const { eta } = useEta(token, focus?.id ?? null, 25_000);
-  const markLoc = useMarkLocation(token, 12_000);
-  const unreadFromMark = useUnreadDriverChat(token, "dio");
-  const [tab, setTab] = useState<Tab>("map");
-  // Continuously report Dio's phone GPS so ETA routes from his location
-  useDriverGpsReporter(token, true);
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-zinc-950">
-      <div className={tab === "map" ? "relative flex-1 overflow-hidden" : "hidden"}>
-        <MapTab token={token} trips={trips} live={live} focus={focus} eta={eta} pos={pos} markLoc={markLoc} refresh={refresh} />
-      </div>
-      <div className={tab === "schedule" ? "flex-1 overflow-y-auto" : "hidden"}>
-        <ScheduleTab name={name} upcoming={upcoming} />
-      </div>
-      <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
-        <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
-          <div className="text-sm font-medium text-zinc-100">Chat with Mark</div>
-        </header>
-        <DriverChat token={token} viewerRole="dio" />
-      </div>
-
-      <nav className="z-40 border-t border-zinc-900 bg-zinc-950/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
-        <div className="mx-auto flex max-w-3xl">
-          <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Drive" />
-          <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")} icon={<List size={20} />} label="Schedule" />
-          <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadFromMark} />
-        </div>
-      </nav>
-    </div>
-  );
-}
-
-function TabButton({ active, onClick, icon, label, badge }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium transition ${active ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
-    >
-      <div className="relative">
-        {icon}
-        {badge != null && badge > 0 && (
-          <span className="absolute -right-2 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white">
-            {badge > 9 ? "9+" : badge}
-          </span>
-        )}
-      </div>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function MapTab({
-  token,
-  trips,
-  live,
-  focus,
-  eta,
-  pos,
-  markLoc,
-  refresh,
-}: {
-  token: string;
-  trips: Trip[];
-  live: Trip | null;
-  focus: Trip | null;
-  eta: ReturnType<typeof useEta>["eta"];
-  pos: ReturnType<typeof usePosition>["pos"];
-  markLoc: ReturnType<typeof useMarkLocation>;
-  refresh: () => void;
-}) {
-  const stopsArr = ((focus as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
-
-  const pins = useMemo<MapPinPin[]>(() => {
-    const out: MapPinPin[] = [];
-    if (focus?.pickup_lat != null && focus.pickup_lng != null)
-      out.push({ kind: "pickup", lat: focus.pickup_lat, lng: focus.pickup_lng, label: focus.pickup_address ?? undefined });
-    if (focus?.dropoff_lat != null && focus.dropoff_lng != null)
-      out.push({ kind: "dropoff", lat: focus.dropoff_lat, lng: focus.dropoff_lng, label: focus.dropoff_address ?? undefined });
-    stopsArr.forEach((s, i) => {
-      if (s.lat != null && s.lng != null) out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
-    });
-    if (markLoc) out.push({ kind: "mark", lat: markLoc.lat, lng: markLoc.lng, label: "Mark" });
-    return out;
-  }, [focus, stopsArr, markLoc]);
-
-  const polyline = (focus as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
-
-  return (
-    <>
-      <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
-
-      {/* Cabin request inbox + driver hero — overlay top */}
-      <div className="absolute inset-x-3 top-3 z-30 space-y-2">
+    <div className="min-h-screen bg-zinc-950 pb-6">
+      <div className="mx-auto flex max-w-2xl flex-col gap-3 px-3 pt-3">
         <CabinRequestInbox token={token} />
+
         {focus ? (
-          <DriverHero trip={focus} live={!!live} etaMin={eta?.eta_minutes ?? null} token={token} onAdvance={refresh} />
+          <DriverHero
+            trip={focus}
+            live={!!live}
+            etaMin={eta?.eta_minutes ?? null}
+            etaMiles={eta?.to_next?.distance_miles ?? null}
+            token={token}
+            onAdvance={refresh}
+          />
         ) : (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/85 p-4 text-center backdrop-blur">
-            <div className="text-sm font-semibold text-zinc-200">All clear — no trips scheduled</div>
-          </div>
+          <IdleCard />
         )}
+
+        <ChatBlock token={token} />
+
+        {!live && upcoming.length > 1 && <UpcomingStrip trips={upcoming.slice(1, 5)} />}
       </div>
-
-      {/* Vitals — top-right */}
-      {pos && (
-        <div className="absolute right-3 top-3 z-30 hidden flex-col gap-1.5 sm:flex">
-          <Chip><Fuel size={11} className="text-emerald-400" /><span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span></Chip>
-          <Chip><span className="text-emerald-400">↗</span><span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span></Chip>
-          <Chip><Gauge size={11} className="text-emerald-400" /><span>{pos.speed_mph != null ? `${pos.speed_mph.toFixed(0)} mph` : "—"}</span></Chip>
-        </div>
-      )}
-
-      {/* ETA bottom bar */}
-      {focus && eta && (
-        <div className="absolute inset-x-3 bottom-3 z-30">
-          <EtaBottomBar eta={eta} />
-        </div>
-      )}
-    </>
-  );
-}
-
-function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2 py-1 text-[11px] text-zinc-200 backdrop-blur">
-      {children}
     </div>
   );
 }
@@ -173,12 +61,14 @@ function DriverHero({
   trip,
   live,
   etaMin,
+  etaMiles,
   token,
   onAdvance,
 }: {
   trip: Trip;
   live: boolean;
   etaMin: number | null;
+  etaMiles: number | null;
   token: string;
   onAdvance: () => void;
 }) {
@@ -188,12 +78,7 @@ function DriverHero({
   const targetLng = target === "pickup" ? trip.pickup_lng : trip.dropoff_lng;
   const targetAddr = target === "pickup" ? trip.pickup_address : trip.dropoff_address;
 
-  const navUrl =
-    targetLat != null && targetLng != null
-      ? googleMapsTo(targetLat, targetLng, targetAddr ?? undefined)
-      : targetAddr
-        ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(targetAddr)}&travelmode=driving`
-        : null;
+  const navUrl = targetLat != null && targetLng != null ? googleMapsTo(targetLat, targetLng) : null;
 
   const [busy, setBusy] = useState(false);
   const action = useMemo(() => nextAction(trip.status), [trip.status]);
@@ -210,20 +95,32 @@ function DriverHero({
   };
 
   return (
-    <div className="space-y-2">
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/90 p-4 backdrop-blur shadow-2xl">
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500">{live ? "Active trip" : "Next pickup"}</div>
-        <div className="mt-1 flex items-center gap-2">
-          <User size={20} className="text-zinc-400" />
-          <span className="text-xl font-bold text-zinc-100">{trip.passenger_name}</span>
+    <div className="space-y-3">
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-950/90 p-5">
+        <div className="text-xs uppercase tracking-widest text-zinc-500">
+          {live ? "Active trip" : "Next trip"}
         </div>
-        <div className="mt-1 flex items-start gap-2 text-zinc-300">
-          <MapPin size={14} className="mt-1 text-amber-400" />
-          <span className="text-sm">{targetAddr ?? "(no address)"}</span>
+        <div className="mt-2 flex items-center gap-2">
+          <User size={26} className="text-zinc-400" />
+          <span className="text-3xl font-bold text-zinc-100">{trip.passenger_name}</span>
         </div>
-        <div className="mt-2 flex items-center justify-between text-sm">
-          <span className="font-mono tabular-nums text-emerald-300">{etaMin != null ? `${etaMin} min` : "—"}</span>
-          <span className="text-zinc-500">{live ? "" : `Pickup at ${shortTime(trip.scheduled_at)}`}</span>
+        <div className="mt-3 flex items-start gap-2 text-zinc-200">
+          <MapPin size={20} className="mt-1 shrink-0 text-amber-400" />
+          <span className="text-lg">{targetAddr ?? "(no address)"}</span>
+        </div>
+        <div className="mt-3 flex items-baseline justify-between">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-4xl font-bold tabular-nums text-emerald-300">
+              {etaMin != null ? etaMin : "—"}
+            </span>
+            <span className="text-base text-zinc-500">min</span>
+            {etaMiles != null && (
+              <span className="ml-2 font-mono text-base text-zinc-400">{etaMiles} mi</span>
+            )}
+          </div>
+          <div className="text-base text-zinc-500">
+            {live ? "" : `Pickup ${shortTime(trip.scheduled_at)}`}
+          </div>
         </div>
       </div>
 
@@ -232,9 +129,9 @@ function DriverHero({
           href={navUrl}
           target="_blank"
           rel="noreferrer"
-          className="flex h-16 w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-xl font-bold text-white shadow-2xl shadow-emerald-900/40 active:scale-[0.99]"
+          className="flex h-20 w-full items-center justify-center gap-3 rounded-3xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-2xl font-bold text-white shadow-2xl shadow-emerald-900/40 active:scale-[0.99]"
         >
-          <Navigation size={24} /> Navigate in Google Maps
+          <Navigation size={28} /> Navigate in Google Maps
         </a>
       )}
 
@@ -242,9 +139,10 @@ function DriverHero({
         <button
           onClick={advance}
           disabled={busy}
-          className={`flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-bold text-white shadow-2xl active:scale-[0.99] disabled:opacity-50 ${action.color}`}
+          className={`flex h-16 w-full items-center justify-center gap-2 rounded-3xl text-xl font-bold text-white shadow-2xl active:scale-[0.99] disabled:opacity-50 ${action.color}`}
         >
-          <Check size={20} /> {action.label}
+          {busy ? <Loader2 size={20} className="animate-spin" /> : <Check size={22} />}{" "}
+          {action.label}
         </button>
       )}
     </div>
@@ -268,44 +166,142 @@ function nextAction(status: Trip["status"]): { label: string; action: string; co
   }
 }
 
-function ScheduleTab({ name, upcoming }: { name: string; upcoming: Trip[] }) {
+function IdleCard() {
   return (
-    <div className="mx-auto max-w-2xl px-3 pt-3 pb-6">
-      <header className="border-b border-zinc-900 pb-3">
-        <div className="flex items-center gap-2">
-          <VanIcon size={20} />
-          <span className="text-sm font-medium text-zinc-100">Schedule · {name}</span>
-        </div>
-      </header>
-      <div className="mt-3 text-xs uppercase tracking-wider text-zinc-500">Upcoming</div>
-      {upcoming.length === 0 ? (
-        <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-6 text-center text-sm text-zinc-500">
-          No trips scheduled.
-        </div>
+    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/60 p-8 text-center">
+      <div className="text-3xl">🛌</div>
+      <div className="mt-2 text-2xl font-semibold text-zinc-100">All clear</div>
+      <div className="mt-1 text-base text-zinc-500">No trips scheduled.</div>
+    </div>
+  );
+}
+
+// Inline chat block — last 3 messages + a single-line input. No tabs, no
+// switching screens. Designed so Dio can glance at Mark's last note while
+// stopped without leaving the trip view.
+function ChatBlock({ token }: { token: string }) {
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const lastSeenRef = useRef<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const data = await api<{ messages: ChatMsg[] }>(token, "/api/messages");
+      setMessages(data.messages || []);
+    } catch {
+      // ignore
+    }
+  };
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 4000);
+    return () => clearInterval(t);
+  }, [token]);
+
+  const last3 = messages.slice(-3);
+  const latestId = messages[messages.length - 1]?.id ?? null;
+  const isNewFromMark =
+    latestId &&
+    latestId !== lastSeenRef.current &&
+    messages[messages.length - 1]?.sender_role === "mark";
+  useEffect(() => {
+    if (latestId) lastSeenRef.current = latestId;
+  }, [latestId]);
+
+  const send = async () => {
+    if (!input.trim() || busy) return;
+    setBusy(true);
+    const text = input;
+    setInput("");
+    try {
+      await postJson(token, "/api/messages", { body: text });
+      await refresh();
+    } catch {
+      setInput(text);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className={`rounded-3xl border bg-zinc-950/90 p-4 ${
+        isNewFromMark ? "border-amber-500/70 shadow-lg shadow-amber-900/30" : "border-zinc-800"
+      }`}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs uppercase tracking-widest text-zinc-500">Mark</span>
+        {isNewFromMark && (
+          <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+            New
+          </span>
+        )}
+      </div>
+      {last3.length === 0 ? (
+        <div className="text-sm text-zinc-500">No messages yet.</div>
       ) : (
-        <ul className="mt-3 space-y-2">
-          {upcoming.map((t) => (
-            <li key={t.id} className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-3">
-              <div className="flex items-center justify-between">
-                <div className="font-medium text-zinc-100">{t.passenger_name}</div>
-                <div className="font-mono text-sm tabular-nums text-emerald-300">{shortTime(t.scheduled_at)}</div>
-              </div>
-              {t.pickup_address && (
-                <div className="mt-1 flex items-start gap-1.5 text-xs text-zinc-400">
-                  <MapPin size={11} className="mt-0.5 text-amber-400" />
-                  <span className="truncate">{t.pickup_address}</span>
-                </div>
-              )}
-              {t.dropoff_address && (
-                <div className="mt-0.5 flex items-start gap-1.5 text-xs text-zinc-400">
-                  <MapPin size={11} className="mt-0.5 text-blue-400" />
-                  <span className="truncate">{t.dropoff_address}</span>
-                </div>
-              )}
-            </li>
-          ))}
+        <ul className="space-y-1.5">
+          {last3.map((m) => {
+            const mine = m.sender_role === "dio";
+            return (
+              <li
+                key={m.id}
+                className={`max-w-[85%] rounded-2xl px-3 py-2 text-base ${
+                  mine ? "ml-auto bg-emerald-700 text-white" : "mr-auto bg-zinc-800 text-zinc-100"
+                }`}
+              >
+                {m.body}
+              </li>
+            );
+          })}
         </ul>
       )}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+        className="mt-3"
+      >
+        <div className="relative">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Message Mark…"
+            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 pr-14 text-base text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-700"
+          />
+          <button
+            type="submit"
+            disabled={busy || !input.trim()}
+            className="absolute right-2 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg disabled:bg-zinc-700 disabled:opacity-50 enabled:hover:bg-emerald-500"
+            aria-label="Send"
+          >
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={18} strokeWidth={3} />}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function UpcomingStrip({ trips }: { trips: Trip[] }) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3">
+      <div className="mb-2 px-1 text-xs uppercase tracking-wider text-zinc-500">Later today</div>
+      <ul className="space-y-1.5">
+        {trips.map((t) => (
+          <li key={t.id} className="flex items-center justify-between rounded-xl bg-zinc-900/60 px-3 py-2">
+            <div>
+              <div className="text-base font-medium text-zinc-100">{t.passenger_name}</div>
+              {t.pickup_address && (
+                <div className="text-xs text-zinc-500">{t.pickup_address.split(",")[0]}</div>
+              )}
+            </div>
+            <div className="text-sm text-zinc-400">{shortTime(t.scheduled_at)}</div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
