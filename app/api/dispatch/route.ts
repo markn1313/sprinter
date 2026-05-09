@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing input" }, { status: 400 });
   }
 
-  const parsed = parseDispatch(body.input);
+  const parsed = await parseDispatch(body.input);
   const sb = supabaseAdmin();
   const { data: trip, error } = await sb
     .from("trips")
@@ -33,8 +33,11 @@ export async function POST(req: Request) {
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Skip guest-link minting when Mark is the rider — he uses his own dashboard.
+  // The dispatch caller can also explicitly disable via `mintGuestLink: false`.
   let guestToken: string | null = null;
-  if (body.mintGuestLink !== false) {
+  const shouldMint = body.mintGuestLink !== false && !parsed.isOwnerRiding;
+  if (shouldMint) {
     guestToken = newToken();
     await sb.from("links").insert({
       token: guestToken,

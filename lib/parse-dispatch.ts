@@ -1,80 +1,121 @@
-import { addHours, addMinutes, set, startOfDay, addDays } from "date-fns";
+import Anthropic from "@anthropic-ai/sdk";
 
 export interface ParsedDispatch {
   passengerName: string;
+  isOwnerRiding: boolean;
   pickupHint: string | null;
   dropoffHint: string | null;
-  scheduledAt: string;
+  scheduledAt: string; // ISO UTC
   rawNotes: string;
 }
 
-const FILLER = /\b(send|the|van|to|pick up|pickup|drive|take|at|then|to take|to drive|to pick up|so he can go to|so they can go to)\b/gi;
+const SYSTEM_PROMPT = `You are a dispatch parser for Mark's private Sprinter van service.
+Mark is the owner; Dio is the driver. The user typing into the dispatch bar is always Mark.
 
-const ABS_TIME = /\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)?\b/i;
-const RELATIVE_NOW = /\b(now|right now|asap|immediately)\b/i;
-const IN_DURATION = /\bin\s+(\d+)\s+(min|mins|minutes|hour|hours|hr|hrs)\b/i;
+Output STRICT JSON only, no prose, with these keys:
+- passengerName: string  (the rider; if Mark is the rider, use "Mark"; never the imperative verb)
+- isOwnerRiding: boolean (true if Mark himself is the rider — phrases like "me", "myself", "I am going")
+- pickupHint: string|null (e.g. "home", "Wynn lobby", "John Wayne", or null if not specified)
+- dropoffHint: string|null (e.g. "LAX", "Intuit Dome", "Cosmopolitan", or null if not specified) — capitalize venue/city/airport names properly
+- scheduledAt: ISO 8601 UTC timestamp for when pickup happens
 
-export function parseDispatch(input: string, now = new Date()): ParsedDispatch {
-  const raw = input.trim();
-  let work = " " + raw + " ";
+Mark is in America/Los_Angeles (PT). Resolve all relative times in his timezone and convert to UTC.
+Examples (assuming "now" is Friday 2026-05-08 22:00 PT = 2026-05-09T05:00:00Z):
+- "now" / "asap" / "right away" → now (current UTC)
+- "in 30 minutes" → now + 30m
+- "5pm" or "5" with no modifier → today 5pm PT if still future, otherwise tomorrow 5pm PT
+- "tomorrow at 5pm" → 2026-05-09T17:00 PT = 2026-05-10T00:00:00Z
+- "next Tuesday at 9" → upcoming Tuesday 9am PT (or 9pm if context suggests evening)
+- If you can't determine a time, default to 30 minutes from now`;
 
-  // 1) Time
-  let scheduledAt = now.toISOString();
-  if (RELATIVE_NOW.test(work)) {
-    scheduledAt = now.toISOString();
-    work = work.replace(RELATIVE_NOW, " ");
-  } else {
-    const inMatch = work.match(IN_DURATION);
-    if (inMatch) {
-      const n = Number(inMatch[1]);
-      const unit = inMatch[2].toLowerCase();
-      const d = unit.startsWith("h") ? addHours(now, n) : addMinutes(now, n);
-      scheduledAt = d.toISOString();
-      work = work.replace(IN_DURATION, " ");
-    } else {
-      const m = work.match(ABS_TIME);
-      if (m) {
-        const hour = Number(m[1]);
-        const minute = m[2] ? Number(m[2]) : 0;
-        const ap = m[3]?.toLowerCase();
-        let h24 = hour;
-        if (ap === "pm" && hour < 12) h24 += 12;
-        if (ap === "am" && hour === 12) h24 = 0;
-        if (!ap && hour < 7) h24 = hour + 12; // 6 means 6pm by default in dispatch
-        let target = set(startOfDay(now), { hours: h24, minutes: minute });
-        if (target.getTime() < now.getTime() - 30 * 60_000) {
-          target = addDays(target, 1);
-        }
-        scheduledAt = target.toISOString();
-        work = work.replace(ABS_TIME, " ");
-      }
+export async function parseDispatchWithLLM(input: string, now = new Date()): Promise<ParsedDispatch> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return regexFallback(input, now);
+  }
+
+  const anthropic = new Anthropic({ apiKey });
+
+  const nowIso = now.toISOString();
+  const nowPT = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(now);
+
+  try {
+    const resp = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 256,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Now (UTC): ${nowIso}\nNow (Mark's local): ${nowPT}\n\nDispatch input:\n"${input.replace(/"/g, '\\"')}"\n\nReturn only the JSON object.`,
+        },
+      ],
+    });
+
+    const block = resp.content[0];
+    const text = block && block.type === "text" ? block.text : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn("Parser LLM returned non-JSON:", text);
+      return regexFallback(input, now);
     }
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<ParsedDispatch>;
+
+    return {
+      passengerName: parsed.passengerName || "Guest",
+      isOwnerRiding: !!parsed.isOwnerRiding,
+      pickupHint: parsed.pickupHint || null,
+      dropoffHint: parsed.dropoffHint || null,
+      scheduledAt: parsed.scheduledAt && !isNaN(new Date(parsed.scheduledAt).getTime())
+        ? new Date(parsed.scheduledAt).toISOString()
+        : new Date(now.getTime() + 30 * 60_000).toISOString(),
+      rawNotes: input.trim(),
+    };
+  } catch (err) {
+    console.warn("Parser LLM threw:", err);
+    return regexFallback(input, now);
+  }
+}
+
+// Last-resort regex fallback — kept so dispatch never fails outright.
+function regexFallback(input: string, now: Date): ParsedDispatch {
+  const raw = input.trim();
+  const lower = raw.toLowerCase();
+  const isOwner = /\b(me|myself|i am|i'm)\b/i.test(raw);
+  const passengerName = isOwner
+    ? "Mark"
+    : (raw.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/)?.[1] ??
+        (raw.match(/\bpick(?:ing|s|ed)?\s+up\s+([a-z]+)/i)?.[1] ?? "Guest"));
+
+  let scheduled = new Date(now.getTime() + 30 * 60_000);
+  const inMatch = lower.match(/\bin\s+(\d+)\s+(min|mins|minutes|hour|hours|hr|hrs)\b/);
+  if (inMatch) {
+    const n = Number(inMatch[1]);
+    const unit = inMatch[2];
+    scheduled = new Date(now.getTime() + n * (unit.startsWith("h") ? 3600_000 : 60_000));
   }
 
-  // 2) Pickup / dropoff
-  let pickupHint: string | null = null;
-  let dropoffHint: string | null = null;
-
-  const fromMatch = work.match(/\bfrom\s+([^,]+?)(?:\s+to\s+|$)/i);
-  if (fromMatch) {
-    pickupHint = fromMatch[1].trim();
-    work = work.replace(fromMatch[0], " ");
-  }
-  const toMatch = work.match(/\bto\s+([^,]+?)(?:\s+at\s+|$)/i);
-  if (toMatch) {
-    dropoffHint = toMatch[1].trim();
-    work = work.replace(toMatch[0], " ");
-  }
-
-  // 3) Passenger name — first capitalized token sequence remaining
-  const nameMatch = raw.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/);
-  const passengerName = nameMatch ? nameMatch[1] : "Guest";
+  const fromMatch = raw.match(/\bfrom\s+([^,]+?)(?:\s+to\s+|$)/i);
+  const toMatch = raw.match(/\bto\s+([^,]+?)(?:\s+at\s+|$)/i);
 
   return {
-    passengerName,
-    pickupHint,
-    dropoffHint,
-    scheduledAt,
+    passengerName: passengerName.charAt(0).toUpperCase() + passengerName.slice(1).toLowerCase(),
+    isOwnerRiding: isOwner,
+    pickupHint: fromMatch ? fromMatch[1].trim() : null,
+    dropoffHint: toMatch ? toMatch[1].trim() : null,
+    scheduledAt: scheduled.toISOString(),
     rawNotes: raw,
   };
 }
+
+// Backwards-compat export name
+export const parseDispatch = parseDispatchWithLLM;
