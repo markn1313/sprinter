@@ -9,14 +9,13 @@ import { useMarkGpsReporter } from "@/components/useMarkLocation";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import LinkGenerator from "@/components/LinkGenerator";
-import TripList from "@/components/TripList";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
 import EtaBottomBar from "@/components/EtaBottomBar";
 import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
-import { dollars, statusLabel } from "@/lib/format";
+import { statusLabel } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
@@ -27,21 +26,19 @@ import VanIcon from "@/components/VanIcon";
 import { rangeMiles } from "@/lib/range";
 import {
   Map as MapIcon,
-  List,
+  Route as RouteIcon,
   Settings,
   Navigation,
-  Send,
-  Hand,
   X,
   Loader2,
   ArrowUp,
   MessageCircle,
   HelpCircle,
   Fuel,
-  Gauge,
+  Trash2,
 } from "lucide-react";
 
-type Tab = "map" | "trips" | "chat" | "help" | "settings";
+type Tab = "map" | "trip" | "chat" | "help" | "settings";
 
 export default function MarkApp({ token, name }: { token: string; name: string }) {
   const { pos } = usePosition(token, 8000);
@@ -50,20 +47,13 @@ export default function MarkApp({ token, name }: { token: string; name: string }
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window === "undefined") return "map";
     const v = window.localStorage.getItem(`sprinter:tab:${token}`);
-    return (v === "trips" || v === "chat" || v === "help" || v === "settings") ? v : "map";
-  });
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return window.localStorage.getItem(`sprinter:trip:${token}`);
+    // Migrate old "trips" value to "trip" silently
+    if (v === "trips" || v === "trip") return "trip";
+    return (v === "chat" || v === "help" || v === "settings") ? v : "map";
   });
   useEffect(() => {
     if (typeof window !== "undefined") window.localStorage.setItem(`sprinter:tab:${token}`, tab);
   }, [tab, token]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (selectedTripId) window.localStorage.setItem(`sprinter:trip:${token}`, selectedTripId);
-    else window.localStorage.removeItem(`sprinter:trip:${token}`);
-  }, [selectedTripId, token]);
 
   const [origin, setOrigin] = useState("");
   const [shareGps, setShareGps] = useState(true);
@@ -76,35 +66,31 @@ export default function MarkApp({ token, name }: { token: string; name: string }
   const live = activeTrip(trips);
   const unreadDriver = useUnreadDriverChat(token, "mark");
 
+  // Single-trip mode: live trip, else next-scheduled. Shared between Map and Trip tabs.
+  const mapTrip = useMemo<Trip | null>(() => {
+    if (live) return live;
+    const upcoming = trips
+      .filter((t) => t.status === "scheduled")
+      .sort(
+        (a, b) =>
+          new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
+      );
+    return upcoming[0] ?? null;
+  }, [live, trips]);
+
   // All tabs stay mounted so the Mapbox GL instance is never torn down on tab
   // switch. Inactive tabs are hidden via CSS instead of conditionally rendered.
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-zinc-950">
       <div className={tab === "map" ? "relative flex-1 overflow-hidden" : "hidden"}>
-        <MapTab token={token} pos={pos} live={live} trips={trips} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} />
+        <MapTab token={token} pos={pos} live={live} mapTrip={mapTrip} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} />
       </div>
-      <div className={tab === "trips" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
-        {selectedTripId ? (
-          <TripDetailApp
-            token={token}
-            tripId={selectedTripId}
-            hideMap
-            onBack={() => {
-              setSelectedTripId(null);
-              refresh();
-            }}
-          />
+      <div className={tab === "trip" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
+        {mapTrip ? (
+          <TripDetailApp token={token} tripId={mapTrip.id} hideMap />
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            <ScrollableTab>
-              <TripsTab
-                trips={trips}
-                origin={origin}
-                token={token}
-                refresh={refresh}
-                onOpenTrip={(id) => setSelectedTripId(id)}
-              />
-            </ScrollableTab>
+          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-zinc-500">
+            No trip yet — drop a pin or tap Pickup.
           </div>
         )}
       </div>
@@ -134,13 +120,10 @@ export default function MarkApp({ token, name }: { token: string; name: string }
         <div className="mx-auto flex max-w-3xl">
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Map" />
           <TabButton
-            active={tab === "trips"}
-            onClick={() => {
-              setSelectedTripId(null);
-              setTab("trips");
-            }}
-            icon={<List size={20} />}
-            label="Trips"
+            active={tab === "trip"}
+            onClick={() => setTab("trip")}
+            icon={<RouteIcon size={20} />}
+            label="Trip"
           />
           <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
           <TabButton active={tab === "help"} onClick={() => setTab("help")} icon={<HelpCircle size={20} />} label="Help" />
@@ -209,7 +192,7 @@ function MapTab({
   token,
   pos,
   live,
-  trips,
+  mapTrip,
   refresh,
   shareGps,
   setShareGps,
@@ -218,26 +201,13 @@ function MapTab({
   token: string;
   pos: ReturnType<typeof usePosition>["pos"];
   live: Trip | null;
-  trips: Trip[];
+  mapTrip: Trip | null;
   refresh: () => void;
   shareGps: boolean;
   setShareGps: (v: boolean | ((p: boolean) => boolean)) => void;
   name: string;
 }) {
   const { eta } = useEta(token, live?.id ?? null, 25_000);
-  // For the map preview + Maps button: if no trip is in-progress, fall back to
-  // the next upcoming scheduled trip. So pins, polyline, and Maps deep-link
-  // always reflect "what we're about to do."
-  const mapTrip = useMemo<Trip | null>(() => {
-    if (live) return live;
-    const upcoming = trips
-      .filter((t) => t.status === "scheduled")
-      .sort(
-        (a, b) =>
-          new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
-      );
-    return upcoming[0] ?? null;
-  }, [live, trips]);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
   const onMapClick = async (lat: number, lng: number) => {
@@ -338,31 +308,9 @@ function MapTab({
         </div>
       </header>
 
-      {/* Map focus + drop-pin controls — left edge */}
+      {/* Map focus controls — left edge. (Drop-pin via long-press; no rail button.) */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
         <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Center on van" />
-        <FocusBtn
-          label={<span className="text-2xl leading-none">📍</span>}
-          onClick={() => {
-            // If GPS hasn't reported yet, do a one-shot read so the button
-            // works on first tap instead of needing the watcher to warm up.
-            if (myGps) {
-              focus("me");
-              return;
-            }
-            if (typeof navigator !== "undefined" && navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                (p) => {
-                  setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude });
-                  focus("me");
-                },
-                undefined,
-                { enableHighAccuracy: true, maximumAge: 10_000, timeout: 10_000 },
-              );
-            }
-          }}
-          title="Center on me"
-        />
         {(mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
           <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
         )}
@@ -422,7 +370,10 @@ function MapTab({
           )}
         </div>
       )}
-      {!live && navUrl && (
+      {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar branch
+          isn't rendering (no live trip OR eta hasn't loaded yet). Previously this
+          only fired when !live, so a live trip with no ETA briefly hid the button. */}
+      {(!live || !eta) && navUrl && (
         <a
           href={navUrl}
           target="_blank"
@@ -448,9 +399,14 @@ function MapTab({
       {sheet === "droppedPin" && droppedPin && (
         <DroppedPinSheet
           token={token}
-          live={live}
+          trip={mapTrip}
+          stops={stopsArr}
           pin={droppedPin}
           onClose={() => setSheet("none")}
+          onRemovePin={() => {
+            setDroppedPin(null);
+            setSheet("none");
+          }}
           onApplied={() => {
             setDroppedPin(null);
             setSheet("none");
@@ -627,17 +583,43 @@ function TripSheet({
   );
 }
 
+// Compute total road distance for a candidate waypoint sequence by hitting the
+// /api/eta POST endpoint (which uses Mapbox Directions on the server). Returns
+// total miles or null on failure.
+async function totalDistanceMiles(
+  token: string,
+  waypoints: Array<{ lat: number; lng: number }>,
+): Promise<number | null> {
+  if (waypoints.length < 2) return null;
+  try {
+    const res = await fetch("/api/eta", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ waypoints }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.to_final?.distance_miles ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function DroppedPinSheet({
   token,
-  live,
+  trip,
+  stops,
   pin,
   onClose,
+  onRemovePin,
   onApplied,
 }: {
   token: string;
-  live: Trip | null;
+  trip: Trip | null;
+  stops: Array<{ id: string; lat: number | null; lng: number | null; address: string }>;
   pin: { lat: number; lng: number; address?: string };
   onClose: () => void;
+  onRemovePin: () => void;
   onApplied: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -645,34 +627,58 @@ function DroppedPinSheet({
 
   const pinAddress = pin.address ?? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`;
 
-  const setAsDestination = async () => {
-    if (!live) return;
+  // Smart-insert: build [pickup, ...stops, dropoff], try every internal position,
+  // pick the one with the shortest total route distance. Falls back to append when
+  // there are too many stops or routing fails.
+  const smartAddAsStop = async () => {
+    if (!trip) return;
     setBusy(true);
     setErr(null);
     try {
-      await fetch(`/api/trips/${live.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ dropoff_address: pinAddress }),
+      // Build the existing waypoint chain
+      const chain: Array<{ lat: number; lng: number }> = [];
+      if (trip.pickup_lat != null && trip.pickup_lng != null)
+        chain.push({ lat: trip.pickup_lat, lng: trip.pickup_lng });
+      stops.forEach((s) => {
+        if (s.lat != null && s.lng != null) chain.push({ lat: s.lat, lng: s.lng });
       });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+      if (trip.dropoff_lat != null && trip.dropoff_lng != null)
+        chain.push({ lat: trip.dropoff_lat, lng: trip.dropoff_lng });
 
-  const addAsStop = async () => {
-    if (!live) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await postJson(token, `/api/trips/${live.id}/stops`, {
+      // stopsCount = how many intermediate stops currently exist
+      const stopsCount = stops.filter((s) => s.lat != null && s.lng != null).length;
+
+      // Default: append at end of stops list (server side index = stopsCount)
+      let chosenIdx = stopsCount;
+
+      // Smart-insert is only worth doing when N <= 5 (≤ 7 candidate sequences).
+      // For larger trips, just append — the user can re-order in trip detail.
+      // Insertion happens between pickup and dropoff: candidate positions in the
+      // chain are 1..chain.length-1 (so we never displace pickup or dropoff).
+      // The matching server-side stops index is candidatePos - 1 (since position 1
+      // in the chain == stops[0]).
+      if (chain.length >= 2 && stopsCount <= 5) {
+        let bestDist = Infinity;
+        let bestServerIdx = chosenIdx;
+        for (let pos = 1; pos < chain.length; pos++) {
+          const candidate = [...chain];
+          candidate.splice(pos, 0, { lat: pin.lat, lng: pin.lng });
+          // eslint-disable-next-line no-await-in-loop
+          const d = await totalDistanceMiles(token, candidate);
+          if (d != null && d < bestDist) {
+            bestDist = d;
+            bestServerIdx = pos - 1; // stops index space
+          }
+        }
+        if (Number.isFinite(bestDist)) chosenIdx = bestServerIdx;
+      }
+
+      await postJson(token, `/api/trips/${trip.id}/stops`, {
         kind: "stop",
         address: pinAddress,
         lat: pin.lat,
         lng: pin.lng,
+        index: chosenIdx,
       });
       onApplied();
     } catch (e) {
@@ -682,7 +688,51 @@ function DroppedPinSheet({
     }
   };
 
-  // No active trip — let Mark create one straight from the pin
+  const setAsNewPickup = async () => {
+    if (!trip) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await fetch(`/api/trips/${trip.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pickup_address: pinAddress,
+          pickup_lat: pin.lat,
+          pickup_lng: pin.lng,
+        }),
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setAsNewDropoff = async () => {
+    if (!trip) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await fetch(`/api/trips/${trip.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dropoff_address: pinAddress,
+          dropoff_lat: pin.lat,
+          dropoff_lng: pin.lng,
+        }),
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // No active/scheduled trip — let Mark create one straight from the pin
   const pickupHere = async () => {
     setBusy(true);
     setErr(null);
@@ -739,21 +789,28 @@ function DroppedPinSheet({
     <Sheet title="Pin dropped" onClose={onClose}>
       <div className="text-sm text-zinc-300">{pinAddress}</div>
       <div className="mt-3 grid grid-cols-1 gap-2">
-        {live ? (
+        {trip ? (
           <>
             <button
-              onClick={setAsDestination}
+              onClick={smartAddAsStop}
               disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+              className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
             >
-              🏁 Set as destination
+              {busy ? <Loader2 size={14} className="animate-spin" /> : "🚩"} Add as stop (smart-insert)
             </button>
             <button
-              onClick={addAsStop}
+              onClick={setAsNewPickup}
               disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-3 py-3 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+              className="flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-transparent px-3 py-3 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50"
             >
-              🚩 Add as stop on the way
+              📍 Set as new pickup
+            </button>
+            <button
+              onClick={setAsNewDropoff}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-transparent px-3 py-3 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50"
+            >
+              🏁 Set as new dropoff
             </button>
           </>
         ) : (
@@ -774,6 +831,13 @@ function DroppedPinSheet({
             </button>
           </>
         )}
+        <button
+          onClick={onRemovePin}
+          disabled={busy}
+          className="flex items-center justify-center gap-2 rounded-2xl bg-transparent px-3 py-3 text-sm font-semibold text-red-400 hover:bg-red-950/40 disabled:opacity-50"
+        >
+          <Trash2 size={14} /> Remove pin
+        </button>
       </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </Sheet>
@@ -792,31 +856,6 @@ function getGps(): Promise<{ lat: number; lng: number }> {
       { enableHighAccuracy: true, maximumAge: 10_000, timeout: 15_000 },
     );
   });
-}
-
-function TripsTab({ trips, origin, token, refresh, onOpenTrip }: { trips: Trip[]; origin: string; token: string; refresh: () => void; onOpenTrip: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
-      <button
-        onClick={() => setOpen(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-900/40 hover:bg-emerald-500"
-      >
-        <Send size={16} /> New trip — Dispatch
-      </button>
-      <TripList trips={trips} role="mark" origin={origin} token={token} onOpenTrip={onOpenTrip} onChanged={refresh} />
-      {open && <DispatchSheet token={token} onClose={() => setOpen(false)} onDispatched={() => { setOpen(false); refresh(); }} />}
-    </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3">
-      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
-      <div className="mt-1 font-mono text-2xl tabular-nums text-emerald-300">{value}</div>
-    </div>
-  );
 }
 
 function SettingsTab({ token, origin }: { token: string; origin: string }) {

@@ -12,7 +12,7 @@ import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, shortTime, shortDate } from "@/lib/format";
 import { toPTInput, fromPTInput } from "@/lib/pt-time";
 import { googleMapsMultiStop } from "@/lib/maps-link";
-import { Navigation, X, Save, Loader2, MessageSquare } from "lucide-react";
+import { Navigation, X, Save, Loader2, MessageSquare, GripVertical } from "lucide-react";
 
 interface ServerStop {
   id: string;
@@ -318,28 +318,39 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     setLocalOrdered(null);
   };
 
-  // Driver token (singleton) for invite link — hooks must be declared before
-  // any early return below, or React's hook ordering breaks (#310).
-  const [driverToken, setDriverToken] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await api<{ links: Array<{ role: string; token: string }> }>(
-          token,
-          "/api/links",
-        );
-        if (cancelled) return;
-        const dio = data.links.find((l) => l.role === "dio");
-        if (dio) setDriverToken(dio.token);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+  // Drag-to-reorder
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const handleDragStart = (i: number) => () => setDragIndex(i);
+  const handleDragOver = (i: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragIndex == null || dragIndex === i) return;
+    setDragOverIndex(i);
+  };
+  const handleDragLeave = () => setDragOverIndex(null);
+  const handleDrop = (i: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragIndex == null || dragIndex === i) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    setLocalOrdered((prev) => {
+      const cur = prev ?? serverOrdered;
+      const next = [...cur];
+      const [moved] = next.splice(dragIndex, 1);
+      // Adjust target index if it shifts due to removal
+      const targetIdx = dragIndex < i ? i - 1 : i;
+      next.splice(targetIdx, 0, moved);
+      return next;
+    });
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
 
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
@@ -348,14 +359,6 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     typeof window !== "undefined" && trip?.passenger_link_token
       ? `${window.location.origin}/p/${trip.passenger_link_token}`
       : null;
-
-  const driverUrl =
-    typeof window !== "undefined" && driverToken
-      ? `${window.location.origin}/d/${driverToken}`
-      : null;
-  const driverInviteHref = driverUrl
-    ? `sms:&body=${encodeURIComponent(`Open for today's trip:\n${driverUrl}`)}`
-    : null;
 
   // Invite Guests: lazy-mint a passenger link if the trip doesn't have one
   // yet, then drop into iMessage with the URL prefilled.
@@ -378,15 +381,29 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
 
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
-      <div className="flex items-center justify-end gap-2 px-3 pt-2">
-        {driverInviteHref && (
+      {/* TOP: ETA badge + Maps action — highest priority */}
+      <div className="flex items-center justify-between gap-2 px-3 pt-2">
+        <div className="min-w-0 flex-1">
+          {eta ? (
+            <EtaBadge eta={eta} variant="dual" />
+          ) : (
+            <div className="text-xs text-zinc-500">No ETA yet</div>
+          )}
+        </div>
+        {navUrl && (
           <a
-            href={driverInviteHref}
-            className="flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
+            href={navUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500"
           >
-            <MessageSquare size={12} /> Invite Driver
+            <Navigation size={12} /> Maps
           </a>
         )}
+      </div>
+
+      {/* Invite Guest only — Invite Driver removed */}
+      <div className="flex items-center justify-end gap-2 px-3 pt-2">
         <button
           onClick={inviteGuests}
           className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
@@ -394,41 +411,24 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
           <MessageSquare size={12} /> Invite Guest
         </button>
       </div>
+
       <main className={`mx-auto w-full max-w-3xl space-y-2 px-3 pt-2 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
         {!hideMap && (
           <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
             <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
-            {eta && (
-              <div className="absolute left-3 bottom-3"><EtaBadge eta={eta} variant="dual" /></div>
-            )}
-            {navUrl && (
-              <a href={navUrl} target="_blank" rel="noreferrer" className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500">
-                <Navigation size={12} /> Maps
-              </a>
-            )}
-          </div>
-        )}
-        {hideMap && eta && (
-          <div className="flex items-center justify-between gap-2">
-            <EtaBadge eta={eta} variant="dual" />
-            {navUrl && (
-              <a href={navUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500">
-                <Navigation size={12} /> Maps
-              </a>
-            )}
           </div>
         )}
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
           <ul className="flex flex-col gap-1.5">
-            <EditableField
+            <CompactEditableField
               label="Passenger"
               value={passenger}
               onChange={setPassenger}
               onCommit={savePassengerOrSchedule}
             />
 
-            <EditableField
+            <CompactEditableField
               label="Scheduled (PT)"
               value={scheduled}
               displayValue={`${shortDate(trip.scheduled_at)} · ${shortTime(trip.scheduled_at)} PT`}
@@ -440,13 +440,21 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
             {/* Insert before everything */}
             <InsertStop token={token} index={0} onAdd={insertAt} />
 
-            {/* Unified stop list — pickup/intermediate/dropoff all rendered the same */}
+            {/* Unified, drag-to-reorder stop list */}
             {ordered.map((w, i) => (
               <React.Fragment key={`${w.id}-${i}`}>
                 <UnifiedStop
                   index={i + 1}
                   address={w.address || "(not set)"}
                   token={token}
+                  draggable
+                  isDragging={dragIndex === i}
+                  isDragOver={dragOverIndex === i}
+                  onDragStart={handleDragStart(i)}
+                  onDragOver={handleDragOver(i)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop(i)}
+                  onDragEnd={handleDragEnd}
                   onChange={(r) => replaceAt(i, r)}
                   onRemove={() => removeAt(i)}
                 />
@@ -499,7 +507,8 @@ function sameOrdered(a: Waypoint[], b: Waypoint[]): boolean {
   );
 }
 
-function EditableField({
+// Compact: label on left, value on right, same line — saves ~40% vertical space
+function CompactEditableField({
   label,
   value,
   displayValue,
@@ -519,16 +528,18 @@ function EditableField({
     return (
       <li
         onClick={() => setEditing(true)}
-        className="cursor-pointer rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
+        className="flex cursor-pointer items-center gap-2 rounded-xl bg-zinc-900/60 px-3 py-1.5 hover:bg-zinc-900"
       >
-        <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
-        <div className="mt-0.5 truncate text-sm text-zinc-100">{displayValue ?? value}</div>
+        <div className="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
+        <div className="min-w-0 flex-1 truncate text-right text-sm text-zinc-100">
+          {displayValue ?? value}
+        </div>
       </li>
     );
   }
   return (
-    <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 px-3 py-3">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-emerald-400">{label}</div>
+    <li className="flex items-center gap-2 rounded-xl border border-emerald-700/60 bg-zinc-900/60 px-3 py-1.5">
+      <div className="shrink-0 text-[10px] uppercase tracking-wider text-emerald-400">{label}</div>
       <input
         autoFocus
         type={type ?? "text"}
@@ -545,7 +556,7 @@ function EditableField({
             setEditing(false);
           }
         }}
-        className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-emerald-700"
+        className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1 text-right text-sm text-zinc-100 outline-none focus:border-emerald-700"
       />
     </li>
   );
@@ -555,19 +566,57 @@ function UnifiedStop({
   index,
   address,
   token,
+  draggable,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
   onChange,
   onRemove,
 }: {
   index: number;
   address: string;
   token: string;
+  draggable?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: () => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: () => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
   onChange: (r: { lat: number; lng: number; display: string }) => void;
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   if (!editing) {
     return (
-      <li className="flex items-center gap-2 rounded-xl bg-zinc-900/60 px-2.5 py-1.5">
+      <li
+        draggable={draggable && !editing}
+        onDragStart={(e) => {
+          // Required for some browsers (Firefox) to actually fire drag events
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", String(index));
+          onDragStart?.();
+        }}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        onDragEnd={onDragEnd}
+        className={`flex items-center gap-2 rounded-xl bg-zinc-900/60 px-2.5 py-1.5 ${
+          isDragging ? "opacity-40" : ""
+        } ${isDragOver ? "ring-2 ring-emerald-500/60" : ""}`}
+      >
+        <span
+          className="shrink-0 cursor-grab text-zinc-500 hover:text-zinc-300 active:cursor-grabbing"
+          aria-label="Drag to reorder"
+          title="Drag to reorder"
+        >
+          <GripVertical size={14} />
+        </span>
         <span className="shrink-0 w-5 text-center text-xs font-semibold text-amber-300 tabular-nums">{index}</span>
         <button onClick={() => setEditing(true)} className="min-w-0 flex-1 text-left">
           <div className="truncate text-sm text-zinc-100">{address}</div>
