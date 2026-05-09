@@ -104,37 +104,45 @@ export default function TvApp({ token }: { token: string }) {
         </div>
       )}
 
-      {/* ETA cards — bottom — VERY BIG. Left = next stop, right = final
-          destination. Both always render when ETA is available; if next ===
-          final (single-leg trip) they show the same numbers but consistency
-          across trips matters more than collapsing. */}
-      {eta && (eta.to_next || eta.to_final) && (
-        <div className="absolute bottom-8 left-8 right-8 z-30 grid grid-cols-2 gap-4">
-          {eta.to_next ? (
-            <EtaCard
-              kind="stop"
-              label={eta.to_next.label}
-              minutes={eta.to_next.eta_minutes}
-              miles={eta.to_next.distance_miles}
-              primary
-              titleOverride="Next stop"
-            />
-          ) : (
-            <div />
-          )}
-          {eta.to_final ? (
-            <EtaCard
-              kind="dropoff"
-              label={eta.to_final.label}
-              minutes={eta.to_final.eta_minutes}
-              miles={eta.to_final.distance_miles}
-              titleOverride="Final destination"
-            />
-          ) : (
-            <div />
-          )}
-        </div>
-      )}
+      {/* ETA cards — bottom. Left = next stop, right = final destination.
+          When the next stop IS the final destination (single-leg trip), the
+          next-stop card collapses and the final-destination card spans the
+          full width. */}
+      {(() => {
+        if (!eta || (!eta.to_next && !eta.to_final)) return null;
+        const sameTarget =
+          !!eta.to_next &&
+          !!eta.to_final &&
+          eta.to_next.label === eta.to_final.label;
+        return (
+          <div
+            className={`absolute bottom-8 left-8 right-8 z-30 grid gap-4 ${
+              sameTarget || !eta.to_next ? "grid-cols-1" : "grid-cols-2"
+            }`}
+          >
+            {!sameTarget && eta.to_next && (
+              <EtaCard
+                kind="stop"
+                label={eta.to_next.label}
+                minutes={eta.to_next.eta_minutes}
+                miles={eta.to_next.distance_miles}
+                primary
+                titleOverride="Next stop"
+              />
+            )}
+            {eta.to_final && (
+              <EtaCard
+                kind="dropoff"
+                label={eta.to_final.label}
+                minutes={eta.to_final.eta_minutes}
+                miles={eta.to_final.distance_miles}
+                titleOverride="Final destination"
+                primary={sameTarget}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {!focus && (
         <div className="absolute bottom-12 left-8 right-8 z-30 rounded-3xl border border-zinc-800 bg-zinc-950/80 px-12 py-10 text-center backdrop-blur shadow-2xl">
@@ -162,6 +170,12 @@ function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: s
 
 function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind: string; label: string; minutes: number; miles: number; primary?: boolean; titleOverride?: string }) {
   const Icon = kind === "dropoff" ? Flag : kind === "pickup" ? PinIcon : PinIcon;
+  // Estimated arrival time = now + ETA minutes, in PT.
+  const arrival = new Date(Date.now() + minutes * 60_000).toLocaleTimeString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  });
   return (
     <div
       className={`rounded-3xl border px-8 py-6 backdrop-blur shadow-2xl ${
@@ -181,6 +195,9 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
         <span className={`font-mono text-7xl font-bold tabular-nums ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
         <span className="text-2xl font-semibold text-zinc-500">min</span>
         <span className="ml-auto text-2xl font-mono tabular-nums text-zinc-400">{miles} mi</span>
+      </div>
+      <div className="mt-1 text-base text-zinc-500">
+        Arrive <span className="font-mono tabular-nums text-zinc-300">{arrival}</span>
       </div>
     </div>
   );
