@@ -542,17 +542,17 @@ function DroppedPinSheet({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const pinAddress = pin.address ?? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`;
+
   const setAsDestination = async () => {
     if (!live) return;
     setBusy(true);
     setErr(null);
     try {
-      await postJson(token, `/api/trips/${live.id}`, {});
-      // Use PATCH via fetch since postJson doesn't expose method override
       await fetch(`/api/trips/${live.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ dropoff_address: pin.address ?? `${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}` }),
+        body: JSON.stringify({ dropoff_address: pinAddress }),
       });
       onApplied();
     } catch (e) {
@@ -569,7 +569,7 @@ function DroppedPinSheet({
     try {
       await postJson(token, `/api/trips/${live.id}/stops`, {
         kind: "stop",
-        address: pin.address ?? `${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}`,
+        address: pinAddress,
         lat: pin.lat,
         lng: pin.lng,
       });
@@ -581,31 +581,99 @@ function DroppedPinSheet({
     }
   };
 
+  // No active trip — let Mark create one straight from the pin
+  const pickupHere = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await postJson(token, "/api/quick-pickup", {
+        lat: pin.lat,
+        lng: pin.lng,
+        address: pinAddress,
+        scheduled_at: new Date().toISOString(),
+        notes: `Pick me up at ${pinAddress}`,
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const takeMeHere = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const myGps = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+          resolve(null);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+          () => resolve(null),
+          { enableHighAccuracy: true, maximumAge: 10_000, timeout: 12_000 },
+        );
+      });
+      await postJson(token, "/api/quick-pickup", {
+        lat: myGps?.lat,
+        lng: myGps?.lng,
+        address: myGps ? "My current location" : "My location (unknown)",
+        dropoff_address: pinAddress,
+        dropoff_lat: pin.lat,
+        dropoff_lng: pin.lng,
+        scheduled_at: new Date().toISOString(),
+        notes: `Take me to ${pinAddress}`,
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Sheet title="Pin dropped" onClose={onClose}>
-      <div className="text-sm text-zinc-300">{pin.address ?? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`}</div>
-      {!live ? (
-        <div className="mt-3 text-xs text-zinc-500">
-          Need an active trip to set this as a destination or stop. Use Pickup or Dispatch first.
-        </div>
-      ) : (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
-            onClick={setAsDestination}
-            disabled={busy}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-          >
-            🏁 Set as destination
-          </button>
-          <button
-            onClick={addAsStop}
-            disabled={busy}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-3 py-3 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
-          >
-            🚩 Add as stop
-          </button>
-        </div>
-      )}
+      <div className="text-sm text-zinc-300">{pinAddress}</div>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {live ? (
+          <>
+            <button
+              onClick={setAsDestination}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              🏁 Set as destination
+            </button>
+            <button
+              onClick={addAsStop}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-3 py-3 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+            >
+              🚩 Add as stop on the way
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={takeMeHere}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              🏁 Take me here (pickup at my location)
+            </button>
+            <button
+              onClick={pickupHere}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-3 py-3 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              🚩 Pick me up here
+            </button>
+          </>
+        )}
+      </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </Sheet>
   );
