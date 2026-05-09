@@ -41,12 +41,13 @@ export default function LinkGenerator({ token, origin }: Props) {
     };
   }, [token]);
 
-  const mintTv = async () => {
+  const mintTv = async (regenerate = false) => {
     setBusy(true);
     try {
       const res = await postJson<{ token: string; reused: boolean }>(token, "/api/links", {
         role: "tv",
         name: "TV display",
+        regenerate,
       });
       setTvToken(res.token);
     } finally {
@@ -118,24 +119,26 @@ export default function LinkGenerator({ token, origin }: Props) {
       <div className="mt-5 border-t border-zinc-800 pt-4">
         <div className="text-xs uppercase tracking-wider text-zinc-500">In-van TV display</div>
         <div className="mt-2 text-sm text-zinc-300">
-          Open this URL in any browser on the Apple TV / passenger TV — it&apos;s a 4K-friendly, view-only live map.
+          Type this URL into the Apple TV / van TV browser. View-only live map.
         </div>
         {tvToken ? (
-          <div className="mt-3 flex items-center gap-2">
-            <code className="flex-1 truncate rounded-lg bg-black/40 p-2 font-mono text-[11px] text-blue-300">
-              {origin}/tv/{tvToken}
-            </code>
+          <>
+            <div className="mt-3 rounded-lg border border-blue-900/60 bg-blue-950/30 p-4 text-center">
+              <div className="font-mono text-2xl font-bold tracking-wide text-blue-200">
+                {origin.replace(/^https?:\/\//, "")}/tv/{tvToken}
+              </div>
+            </div>
             <button
-              onClick={() => copy("tv", `${origin}/tv/${tvToken}`)}
-              className="flex items-center gap-1 rounded-lg bg-zinc-800 px-3 py-2 text-xs hover:bg-zinc-700"
+              onClick={() => mintTv(true)}
+              disabled={busy}
+              className="mt-2 text-[11px] text-zinc-500 hover:text-zinc-300"
             >
-              {copied === "tv" ? <Check size={14} /> : <Copy size={14} />}
-              {copied === "tv" ? "Copied" : "Copy"}
+              Regenerate (old URL stops working)
             </button>
-          </div>
+          </>
         ) : (
           <button
-            onClick={mintTv}
+            onClick={() => mintTv(false)}
             disabled={busy}
             className="mt-3 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50"
           >

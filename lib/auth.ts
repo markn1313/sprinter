@@ -4,9 +4,16 @@ import { Link, Role, SessionContext } from "./types";
 
 const tokenAlphabet = "abcdefghjkmnpqrstuvwxyz23456789";
 const generate = customAlphabet(tokenAlphabet, 24);
+// Short 4-char tokens for TV-display URLs that have to be typed by remote control.
+// Alphabet excludes ambiguous chars (i/l/1, o/0).
+const generateShort = customAlphabet(tokenAlphabet, 4);
 
 export function newToken(): string {
   return generate();
+}
+
+export function newShortToken(): string {
+  return generateShort();
 }
 
 export type LinkStatus = "missing" | "expired" | "revoked" | "valid";
