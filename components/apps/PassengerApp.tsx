@@ -8,6 +8,7 @@ import { useEta } from "@/components/useEta";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
+import EtaBottomBar from "@/components/EtaBottomBar";
 import CabinControls from "@/components/CabinControls";
 import CabinChat from "@/components/CabinChat";
 import { statusLabel, shortTime } from "@/lib/format";
@@ -105,10 +106,10 @@ export default function PassengerApp({ token }: { token: string; name: string })
             </div>
           )}
 
-          {/* ETA badge bottom-left when active */}
+          {/* ETA bottom bar — full-width, two rows */}
           {isLive && eta && (
-            <div className="absolute left-3 bottom-3 z-30">
-              <EtaBadge eta={eta} variant="dual" />
+            <div className="absolute inset-x-3 bottom-3 z-30">
+              <EtaBottomBar eta={eta} />
             </div>
           )}
         </div>

@@ -13,6 +13,7 @@ import TripList from "@/components/TripList";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
+import EtaBottomBar from "@/components/EtaBottomBar";
 import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, statusLabel } from "@/lib/format";
@@ -309,18 +310,25 @@ function MapTab({
         </div>
       )}
 
-      {/* Floating ETA badge bottom-left when active trip */}
+      {/* ETA bottom bar — full-width, two rows (next stop + final destination) */}
       {live && eta && (
-        <button
-          onClick={() => setSheet("trip")}
-          className="absolute left-3 bottom-3 z-30"
-        >
-          <EtaBadge eta={eta} variant="dual" />
-        </button>
+        <div className="absolute inset-x-3 bottom-3 z-30 flex flex-col gap-2 sm:flex-row sm:items-stretch">
+          <button onClick={() => setSheet("trip")} className="flex-1 text-left">
+            <EtaBottomBar eta={eta} />
+          </button>
+          {navUrl && (
+            <a
+              href={navUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
+            >
+              <Navigation size={14} /> Maps
+            </a>
+          )}
+        </div>
       )}
-
-      {/* Floating Open-in-Maps button bottom-right when active */}
-      {navUrl && (
+      {!live && navUrl && (
         <a
           href={navUrl}
           target="_blank"
