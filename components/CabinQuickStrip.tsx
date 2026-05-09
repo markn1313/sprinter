@@ -2,19 +2,16 @@
 
 import { useState } from "react";
 import { postJson } from "@/lib/api-client";
-import { Fan, Check } from "lucide-react";
+import { Check } from "lucide-react";
 
 interface Props {
   token: string;
   tripId?: string | null;
 }
 
-// Compact cabin-control row overlaying the main map. Tap → fires a cabin_request
-// that surfaces as a toast in the driver app. Icons:
-//   ▲ red   = Warmer
-//   ▼ blue  = Cooler
-//   big Fan = Fan up
-//   small Fan = Fan down
+// Compact cabin-control row overlaying the main map. Inline SVG icons so colors
+// and sizes render reliably on iOS (Unicode triangles are sometimes drawn with
+// the system emoji font and ignore CSS color).
 export default function CabinQuickStrip({ token, tripId }: Props) {
   const [recent, setRecent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,16 +30,16 @@ export default function CabinQuickStrip({ token, tripId }: Props) {
   return (
     <div className="flex items-center gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1.5 backdrop-blur shadow-2xl">
       <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer">
-        <span className="text-2xl leading-none text-red-500">▲</span>
+        <TriangleUp />
       </Btn>
       <Btn kind="cooler" onClick={send} busy={busy} just={recent === "cooler"} title="Cooler">
-        <span className="text-2xl leading-none text-blue-400">▼</span>
+        <TriangleDown />
       </Btn>
       <Btn kind="fan_up" onClick={send} busy={busy} just={recent === "fan_up"} title="More fan">
-        <Fan size={22} className="text-zinc-100" />
+        <FanIcon size={28} />
       </Btn>
       <Btn kind="fan_down" onClick={send} busy={busy} just={recent === "fan_down"} title="Less fan">
-        <Fan size={12} className="text-zinc-400" />
+        <FanIcon size={14} />
       </Btn>
     </div>
   );
@@ -75,5 +72,36 @@ function Btn({
     >
       {just ? <Check size={18} className="text-white" /> : children}
     </button>
+  );
+}
+
+function TriangleUp() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+      <polygon points="12,3 22,21 2,21" fill="#ef4444" />
+    </svg>
+  );
+}
+
+function TriangleDown() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+      <polygon points="12,21 22,3 2,3" fill="#3b82f6" />
+    </svg>
+  );
+}
+
+// 4-bladed pinwheel fan
+function FanIcon({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <g fill="#e4e4e7">
+        <path d="M12 12 C 12 4, 4 4, 12 12 Z" />
+        <path d="M12 12 C 20 12, 20 4, 12 12 Z" />
+        <path d="M12 12 C 12 20, 20 20, 12 12 Z" />
+        <path d="M12 12 C 4 12, 4 20, 12 12 Z" />
+        <circle cx="12" cy="12" r="1.6" fill="#52525b" />
+      </g>
+    </svg>
   );
 }
