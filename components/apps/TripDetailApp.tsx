@@ -264,12 +264,11 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
 
         {/* Waypoint sequence — tap any + to insert a stop at that position */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-          <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Route</div>
-          <ul className="space-y-2">
+          <div className="mb-3 text-xs uppercase tracking-wider text-zinc-500">Route</div>
+          <ul className="flex flex-col gap-3">
             {trip.pickup_address && (
               <Waypoint kind="pickup" label={trip.pickup_address} subline="Pickup" />
             )}
-            {/* + after pickup → insert at index 0 */}
             <InsertStop token={token} index={0} onAdd={addStopAt} />
             {stops.map((s, i) => (
               <React.Fragment key={s.id}>
@@ -279,7 +278,6 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
                   subline={`Stop ${i + 1}${s.category ? ` · ${s.category}` : ""}`}
                   onRemove={() => removeStop(s.id)}
                 />
-                {/* + after this stop → insert at index i+1 */}
                 <InsertStop token={token} index={i + 1} onAdd={addStopAt} />
               </React.Fragment>
             ))}
@@ -354,37 +352,39 @@ function InsertStop({
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
-      <li className="-my-1 flex items-center pl-2">
+      <li className="flex items-center gap-2 pl-9">
         <button
           onClick={() => setOpen(true)}
-          className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-2.5 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+          className="flex items-center gap-1.5 rounded-full border border-dashed border-zinc-700 bg-zinc-900/50 px-3 py-1 text-[11px] text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
         >
-          <span className="text-base leading-none">+</span> add stop here
+          <span className="text-sm leading-none">+</span> add stop here
         </button>
       </li>
     );
   }
   return (
-    <li className="rounded-xl bg-zinc-900/60 px-2 py-2">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wider text-zinc-500">
-          Insert stop at position {index + 1}
-        </span>
-        <button
-          onClick={() => setOpen(false)}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
-        >
-          <X size={12} />
-        </button>
+    <li className="flex items-start gap-2 pl-9">
+      <div className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/60 p-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+            Insert stop at position {index + 1}
+          </span>
+          <button
+            onClick={() => setOpen(false)}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
+          >
+            <X size={12} />
+          </button>
+        </div>
+        <AddressAutocomplete
+          token={token}
+          placeholder="Type any address — autocompletes"
+          onSelect={(r) => {
+            onAdd(index, r);
+            setOpen(false);
+          }}
+        />
       </div>
-      <AddressAutocomplete
-        token={token}
-        placeholder="Type any address — autocompletes"
-        onSelect={(r) => {
-          onAdd(index, r);
-          setOpen(false);
-        }}
-      />
     </li>
   );
 }
@@ -393,16 +393,16 @@ function Waypoint({ kind, label, subline, onRemove }: { kind: "pickup" | "stop" 
   const glyph = kind === "dropoff" ? "🏁" : "🚩";
   const color = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
   return (
-    <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-2">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-lg">{glyph}</span>
+    <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex w-7 shrink-0 items-center justify-center text-base leading-none">{glyph}</span>
         <div className="min-w-0">
           <div className={`text-[10px] uppercase tracking-wider ${color}`}>{subline}</div>
           <div className="truncate text-sm text-zinc-100">{label}</div>
         </div>
       </div>
       {onRemove && (
-        <button onClick={onRemove} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400">
+        <button onClick={onRemove} className="shrink-0 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400">
           <X size={14} />
         </button>
       )}
