@@ -9,6 +9,7 @@ import { useMarkGpsReporter } from "@/components/useMarkLocation";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import LinkGenerator from "@/components/LinkGenerator";
+import PushToggle from "@/components/PushToggle";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
@@ -861,6 +862,7 @@ function getGps(): Promise<{ lat: number; lng: number }> {
 function SettingsTab({ token, origin }: { token: string; origin: string }) {
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
+      <PushToggle token={token} />
       <BouncieConnectCard token={token} />
       <LinkGenerator token={token} origin={origin} />
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">

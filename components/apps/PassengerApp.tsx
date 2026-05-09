@@ -10,6 +10,7 @@ import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import EtaBottomBar from "@/components/EtaBottomBar";
 import CabinControls from "@/components/CabinControls";
+import PushToggle from "@/components/PushToggle";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import CabinChat from "@/components/CabinChat";
 import { statusLabel, shortTime } from "@/lib/format";
@@ -139,6 +140,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm text-zinc-400">
               Tap any chip — your driver sees the request as a banner at the top of his app and adjusts the climate.
             </div>
+            <PushToggle token={token} />
           </main>
         </div>
       )}
