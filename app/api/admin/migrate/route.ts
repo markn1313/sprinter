@@ -10,10 +10,22 @@ import { join } from "node:path";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  // Accept the service-role key via Authorization header OR ?key=… —
+  // Vercel's deployment-protection rewrite tends to strip Bearer headers
+  // before our handler sees them.
   const auth = req.headers.get("authorization") ?? "";
-  const provided = auth.replace(/^Bearer\s+/i, "");
+  const headerKey = auth.replace(/^Bearer\s+/i, "");
+  const url = new URL(req.url);
+  const queryKey = url.searchParams.get("key") ?? "";
+  const provided = headerKey || queryKey;
   if (!provided || provided !== process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      {
+        error: "unauthorized",
+        hint: `header=${auth ? "yes" : "no"}, query=${queryKey ? "yes" : "no"}, env=${process.env.SUPABASE_SERVICE_ROLE_KEY ? "yes" : "no"}`,
+      },
+      { status: 401 },
+    );
   }
 
   const conn = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
