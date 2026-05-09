@@ -1,6 +1,8 @@
 // Free geocoding via OpenStreetMap Nominatim. No key required.
 // Throttle: ~1 request/second per Nominatim's usage policy.
 
+import { shortenAddress } from "./address-format";
+
 export interface GeoPoint {
   lat: number;
   lng: number;
