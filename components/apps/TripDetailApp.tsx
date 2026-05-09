@@ -2,18 +2,18 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Trip } from "@/lib/types";
-import { api, postJson } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 import { useEta } from "@/components/useEta";
 import { usePosition } from "@/components/usePosition";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
-import { dollars, statusLabel, statusColor, shortTime, shortDate } from "@/lib/format";
+import { dollars, shortTime, shortDate } from "@/lib/format";
 import { googleMapsMultiStop } from "@/lib/maps-link";
 import { Navigation, X, Save, Loader2, MessageSquare } from "lucide-react";
 
-interface Stop {
+interface ServerStop {
   id: string;
   kind: "pickup" | "dropoff" | "stop";
   category?: string;
@@ -24,29 +24,34 @@ interface Stop {
 }
 
 interface TripWithStops extends Trip {
-  stops?: Stop[];
+  stops?: ServerStop[];
   route_polyline?: string | null;
+}
+
+// Unified waypoint — first = pickup, last = dropoff, middle = intermediate stops.
+// `serverId` is "pickup" / "dropoff" for the boundary slots, the row's UUID for
+// existing intermediate stops, or "new" for freshly-inserted local entries.
+interface Waypoint {
+  id: string;
+  serverId: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  arrived_at?: string | null;
 }
 
 interface TripDetailProps {
   token: string;
   tripId: string;
-  // When provided, rendered as an in-app overlay (no page navigation) and uses
-  // this callback for the back button instead of routing.
   onBack?: () => void;
-  // When true, the map is omitted (the parent already has one rendered) so we
-  // never have two Mapbox instances racing each other on iOS Safari.
   hideMap?: boolean;
 }
 
-export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDetailProps) {
+export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProps) {
   const [trip, setTrip] = useState<TripWithStops | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
   const [scheduled, setScheduled] = useState("");
   const [passenger, setPassenger] = useState("");
-  const [pickup, setPickup] = useState("");
-  const [dropoff, setDropoff] = useState("");
   const [busy, setBusy] = useState(false);
   const { pos } = usePosition(token, 8000);
   const { eta: serverEta } = useEta(token, tripId, 25_000);
@@ -59,8 +64,6 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
       setTrip(t);
       if (t) {
         setPassenger(t.passenger_name);
-        setPickup(t.pickup_address ?? "");
-        setDropoff(t.dropoff_address ?? "");
         setScheduled(toLocalInput(t.scheduled_at));
       }
     } catch (err) {
@@ -74,43 +77,62 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
     return () => clearInterval(t);
   }, [tripId, token]);
 
-  // Local staged stops — edits are NOT pushed to the driver until "Update driver" is tapped
-  const [localStops, setLocalStops] = useState<Stop[] | null>(null);
-  useEffect(() => {
-    if (trip && localStops === null) {
-      setLocalStops(trip.stops ?? []);
+  // Server-side view of the route (pickup → stops → dropoff) as a unified list
+  const serverOrdered = useMemo<Waypoint[]>(() => {
+    if (!trip) return [];
+    const list: Waypoint[] = [];
+    if (trip.pickup_address || trip.pickup_lat != null) {
+      list.push({
+        id: "pickup",
+        serverId: "pickup",
+        address: trip.pickup_address ?? "",
+        lat: trip.pickup_lat,
+        lng: trip.pickup_lng,
+      });
     }
-  }, [trip, localStops]);
-  const stops = localStops ?? trip?.stops ?? [];
-  const serverStops = trip?.stops ?? [];
-  const isDirty =
-    localStops !== null &&
-    (localStops.length !== serverStops.length ||
-      localStops.some((s, i) => s.id !== serverStops[i]?.id));
+    (trip.stops ?? []).forEach((s) => {
+      list.push({
+        id: s.id,
+        serverId: s.id,
+        address: s.address,
+        lat: s.lat,
+        lng: s.lng,
+        arrived_at: s.arrived_at,
+      });
+    });
+    if (trip.dropoff_address || trip.dropoff_lat != null) {
+      list.push({
+        id: "dropoff",
+        serverId: "dropoff",
+        address: trip.dropoff_address ?? "",
+        lat: trip.dropoff_lat,
+        lng: trip.dropoff_lng,
+      });
+    }
+    return list;
+  }, [trip]);
 
-  // When the user has staged changes, compute a preview ETA against the local
-  // waypoint sequence so the badge reflects what they're about to push.
+  // Local-staged ordered list — null until the user makes a change
+  const [localOrdered, setLocalOrdered] = useState<Waypoint[] | null>(null);
+  const ordered = localOrdered ?? serverOrdered;
+
+  const isDirty =
+    localOrdered !== null && !sameOrdered(localOrdered, serverOrdered);
+
+  // Live preview ETA against the staged route
   useEffect(() => {
-    if (!isDirty || !trip) {
+    if (!isDirty || !trip || ordered.length < 2) {
       setPreviewEta(null);
       return;
     }
-    const upcoming: Array<{ lat: number; lng: number; kind: string; label: string }> = [];
-    if (
-      (trip.status === "scheduled" || trip.status === "dispatched") &&
-      trip.pickup_lat != null &&
-      trip.pickup_lng != null
-    ) {
-      upcoming.push({ lat: trip.pickup_lat, lng: trip.pickup_lng, kind: "pickup", label: trip.pickup_address ?? "Pickup" });
-    }
-    stops.forEach((s) => {
-      if (s.lat != null && s.lng != null) {
-        upcoming.push({ lat: s.lat, lng: s.lng, kind: "stop", label: s.address });
-      }
-    });
-    if (trip.dropoff_lat != null && trip.dropoff_lng != null) {
-      upcoming.push({ lat: trip.dropoff_lat, lng: trip.dropoff_lng, kind: "dropoff", label: trip.dropoff_address ?? "Dropoff" });
-    }
+    const upcoming = ordered
+      .filter((w) => w.lat != null && w.lng != null)
+      .map((w, i, arr) => ({
+        lat: w.lat as number,
+        lng: w.lng as number,
+        kind: i === 0 ? "pickup" : i === arr.length - 1 ? "dropoff" : "stop",
+        label: w.address,
+      }));
     let cancelled = false;
     (async () => {
       try {
@@ -129,36 +151,41 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
     return () => {
       cancelled = true;
     };
-  }, [isDirty, stops, trip, token]);
+  }, [isDirty, ordered, trip, token]);
 
   const eta = isDirty ? previewEta : serverEta;
 
+  // Map pins — keep visual distinction on the map (start flag, finish flag,
+  // numbered stops in between) since that's helpful for orientation. Only the
+  // text list below is unified.
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
-    if (trip?.pickup_lat != null && trip.pickup_lng != null)
-      out.push({ kind: "pickup", lat: trip.pickup_lat, lng: trip.pickup_lng, label: trip.pickup_address ?? undefined });
-    if (trip?.dropoff_lat != null && trip.dropoff_lng != null)
-      out.push({ kind: "dropoff", lat: trip.dropoff_lat, lng: trip.dropoff_lng, label: trip.dropoff_address ?? undefined });
-    stops.forEach((s, i) => {
-      if (s.lat != null && s.lng != null) out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+    ordered.forEach((w, i) => {
+      if (w.lat == null || w.lng == null) return;
+      const kind = i === 0 ? "pickup" : i === ordered.length - 1 ? "dropoff" : "stop";
+      out.push({
+        kind,
+        lat: w.lat,
+        lng: w.lng,
+        label: w.address || undefined,
+        ...(kind === "stop" ? { index: i } : {}),
+      });
     });
     return out;
-  }, [trip, stops]);
+  }, [ordered]);
 
   const polyline = trip?.route_polyline ?? eta?.polyline ?? null;
 
   const navUrl = useMemo(() => {
-    if (!trip) return null;
     const wp: Array<{ lat: number; lng: number; label?: string }> = [];
-    if (trip.pickup_lat != null && trip.pickup_lng != null) wp.push({ lat: trip.pickup_lat, lng: trip.pickup_lng });
-    stops.forEach((s) => { if (s.lat != null && s.lng != null) wp.push({ lat: s.lat, lng: s.lng }); });
-    if (trip.dropoff_lat != null && trip.dropoff_lng != null)
-      wp.push({ lat: trip.dropoff_lat, lng: trip.dropoff_lng, label: trip.dropoff_address ?? undefined });
+    ordered.forEach((w) => {
+      if (w.lat != null && w.lng != null) wp.push({ lat: w.lat, lng: w.lng, label: w.address });
+    });
     if (wp.length < 1) return null;
     return googleMapsMultiStop(wp);
-  }, [trip, stops]);
+  }, [ordered]);
 
-  const save = async () => {
+  const savePassengerOrSchedule = async () => {
     setBusy(true);
     try {
       await fetch(`/api/trips/${tripId}`, {
@@ -166,53 +193,120 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           passenger_name: passenger,
-          pickup_address: pickup || null,
-          dropoff_address: dropoff || null,
           scheduled_at: fromLocalInput(scheduled),
         }),
       });
-      setEditing(false);
       await refresh();
     } finally {
       setBusy(false);
     }
   };
 
-  // Local-only operations — stage changes without pushing to driver
-  const removeStop = (stopId: string) => {
-    setLocalStops((prev) => (prev ?? []).filter((s) => s.id !== stopId));
+  const startEdit = (): Waypoint[] => localOrdered ?? serverOrdered;
+
+  const removeAt = (index: number) => {
+    setLocalOrdered((prev) => {
+      const cur = prev ?? serverOrdered;
+      return cur.filter((_, i) => i !== index);
+    });
   };
 
-  const addStopAt = (
-    index: number,
-    r: { lat: number; lng: number; display: string },
-  ) => {
-    setLocalStops((prev) => {
-      const cur = prev ?? [];
-      const newStop: Stop = {
-        id: crypto.randomUUID(),
-        kind: "stop",
+  const replaceAt = (index: number, r: { lat: number; lng: number; display: string }) => {
+    setLocalOrdered((prev) => {
+      const cur = prev ?? serverOrdered;
+      const next = [...cur];
+      const existing = next[index];
+      next[index] = {
+        id: existing?.id ?? crypto.randomUUID(),
+        serverId: existing?.serverId ?? "new",
         address: r.display,
         lat: r.lat,
         lng: r.lng,
-      } as Stop;
-      const next = [...cur];
-      next.splice(Math.max(0, Math.min(next.length, index)), 0, newStop);
+      };
       return next;
     });
   };
 
+  const insertAt = (index: number, r: { lat: number; lng: number; display: string }) => {
+    setLocalOrdered((prev) => {
+      const cur = prev ?? serverOrdered;
+      const newWp: Waypoint = {
+        id: crypto.randomUUID(),
+        serverId: "new",
+        address: r.display,
+        lat: r.lat,
+        lng: r.lng,
+      };
+      const next = [...cur];
+      next.splice(Math.max(0, Math.min(next.length, index)), 0, newWp);
+      return next;
+    });
+    // touch to suppress the unused-variable warning if startEdit ever isn't called
+    void startEdit;
+  };
+
   const pushUpdateToDriver = async () => {
-    if (!localStops) return;
+    if (!localOrdered || localOrdered.length < 2) return;
     setBusy(true);
     try {
-      await fetch(`/api/trips/${tripId}/stops`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: localStops }),
-      });
-      // Re-pull from server so we sync with whatever was geocoded server-side
-      setLocalStops(null);
+      const list = localOrdered;
+      const first = list[0];
+      const last = list[list.length - 1];
+      const middle = list.slice(1, -1);
+
+      const oldFirst = serverOrdered[0];
+      const oldLast = serverOrdered[serverOrdered.length - 1];
+      const pickupChanged =
+        !oldFirst ||
+        oldFirst.address !== first.address ||
+        oldFirst.lat !== first.lat ||
+        oldFirst.lng !== first.lng;
+      const dropoffChanged =
+        !oldLast ||
+        oldLast.address !== last.address ||
+        oldLast.lat !== last.lat ||
+        oldLast.lng !== last.lng;
+
+      if (pickupChanged || dropoffChanged) {
+        const body: Record<string, unknown> = {};
+        if (pickupChanged) {
+          body.pickup_address = first.address;
+          body.pickup_lat = first.lat;
+          body.pickup_lng = first.lng;
+        }
+        if (dropoffChanged) {
+          body.dropoff_address = last.address;
+          body.dropoff_lat = last.lat;
+          body.dropoff_lng = last.lng;
+        }
+        await fetch(`/api/trips/${tripId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
+
+      const serverMiddle = serverOrdered.slice(1, -1);
+      const middleChanged = !sameOrdered(middle, serverMiddle);
+      if (middleChanged) {
+        await fetch(`/api/trips/${tripId}/stops`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stops: middle.map((w) => ({
+              id:
+                w.serverId !== "new" && w.serverId !== "pickup" && w.serverId !== "dropoff"
+                  ? w.serverId
+                  : undefined,
+              address: w.address,
+              lat: w.lat,
+              lng: w.lng,
+              kind: "stop",
+            })),
+          }),
+        });
+      }
+      setLocalOrdered(null);
       await refresh();
     } finally {
       setBusy(false);
@@ -220,27 +314,20 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   };
 
   const discardChanges = () => {
-    setLocalStops(trip?.stops ?? []);
+    setLocalOrdered(null);
   };
 
-  const deleteTrip = async () => {
-    if (!confirm("Delete this trip? This can't be undone.")) return;
-    await fetch(`/api/trips/${tripId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (onBack) onBack();
-    else window.location.href = `/m/${token}`;
-  };
-
-  // Driver token (singleton) — must be declared with hooks BEFORE any early
-  // return below, or React's hook ordering breaks (#310).
+  // Driver token (singleton) for invite link — hooks must be declared before
+  // any early return below, or React's hook ordering breaks (#310).
   const [driverToken, setDriverToken] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await api<{ links: Array<{ role: string; token: string }> }>(token, "/api/links");
+        const data = await api<{ links: Array<{ role: string; token: string }> }>(
+          token,
+          "/api/links",
+        );
         if (cancelled) return;
         const dio = data.links.find((l) => l.role === "dio");
         if (dio) setDriverToken(dio.token);
@@ -256,8 +343,6 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
 
-  // Build invite SMS hrefs (passenger + driver). Driver uses the persistent
-  // singleton link minted in Settings. Passenger uses the per-trip token.
   const passengerUrl =
     typeof window !== "undefined" && trip?.passenger_link_token
       ? `${window.location.origin}/p/${trip.passenger_link_token}`
@@ -276,7 +361,6 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
 
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
-      {/* Top-right invite buttons — passenger and driver */}
       {(passengerInviteHref || driverInviteHref) && (
         <div className="flex items-center justify-end gap-2 px-3 pt-3">
           {driverInviteHref && (
@@ -284,7 +368,7 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
               href={driverInviteHref}
               className="flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
             >
-              <MessageSquare size={12} /> Driver
+              <MessageSquare size={12} /> Invite Driver
             </a>
           )}
           {passengerInviteHref && (
@@ -292,13 +376,12 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
               href={passengerInviteHref}
               className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
             >
-              <MessageSquare size={12} /> Passenger
+              <MessageSquare size={12} /> Invite Guests
             </a>
           )}
         </div>
       )}
       <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
-        {/* Map — omitted when embedded (parent already has one) */}
         {!hideMap && (
           <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
             <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
@@ -323,78 +406,40 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
           </div>
         )}
 
-        {/* Single consolidated trip card — tap any row to edit inline */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
           <ul className="flex flex-col gap-3">
-            {/* Passenger */}
             <EditableField
               label="Passenger"
               value={passenger}
               onChange={setPassenger}
-              onCommit={save}
+              onCommit={savePassengerOrSchedule}
             />
 
-            {/* Scheduled time */}
             <EditableField
               label="Scheduled"
               value={scheduled}
               displayValue={`${shortDate(trip.scheduled_at)} · ${shortTime(trip.scheduled_at)}`}
               type="datetime-local"
               onChange={setScheduled}
-              onCommit={save}
+              onCommit={savePassengerOrSchedule}
             />
 
-            {/* Pickup */}
-            <EditableAddress
-              label="Pickup"
-              kind="pickup"
-              value={pickup}
-              displayValue={trip.pickup_address ?? "(not set)"}
-              token={token}
-              onSelect={async (r) => {
-                setPickup(r.display);
-                await fetch(`/api/trips/${tripId}`, {
-                  method: "PATCH",
-                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ pickup_address: r.display }),
-                });
-                refresh();
-              }}
-            />
+            {/* Insert before everything */}
+            <InsertStop token={token} index={0} onAdd={insertAt} />
 
-            {/* Insert stop at position 0 */}
-            <InsertStop token={token} index={0} onAdd={addStopAt} />
-
-            {/* Stops */}
-            {stops.map((s, i) => (
-              <React.Fragment key={s.id}>
-                <Waypoint
-                  kind="stop"
-                  label={s.address}
-                  subline={`Stop ${i + 1}${s.category ? ` · ${s.category}` : ""}`}
-                  onRemove={() => removeStop(s.id)}
+            {/* Unified stop list — pickup/intermediate/dropoff all rendered the same */}
+            {ordered.map((w, i) => (
+              <React.Fragment key={`${w.id}-${i}`}>
+                <UnifiedStop
+                  index={i + 1}
+                  address={w.address || "(not set)"}
+                  token={token}
+                  onChange={(r) => replaceAt(i, r)}
+                  onRemove={() => removeAt(i)}
                 />
-                <InsertStop token={token} index={i + 1} onAdd={addStopAt} />
+                <InsertStop token={token} index={i + 1} onAdd={insertAt} />
               </React.Fragment>
             ))}
-
-            {/* Final destination */}
-            <EditableAddress
-              label="Final destination"
-              kind="dropoff"
-              value={dropoff}
-              displayValue={trip.dropoff_address ?? "(not set)"}
-              token={token}
-              onSelect={async (r) => {
-                setDropoff(r.display);
-                await fetch(`/api/trips/${tripId}`, {
-                  method: "PATCH",
-                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ dropoff_address: r.display }),
-                });
-                refresh();
-              }}
-            />
 
             {trip.driver_pay_cents != null && (
               <div className="mt-1 text-xs text-emerald-300">Driver pay: {dollars(trip.driver_pay_cents)}</div>
@@ -402,7 +447,6 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
           </ul>
         </div>
 
-        {/* Update driver — only when there are pending route changes */}
         {isDirty && (
           <div className="sticky bottom-3 z-30 rounded-2xl border border-amber-700/60 bg-amber-950/40 p-3 backdrop-blur shadow-2xl">
             <div className="mb-2 text-[11px] uppercase tracking-wider text-amber-300">
@@ -411,7 +455,7 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
             <div className="flex gap-2">
               <button
                 onClick={pushUpdateToDriver}
-                disabled={busy}
+                disabled={busy || ordered.length < 2}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Update driver
@@ -426,20 +470,19 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
 }
 
-const inputCls = "w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-700";
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <div className="mb-1 text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
-      {children}
-    </label>
+function sameOrdered(a: Waypoint[], b: Waypoint[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (x, i) =>
+      x.serverId === b[i].serverId &&
+      x.address === b[i].address &&
+      x.lat === b[i].lat &&
+      x.lng === b[i].lng,
   );
 }
 
@@ -495,49 +538,49 @@ function EditableField({
   );
 }
 
-function EditableAddress({
-  label,
-  kind,
-  displayValue,
+function UnifiedStop({
+  index,
+  address,
   token,
-  onSelect,
+  onChange,
+  onRemove,
 }: {
-  label: string;
-  kind: "pickup" | "dropoff";
-  value: string;
-  displayValue: string;
+  index: number;
+  address: string;
   token: string;
-  onSelect: (r: { lat: number; lng: number; display: string }) => Promise<void> | void;
+  onChange: (r: { lat: number; lng: number; display: string }) => void;
+  onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const accent = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
   if (!editing) {
     return (
-      <li
-        onClick={() => setEditing(true)}
-        className="cursor-pointer rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
-      >
-        <div className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</div>
-        <div className="mt-0.5 truncate text-sm text-zinc-100">{displayValue}</div>
+      <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3">
+        <button onClick={() => setEditing(true)} className="min-w-0 flex-1 text-left">
+          <div className="text-[10px] uppercase tracking-wider text-amber-300">Stop {index}</div>
+          <div className="mt-0.5 truncate text-sm text-zinc-100">{address}</div>
+        </button>
+        <button
+          onClick={onRemove}
+          className="shrink-0 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
+        >
+          <X size={14} />
+        </button>
       </li>
     );
   }
   return (
     <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</span>
-        <button
-          onClick={() => setEditing(false)}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
-        >
+        <span className="text-[10px] uppercase tracking-wider text-amber-300">Stop {index}</span>
+        <button onClick={() => setEditing(false)} className="rounded p-1 text-zinc-400 hover:bg-zinc-800">
           <X size={12} />
         </button>
       </div>
       <AddressAutocomplete
         token={token}
-        placeholder={kind === "pickup" ? "home · Wynn lobby · address" : "LAX · Cosmopolitan · etc"}
-        onSelect={async (r) => {
-          await onSelect(r);
+        placeholder="Type any address — autocompletes"
+        onSelect={(r) => {
+          onChange(r);
           setEditing(false);
         }}
       />
@@ -573,10 +616,7 @@ function InsertStop({
         <span className="text-[10px] uppercase tracking-wider text-zinc-500">
           Insert stop at position {index + 1}
         </span>
-        <button
-          onClick={() => setOpen(false)}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
-        >
+        <button onClick={() => setOpen(false)} className="rounded p-1 text-zinc-400 hover:bg-zinc-800">
           <X size={12} />
         </button>
       </div>
@@ -588,23 +628,6 @@ function InsertStop({
           setOpen(false);
         }}
       />
-    </li>
-  );
-}
-
-function Waypoint({ kind, label, subline, onRemove }: { kind: "pickup" | "stop" | "dropoff"; label: string; subline: string; onRemove?: () => void }) {
-  const color = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
-  return (
-    <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3">
-      <div className="min-w-0 flex-1">
-        <div className={`text-[10px] uppercase tracking-wider ${color}`}>{subline}</div>
-        <div className="truncate text-sm text-zinc-100">{label}</div>
-      </div>
-      {onRemove && (
-        <button onClick={onRemove} className="shrink-0 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400">
-          <X size={14} />
-        </button>
-      )}
     </li>
   );
 }

@@ -17,7 +17,11 @@ export async function PATCH(
     | {
         passenger_name?: string;
         pickup_address?: string | null;
+        pickup_lat?: number | null;
+        pickup_lng?: number | null;
         dropoff_address?: string | null;
+        dropoff_lat?: number | null;
+        dropoff_lng?: number | null;
         scheduled_at?: string;
         notes?: string;
       }
@@ -31,10 +35,14 @@ export async function PATCH(
   if (typeof body.scheduled_at === "string") update.scheduled_at = body.scheduled_at;
   if (typeof body.notes === "string") update.notes = body.notes;
 
-  // If addresses change, re-geocode
-  if (body.pickup_address !== undefined) {
-    update.pickup_address = body.pickup_address;
-    if (body.pickup_address) {
+  // Pickup: if lat/lng explicitly provided, trust them (skip geocoding); else
+  // if address is provided alone, geocode it.
+  if (body.pickup_address !== undefined || body.pickup_lat !== undefined || body.pickup_lng !== undefined) {
+    if (body.pickup_address) update.pickup_address = body.pickup_address;
+    if (body.pickup_lat !== undefined && body.pickup_lng !== undefined) {
+      update.pickup_lat = body.pickup_lat;
+      update.pickup_lng = body.pickup_lng;
+    } else if (body.pickup_address) {
       const g = await geocode(body.pickup_address);
       if (g) {
         update.pickup_address = g.display;
@@ -44,14 +52,18 @@ export async function PATCH(
         update.pickup_lat = null;
         update.pickup_lng = null;
       }
-    } else {
+    } else if (body.pickup_address === null) {
+      update.pickup_address = null;
       update.pickup_lat = null;
       update.pickup_lng = null;
     }
   }
-  if (body.dropoff_address !== undefined) {
-    update.dropoff_address = body.dropoff_address;
-    if (body.dropoff_address) {
+  if (body.dropoff_address !== undefined || body.dropoff_lat !== undefined || body.dropoff_lng !== undefined) {
+    if (body.dropoff_address) update.dropoff_address = body.dropoff_address;
+    if (body.dropoff_lat !== undefined && body.dropoff_lng !== undefined) {
+      update.dropoff_lat = body.dropoff_lat;
+      update.dropoff_lng = body.dropoff_lng;
+    } else if (body.dropoff_address) {
       const g = await geocode(body.dropoff_address);
       if (g) {
         update.dropoff_address = g.display;
@@ -61,7 +73,8 @@ export async function PATCH(
         update.dropoff_lat = null;
         update.dropoff_lng = null;
       }
-    } else {
+    } else if (body.dropoff_address === null) {
+      update.dropoff_address = null;
       update.dropoff_lat = null;
       update.dropoff_lng = null;
     }
