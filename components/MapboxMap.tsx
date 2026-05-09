@@ -164,7 +164,39 @@ export default function MapboxMap({
     });
 
     mapRef.current = map;
+
+    // iOS PWA + Mobile Safari sometimes settle on the final viewport size
+    // 100–500ms AFTER the map initializes, leaving Mapbox's canvas measured
+    // at the smaller initial value. ResizeObserver catches every container
+    // resize (orientation change, URL bar collapse, tab show/hide) and tells
+    // Mapbox to re-measure. We also fire a few `resize()` calls right after
+    // mount as belt-and-suspenders for the first-paint case.
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(() => {
+        try {
+          map.resize();
+        } catch {
+          /* map may be torn down */
+        }
+      });
+      ro.observe(containerRef.current);
+    } catch {
+      // ResizeObserver unavailable — skip silently
+    }
+    const resizeTimers = [50, 200, 500, 1500].map((ms) =>
+      setTimeout(() => {
+        try {
+          map.resize();
+        } catch {}
+      }, ms),
+    );
+
     return () => {
+      resizeTimers.forEach((t) => clearTimeout(t));
+      try {
+        ro?.disconnect();
+      } catch {}
       // Aggressively null out marker refs before tearing down the map so any
       // queued mutation observers don't try to read removed DOM nodes.
       try {
