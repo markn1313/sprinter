@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { useRealtime } from "@/components/useRealtime";
 
-export function useTrips(token: string, intervalMs = 5000) {
+export function useTrips(token: string, intervalMs = 30000) {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +37,9 @@ export function useTrips(token: string, intervalMs = 5000) {
       if (timer) clearTimeout(timer);
     };
   }, [refresh, intervalMs]);
+
+  // Realtime makes polling a fallback only.
+  useRealtime({ table: "trips", onChange: refresh });
 
   return { trips, loading, error, refresh };
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { logTripEvent } from "@/lib/log";
+import { sendPushToRole } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
 
@@ -67,5 +69,47 @@ export async function POST(req: Request) {
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Best-effort: log against the active trip if one is in progress.
+  void (async () => {
+    try {
+      const { data: activeTrip } = await supabaseAdmin()
+        .from("trips")
+        .select("id")
+        .in("status", ["dispatched", "at_pickup", "onboard", "at_dropoff"])
+        .order("scheduled_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (activeTrip?.id) {
+        logTripEvent({
+          trip_id: activeTrip.id,
+          kind: "message_sent",
+          actor_token: ctx.token,
+          payload: {
+            thread,
+            sender_role: ctx.role,
+            body_preview: data.body.slice(0, 80),
+          },
+        });
+      }
+    } catch {
+      // ignore
+    }
+  })();
+
+  // Push the OTHER party
+  void (async () => {
+    try {
+      const otherRole: "mark" | "dio" = ctx.role === "mark" ? "dio" : "mark";
+      await sendPushToRole(otherRole, {
+        title: ctx.role === "mark" ? "Mark" : "Driver",
+        body: data.body.slice(0, 80),
+        tag: "chat-" + thread,
+      });
+    } catch {
+      // non-fatal
+    }
+  })();
+
   return NextResponse.json({ message: data });
 }

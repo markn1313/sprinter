@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { TripStatus } from "@/lib/types";
+import { logTripEvent } from "@/lib/log";
+import { sendPushToRole, sendPushToTripPassenger } from "@/lib/push";
 
 type Action = "dispatch" | "at_pickup" | "onboard" | "at_dropoff" | "complete" | "cancel";
 
@@ -64,5 +66,33 @@ export async function POST(
 
   const { data, error } = await sb.from("trips").update(update).eq("id", id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const newStatus = NEXT_STATUS[action];
+  logTripEvent({ trip_id: id, kind: "status:" + newStatus, actor_token: ctx.token });
+
+  // Fire-and-forget push notifications based on the new status. Mark
+  // initiated `dispatched` himself so we skip pushing him on that one.
+  void (async () => {
+    try {
+      if (newStatus === "at_pickup") {
+        await Promise.allSettled([
+          sendPushToRole("mark", { title: "Driver has arrived", body: "The van is at pickup.", tag: "trip-" + id }),
+          sendPushToTripPassenger(id, { title: "Driver has arrived", body: "Your ride is here.", tag: "trip-" + id }),
+        ]);
+      } else if (newStatus === "onboard") {
+        await sendPushToRole("mark", { title: "Onboard", body: "Passenger is on board.", tag: "trip-" + id });
+      } else if (newStatus === "at_dropoff") {
+        await Promise.allSettled([
+          sendPushToRole("mark", { title: "Arrived at destination", body: "Trip has reached the dropoff.", tag: "trip-" + id }),
+          sendPushToTripPassenger(id, { title: "Arrived at destination", body: "You're here.", tag: "trip-" + id }),
+        ]);
+      } else if (newStatus === "complete") {
+        await sendPushToRole("mark", { title: "Trip complete", body: "Driver has marked the trip complete.", tag: "trip-" + id });
+      }
+    } catch {
+      // pushes never break the API request
+    }
+  })();
+
   return NextResponse.json({ trip: data });
 }

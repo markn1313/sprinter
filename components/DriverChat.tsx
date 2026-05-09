@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, postJson } from "@/lib/api-client";
 import { ArrowUp, Loader2 } from "lucide-react";
+import { useRealtime } from "@/components/useRealtime";
 
 interface Msg {
   id: string;
@@ -18,7 +19,7 @@ interface Props {
   viewerRole: "mark" | "dio";
 }
 
-const POLL_MS = 4000;
+const POLL_MS = 30000;
 
 export default function DriverChat({ token, viewerRole }: Props) {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -40,6 +41,9 @@ export default function DriverChat({ token, viewerRole }: Props) {
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
   }, [token]);
+
+  // Live updates: any new message hits the table, refetch.
+  useRealtime({ table: "messages", onChange: refresh });
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -129,6 +133,7 @@ export default function DriverChat({ token, viewerRole }: Props) {
 // Hook for Dio's app to count unread messages from Mark
 export function useUnreadDriverChat(token: string, viewerRole: "mark" | "dio") {
   const [unread, setUnread] = useState(0);
+  const [version, setVersion] = useState(0);
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -150,6 +155,7 @@ export function useUnreadDriverChat(token: string, viewerRole: "mark" | "dio") {
       cancelled = true;
       clearInterval(t);
     };
-  }, [token, viewerRole]);
+  }, [token, viewerRole, version]);
+  useRealtime({ table: "messages", onChange: () => setVersion((v) => v + 1) });
   return unread;
 }

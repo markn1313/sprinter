@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
+import { logTripEvent } from "@/lib/log";
 
 interface Stop {
   id: string;
@@ -73,6 +74,7 @@ export async function POST(
   stops.splice(idx, 0, newStop);
   const { error } = await sb.from("trips").update({ stops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  logTripEvent({ trip_id: id, kind: "stop_added", actor_token: ctx.token, payload: { stop: newStop } });
   return NextResponse.json({ stop: newStop });
 }
 
@@ -119,6 +121,7 @@ export async function PUT(
   }
   const { error } = await sb.from("trips").update({ stops: next }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  logTripEvent({ trip_id: id, kind: "stops_replaced", actor_token: ctx.token, payload: { stops: next } });
   return NextResponse.json({ stops: next });
 }
 
@@ -142,5 +145,6 @@ export async function DELETE(
   const stops: Stop[] = ((trip?.stops as Stop[] | undefined) ?? []).filter((s) => s.id !== stopId);
   const { error } = await sb.from("trips").update({ stops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  logTripEvent({ trip_id: id, kind: "stop_removed", actor_token: ctx.token, payload: { stop_id: stopId } });
   return NextResponse.json({ ok: true });
 }

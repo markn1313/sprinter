@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
+import { logTripEvent } from "@/lib/log";
 
 export async function PATCH(
   req: Request,
@@ -87,6 +88,7 @@ export async function PATCH(
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  logTripEvent({ trip_id: id, kind: "edited", actor_token: ctx.token, payload: body as Record<string, unknown> });
   return NextResponse.json({ trip: data });
 }
 
@@ -101,6 +103,8 @@ export async function DELETE(
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const sb = supabaseAdmin();
+  // Log BEFORE the delete so the trip_events FK still resolves.
+  logTripEvent({ trip_id: id, kind: "deleted", actor_token: ctx.token });
   // Revoke any guest links pointing at this trip first
   await sb.from("links").update({ revoked_at: new Date().toISOString() }).eq("trip_id", id);
   const { error } = await sb.from("trips").delete().eq("id", id);
