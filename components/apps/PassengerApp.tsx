@@ -10,7 +10,8 @@ import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import CabinControls from "@/components/CabinControls";
 import { statusLabel, shortTime } from "@/lib/format";
-import { MapPin as PinIcon, Wifi, Tv, Car, Music } from "lucide-react";
+import { MapPin as PinIcon } from "lucide-react";
+import CabinChat from "@/components/CabinChat";
 
 export default function PassengerApp({ token, name }: { token: string; name: string }) {
   const { pos } = usePosition(token, 8000);
@@ -58,13 +59,12 @@ export default function PassengerApp({ token, name }: { token: string; name: str
 
         {isLive && trip && <CabinControls token={token} tripId={trip.id} />}
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-          <div className="mb-3 text-xs uppercase tracking-wider text-zinc-500">In the van</div>
-          <div className="space-y-3 text-sm">
-            <CabinTip icon={<Tv size={16} className="text-emerald-400" />} title="Audio for the TV" body="Push the RD-RGB150A knob to switch to Apple TV (red). Turn the knob to adjust volume." />
-            <CabinTip icon={<Music size={16} className="text-emerald-400" />} title="Play music from your iPhone" body="Tap the Connectivity icon in the bottom-left of the Pioneer screen → pick your phone (or use the magnifying glass to add it)." />
-            <CabinTip icon={<Car size={16} className="text-emerald-400" />} title="Volume / source knob" body="Driver-side wall between the captain's chair and the bench. Turn = volume; press = switch source." />
-            <CabinTip icon={<Wifi size={16} className="text-zinc-500" />} title="WiFi" body="The TV uses cellular and bandwidth is limited — please use your own data." />
+        <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/60 h-[420px]">
+          <div className="border-b border-zinc-900 px-4 py-2 text-xs uppercase tracking-wider text-zinc-500">
+            Ask about the van
+          </div>
+          <div className="h-[calc(100%-36px)]">
+            <CabinChat token={token} />
           </div>
         </div>
       </section>
@@ -116,14 +116,3 @@ function NoTripCard() {
   );
 }
 
-function CabinTip({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="mt-0.5">{icon}</div>
-      <div>
-        <div className="font-medium text-zinc-100">{title}</div>
-        <div className="text-zinc-400">{body}</div>
-      </div>
-    </div>
-  );
-}

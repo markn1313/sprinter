@@ -2,7 +2,7 @@
 
 import { Trip, Role } from "@/lib/types";
 import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy, ExternalLink, MessageSquare } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
@@ -59,15 +59,18 @@ export default function TripList({ trips, role, origin }: Props) {
           </div>
           {showMoney && t.passenger_link_token && origin && (
             <div className="mt-2 flex items-center gap-2">
-              <code className="flex-1 truncate rounded bg-black/40 px-2 py-1 font-mono text-[11px] text-zinc-400">
-                {origin}/p/{t.passenger_link_token}
-              </code>
+              <a
+                href={`sms:&body=${encodeURIComponent(`Your Sprinter ride status: ${origin}/p/${t.passenger_link_token}`)}`}
+                className="flex items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-600"
+              >
+                <MessageSquare size={11} /> Text {t.passenger_name}
+              </a>
               <button
                 onClick={() => copy(t.id, `${origin}/p/${t.passenger_link_token}`)}
                 className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-[11px] hover:bg-zinc-700"
               >
                 <Copy size={11} />
-                {copied === t.id ? "Copied" : "Copy guest link"}
+                {copied === t.id ? "Copied" : "Copy"}
               </button>
               <a
                 href={`/p/${t.passenger_link_token}`}
