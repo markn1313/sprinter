@@ -123,19 +123,21 @@ export default function LinkGenerator({ token, origin }: Props) {
         </div>
         {tvToken ? (
           <>
-            <div className="mt-3 rounded-lg border border-blue-900/60 bg-blue-950/30 p-4">
-              <div className="font-mono text-base text-blue-200/80 break-all leading-snug">
-                {origin.replace(/^https?:\/\//, "")}
-                <span className="text-zinc-500">/tv/</span>
-                <span className="text-2xl font-bold tracking-widest text-blue-100">
-                  {tvToken}
-                </span>
+            <div className="mt-3 overflow-hidden rounded-lg border border-blue-900/60 bg-blue-950/30 px-4 py-3">
+              <div className="font-mono text-[13px] text-blue-200/70 truncate">
+                {origin.replace(/^https?:\/\//, "")}/tv/
               </div>
+              <div className="mt-1 font-mono text-4xl font-bold tracking-[0.2em] text-blue-100">
+                {tvToken}
+              </div>
+            </div>
+            <div className="mt-2 text-[11px] text-zinc-500">
+              Just type the 4 characters at the end.
             </div>
             <button
               onClick={() => mintTv(true)}
               disabled={busy}
-              className="mt-2 text-[11px] text-zinc-500 hover:text-zinc-300"
+              className="mt-1 text-[11px] text-zinc-500 hover:text-zinc-300"
             >
               Regenerate (old URL stops working)
             </button>
