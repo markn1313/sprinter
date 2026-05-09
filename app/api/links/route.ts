@@ -21,9 +21,9 @@ export async function POST(req: Request) {
 
   const sb = supabaseAdmin();
 
-  // Dio is a singleton — reuse if already exists
-  if (body.role === "dio") {
-    const existing = await sb.from("links").select("*").eq("role", "dio").is("revoked_at", null).maybeSingle();
+  // Dio and TV are singletons — reuse if already exists
+  if (body.role === "dio" || body.role === "tv") {
+    const existing = await sb.from("links").select("*").eq("role", body.role).is("revoked_at", null).maybeSingle();
     if (existing.data) {
       return NextResponse.json({ token: existing.data.token, reused: true });
     }

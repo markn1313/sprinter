@@ -17,10 +17,11 @@ interface Link {
 
 export default function LinkGenerator({ token, origin }: Props) {
   const [dioToken, setDioToken] = useState<string | null>(null);
+  const [tvToken, setTvToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
-  // Auto-load existing Dio link on mount (since it's a singleton)
+  // Auto-load existing singletons on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -28,7 +29,9 @@ export default function LinkGenerator({ token, origin }: Props) {
         const res = await api<{ links: Link[] }>(token, "/api/links");
         if (cancelled) return;
         const dio = res.links.find((l) => l.role === "dio");
+        const tv = res.links.find((l) => l.role === "tv");
         if (dio) setDioToken(dio.token);
+        if (tv) setTvToken(tv.token);
       } catch {
         // ignore
       }
@@ -37,6 +40,19 @@ export default function LinkGenerator({ token, origin }: Props) {
       cancelled = true;
     };
   }, [token]);
+
+  const mintTv = async () => {
+    setBusy(true);
+    try {
+      const res = await postJson<{ token: string; reused: boolean }>(token, "/api/links", {
+        role: "tv",
+        name: "TV display",
+      });
+      setTvToken(res.token);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const mintDio = async () => {
     setBusy(true);
@@ -98,6 +114,35 @@ export default function LinkGenerator({ token, origin }: Props) {
           Generate Dio link
         </button>
       )}
+
+      <div className="mt-5 border-t border-zinc-800 pt-4">
+        <div className="text-xs uppercase tracking-wider text-zinc-500">In-van TV display</div>
+        <div className="mt-2 text-sm text-zinc-300">
+          Open this URL in any browser on the Apple TV / passenger TV — it&apos;s a 4K-friendly, view-only live map.
+        </div>
+        {tvToken ? (
+          <div className="mt-3 flex items-center gap-2">
+            <code className="flex-1 truncate rounded-lg bg-black/40 p-2 font-mono text-[11px] text-blue-300">
+              {origin}/tv/{tvToken}
+            </code>
+            <button
+              onClick={() => copy("tv", `${origin}/tv/${tvToken}`)}
+              className="flex items-center gap-1 rounded-lg bg-zinc-800 px-3 py-2 text-xs hover:bg-zinc-700"
+            >
+              {copied === "tv" ? <Check size={14} /> : <Copy size={14} />}
+              {copied === "tv" ? "Copied" : "Copy"}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={mintTv}
+            disabled={busy}
+            className="mt-3 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50"
+          >
+            Generate TV display link
+          </button>
+        )}
+      </div>
     </div>
   );
 }

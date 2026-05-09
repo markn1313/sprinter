@@ -1,4 +1,4 @@
-export type Role = "mark" | "dio" | "passenger";
+export type Role = "mark" | "dio" | "passenger" | "tv";
 
 export type TripStatus =
   | "scheduled"
