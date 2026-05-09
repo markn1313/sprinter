@@ -31,6 +31,7 @@ import {
   Hand,
   X,
   Loader2,
+  ArrowUp,
   MessageCircle,
   Fuel,
   Gauge,
@@ -403,25 +404,34 @@ function DispatchSheet({ token, onClose, onDispatched }: { token: string; onClos
 
   return (
     <Sheet title="Dispatch a trip" onClose={onClose}>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        autoFocus
-        placeholder="Pick up Greg at 2pm, drop off at LAX"
-        rows={2}
-        className="w-full resize-none rounded-2xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-base text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-700"
-      />
+      <div className="relative">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          autoFocus
+          placeholder="Pick up Greg at 2pm, drop off at LAX"
+          rows={3}
+          className="w-full resize-none rounded-2xl border border-zinc-800 bg-zinc-900 px-3 py-2 pr-12 text-base text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-700"
+        />
+        <button
+          onClick={submit}
+          disabled={busy || !text.trim()}
+          className="absolute bottom-2 right-2 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg disabled:bg-zinc-700 disabled:opacity-50 enabled:hover:bg-emerald-500"
+          aria-label="Dispatch"
+        >
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} strokeWidth={3} />}
+        </button>
+      </div>
       <div className="mt-2 text-[11px] text-zinc-500">
         Try: <em>Pick up Sarah from Wynn at 7, drop off at Cosmo</em> · <em>Pick up Greg in 15 min, drop off at LAX</em>
       </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
-      <button
-        onClick={submit}
-        disabled={busy || !text.trim()}
-        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-3 text-base font-semibold text-white disabled:opacity-50 hover:bg-emerald-500"
-      >
-        {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Dispatch
-      </button>
     </Sheet>
   );
 }
