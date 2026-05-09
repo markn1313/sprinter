@@ -417,31 +417,22 @@ function EditableAddress({
   onSelect: (r: { lat: number; lng: number; display: string }) => Promise<void> | void;
 }) {
   const [editing, setEditing] = useState(false);
-  const glyph = kind === "dropoff" ? "🏁" : "🚩";
   const accent = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
   if (!editing) {
     return (
       <li
         onClick={() => setEditing(true)}
-        className="flex cursor-pointer items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
+        className="cursor-pointer rounded-xl bg-zinc-900/60 px-3 py-3 hover:bg-zinc-900"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex w-7 shrink-0 items-center justify-center text-base leading-none">{glyph}</span>
-          <div className="min-w-0">
-            <div className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</div>
-            <div className="truncate text-sm text-zinc-100">{displayValue}</div>
-          </div>
-        </div>
+        <div className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</div>
+        <div className="mt-0.5 truncate text-sm text-zinc-100">{displayValue}</div>
       </li>
     );
   }
   return (
     <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base leading-none">{glyph}</span>
-          <span className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</span>
-        </div>
+        <span className={`text-[10px] uppercase tracking-wider ${accent}`}>{label}</span>
         <button
           onClick={() => setEditing(false)}
           className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
@@ -509,16 +500,12 @@ function InsertStop({
 }
 
 function Waypoint({ kind, label, subline, onRemove }: { kind: "pickup" | "stop" | "dropoff"; label: string; subline: string; onRemove?: () => void }) {
-  const glyph = kind === "dropoff" ? "🏁" : "🚩";
   const color = kind === "dropoff" ? "text-blue-300" : "text-amber-300";
   return (
     <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="flex w-7 shrink-0 items-center justify-center text-base leading-none">{glyph}</span>
-        <div className="min-w-0">
-          <div className={`text-[10px] uppercase tracking-wider ${color}`}>{subline}</div>
-          <div className="truncate text-sm text-zinc-100">{label}</div>
-        </div>
+      <div className="min-w-0 flex-1">
+        <div className={`text-[10px] uppercase tracking-wider ${color}`}>{subline}</div>
+        <div className="truncate text-sm text-zinc-100">{label}</div>
       </div>
       {onRemove && (
         <button onClick={onRemove} className="shrink-0 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400">
