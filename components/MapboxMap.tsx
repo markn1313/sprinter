@@ -26,12 +26,21 @@ interface Props {
   focusKey?: number;
 }
 
-const PIN_STYLE: Record<MapPin["kind"], { color: string; glyph: string }> = {
-  pickup: { color: "#f59e0b", glyph: "P" },
-  dropoff: { color: "#3b82f6", glyph: "D" },
-  stop: { color: "#06b6d4", glyph: "·" },
-  mark: { color: "#a855f7", glyph: "M" },
-  passenger: { color: "#ec4899", glyph: "·" },
+const PIN_HTML: Record<MapPin["kind"], (idx?: number) => string> = {
+  // Red flag for pickup spots (start of trip)
+  pickup: () =>
+    `<div style="font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🚩</div>`,
+  // Finish-line flag for the final destination
+  dropoff: () =>
+    `<div style="font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🏁</div>`,
+  // Red flag for intermediate stops (numbered)
+  stop: (idx) =>
+    `<div style="position:relative;font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🚩<span style="position:absolute;top:8px;left:14px;background:#dc2626;color:white;border-radius:9999px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:-apple-system,system-ui,sans-serif;">${idx ?? ""}</span></div>`,
+  // Blue pulsing dot — "you are here"
+  mark: () =>
+    `<div style="position:relative;width:18px;height:18px;"><span style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;box-shadow:0 0 0 2px white,0 0 0 4px rgba(59,130,246,.45);"></span><span style="position:absolute;inset:-6px;border-radius:50%;background:#3b82f6;opacity:.35;animation:sprinter-pulse 1.6s ease-out infinite;"></span></div>`,
+  passenger: () =>
+    `<div style="font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
 };
 
 export default function MapboxMap({ position, pins = [], polyline, className, fitBounds = true, focusMode = "auto", focusKey = 0 }: Props) {
@@ -135,14 +144,28 @@ export default function MapboxMap({ position, pins = [], polyline, className, fi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update van marker
+  // Update van marker — black Sprinter silhouette
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !position) return;
     if (!vanMarkerRef.current) {
       const el = document.createElement("div");
-      el.innerHTML = `<div style="width:36px;height:36px;border-radius:50%;background:#10b981;border:3px solid #052e1f;box-shadow:0 0 0 4px rgba(16,185,129,.35);display:flex;align-items:center;justify-content:center;font-size:18px;">🚐</div>`;
-      vanMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map);
+      el.style.cssText = "width:44px;height:32px;display:flex;align-items:center;justify-content:center;";
+      el.innerHTML = `
+        <svg width="44" height="32" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));">
+          <!-- Sprinter van silhouette -->
+          <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.2"/>
+          <!-- Windshield -->
+          <path d="M40 8 L48 10 L56 16 L40 16 Z" fill="#3b3b3b"/>
+          <!-- Side window -->
+          <rect x="14" y="10" width="22" height="6" rx="1" fill="#3b3b3b"/>
+          <!-- Wheels -->
+          <circle cx="16" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
+          <circle cx="48" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
+        </svg>`;
+      vanMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat([position.lng, position.lat])
+        .addTo(map);
     } else {
       vanMarkerRef.current.setLngLat([position.lng, position.lat]);
     }
@@ -154,11 +177,11 @@ export default function MapboxMap({ position, pins = [], polyline, className, fi
     if (!map) return;
     pinMarkersRef.current.forEach((m) => m.remove());
     pinMarkersRef.current = pins.map((p) => {
-      const style = PIN_STYLE[p.kind];
-      const glyph = p.index ? String(p.index) : style.glyph;
       const el = document.createElement("div");
-      el.innerHTML = `<div style="width:28px;height:28px;border-radius:50%;background:${style.color};border:2px solid white;box-shadow:0 0 0 2px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:white;font-size:13px;font-weight:700;">${glyph}</div>`;
-      const marker = new mapboxgl.Marker({ element: el }).setLngLat([p.lng, p.lat]);
+      el.innerHTML = PIN_HTML[p.kind](p.index);
+      // Anchor flag pins by their bottom-left so the pole sits on the spot
+      const anchor = p.kind === "mark" || p.kind === "passenger" ? "center" : "bottom";
+      const marker = new mapboxgl.Marker({ element: el, anchor }).setLngLat([p.lng, p.lat]);
       if (p.label) marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
       marker.addTo(map);
       return marker;

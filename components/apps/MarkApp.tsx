@@ -220,7 +220,7 @@ function MapTab({
           </button>
           <button
             onClick={() => setSheet("pickup")}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-4 py-3 text-base font-semibold text-white shadow-lg shadow-fuchsia-900/40 hover:from-violet-500 hover:to-fuchsia-600"
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-2 text-sm font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
           >
             Pickup
           </button>
