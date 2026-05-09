@@ -88,9 +88,9 @@ export default function PassengerApp({ token }: { token: string; name: string })
             <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
           </div>
 
-          {/* Vitals — directly under Mapbox zoom controls (top-right) */}
+          {/* Vitals — top-right */}
           {pos && (
-            <div className="absolute right-3 top-20 z-30 flex w-fit flex-col gap-1.5">
+            <div className="absolute right-3 top-3 z-30 flex w-fit flex-col gap-1.5">
               <VitalChip>
                 <Fuel size={11} className="text-emerald-400" />
                 <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>

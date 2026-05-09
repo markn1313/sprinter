@@ -94,7 +94,8 @@ export default function MapboxMap({
       attributionControl: false,
       cooperativeGestures: false,
     });
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    // Zoom/compass controls intentionally NOT added — Mark prefers a clean map.
+    // Pinch-to-zoom + double-tap zoom still work natively.
 
     // Add traffic layer once style loads
     map.on("load", () => {

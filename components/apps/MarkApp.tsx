@@ -52,31 +52,31 @@ export default function MarkApp({ token, name }: { token: string; name: string }
 
   const live = activeTrip(trips);
 
+  // All tabs stay mounted so the Mapbox GL instance is never torn down on tab
+  // switch. Inactive tabs are hidden via CSS instead of conditionally rendered.
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-zinc-950">
-      {tab === "map" && (
+      <div className={tab === "map" ? "relative flex-1 overflow-hidden" : "hidden"}>
         <MapTab token={token} pos={pos} live={live} trips={trips} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} />
-      )}
-      {tab === "trips" && (
+      </div>
+      <div className={tab === "trips" ? "flex-1 overflow-y-auto" : "hidden"}>
         <ScrollableTab>
           <TripsTab trips={trips} origin={origin} token={token} refresh={refresh} />
         </ScrollableTab>
-      )}
-      {tab === "chat" && (
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
-            <div className="mx-auto flex max-w-3xl items-center gap-2">
-              <span className="text-sm font-medium text-zinc-100">Cabin assistant</span>
-            </div>
-          </header>
-          <CabinChat token={token} />
-        </div>
-      )}
-      {tab === "settings" && (
+      </div>
+      <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
+        <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
+          <div className="mx-auto flex max-w-3xl items-center gap-2">
+            <span className="text-sm font-medium text-zinc-100">Cabin assistant</span>
+          </div>
+        </header>
+        <CabinChat token={token} />
+      </div>
+      <div className={tab === "settings" ? "flex-1 overflow-y-auto" : "hidden"}>
         <ScrollableTab>
           <SettingsTab token={token} origin={origin} />
         </ScrollableTab>
-      )}
+      </div>
 
       <nav className="z-40 border-t border-zinc-900 bg-zinc-950/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl">
@@ -235,7 +235,7 @@ function MapTab({
   }, [live, stopsArr]);
 
   return (
-    <div className="relative flex-1 overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
       <ClientMap
         position={pos}
         pins={pins}
@@ -297,9 +297,9 @@ function MapTab({
         </div>
       )}
 
-      {/* Vitals strip — directly under Mapbox zoom controls (top-right) */}
+      {/* Vitals strip — top-right, no zoom controls in the way */}
       {pos && (
-        <div className="absolute right-3 top-20 z-30 flex w-fit flex-col gap-1.5">
+        <div className="absolute right-3 top-3 z-30 flex w-fit flex-col gap-1.5">
           <VitalChip>
             <Fuel size={11} className="text-emerald-400" />
             <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
