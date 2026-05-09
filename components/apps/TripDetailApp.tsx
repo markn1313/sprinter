@@ -233,11 +233,8 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
     else window.location.href = `/m/${token}`;
   };
 
-  if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
-  if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
-
-  // Build invite SMS hrefs (passenger + driver). Driver uses the persistent
-  // singleton link minted in Settings. Passenger uses the per-trip token.
+  // Driver token (singleton) — must be declared with hooks BEFORE any early
+  // return below, or React's hook ordering breaks (#310).
   const [driverToken, setDriverToken] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -256,6 +253,11 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
     };
   }, [token]);
 
+  if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
+  if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
+
+  // Build invite SMS hrefs (passenger + driver). Driver uses the persistent
+  // singleton link minted in Settings. Passenger uses the per-trip token.
   const passengerUrl =
     typeof window !== "undefined" && trip?.passenger_link_token
       ? `${window.location.origin}/p/${trip.passenger_link_token}`
