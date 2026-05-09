@@ -236,25 +236,63 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
 
-  const inviteUrl =
+  // Build invite SMS hrefs (passenger + driver). Driver uses the persistent
+  // singleton link minted in Settings. Passenger uses the per-trip token.
+  const [driverToken, setDriverToken] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api<{ links: Array<{ role: string; token: string }> }>(token, "/api/links");
+        if (cancelled) return;
+        const dio = data.links.find((l) => l.role === "dio");
+        if (dio) setDriverToken(dio.token);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const passengerUrl =
     typeof window !== "undefined" && trip?.passenger_link_token
       ? `${window.location.origin}/p/${trip.passenger_link_token}`
       : null;
-  const inviteHref = inviteUrl
-    ? `sms:&body=${encodeURIComponent(`Click for details on your trip:\n${inviteUrl}`)}`
+  const passengerInviteHref = passengerUrl
+    ? `sms:&body=${encodeURIComponent(`Click for details on your trip:\n${passengerUrl}`)}`
+    : null;
+
+  const driverUrl =
+    typeof window !== "undefined" && driverToken
+      ? `${window.location.origin}/d/${driverToken}`
+      : null;
+  const driverInviteHref = driverUrl
+    ? `sms:&body=${encodeURIComponent(`Open for today's trip:\n${driverUrl}`)}`
     : null;
 
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
-      {/* Top-right invite button — only shows when there's a passenger link to share */}
-      {inviteHref && (
-        <div className="flex items-center justify-end px-3 pt-3">
-          <a
-            href={inviteHref}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-          >
-            <MessageSquare size={12} /> Invite
-          </a>
+      {/* Top-right invite buttons — passenger and driver */}
+      {(passengerInviteHref || driverInviteHref) && (
+        <div className="flex items-center justify-end gap-2 px-3 pt-3">
+          {driverInviteHref && (
+            <a
+              href={driverInviteHref}
+              className="flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
+            >
+              <MessageSquare size={12} /> Driver
+            </a>
+          )}
+          {passengerInviteHref && (
+            <a
+              href={passengerInviteHref}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+            >
+              <MessageSquare size={12} /> Passenger
+            </a>
+          )}
         </div>
       )}
       <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
