@@ -104,27 +104,34 @@ export default function TvApp({ token }: { token: string }) {
         </div>
       )}
 
-      {/* ETA cards — bottom — VERY BIG */}
+      {/* ETA cards — bottom — VERY BIG. Left = next stop, right = final
+          destination. Both always render when ETA is available; if next ===
+          final (single-leg trip) they show the same numbers but consistency
+          across trips matters more than collapsing. */}
       {eta && (eta.to_next || eta.to_final) && (
         <div className="absolute bottom-8 left-8 right-8 z-30 grid grid-cols-2 gap-4">
-          {eta.to_next && (
+          {eta.to_next ? (
             <EtaCard
-              kind={eta.to_next.kind}
+              kind="stop"
               label={eta.to_next.label}
               minutes={eta.to_next.eta_minutes}
               miles={eta.to_next.distance_miles}
               primary
+              titleOverride="Next stop"
             />
+          ) : (
+            <div />
           )}
-          {eta.to_final && eta.to_next && eta.to_next.label !== eta.to_final.label ? (
+          {eta.to_final ? (
             <EtaCard
               kind="dropoff"
               label={eta.to_final.label}
               minutes={eta.to_final.eta_minutes}
               miles={eta.to_final.distance_miles}
+              titleOverride="Final destination"
             />
           ) : (
-            <RouteSummary trip={focus} stops={stopsArr} />
+            <div />
           )}
         </div>
       )}
@@ -153,7 +160,7 @@ function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: s
   );
 }
 
-function EtaCard({ kind, label, minutes, miles, primary }: { kind: string; label: string; minutes: number; miles: number; primary?: boolean }) {
+function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind: string; label: string; minutes: number; miles: number; primary?: boolean; titleOverride?: string }) {
   const Icon = kind === "dropoff" ? Flag : kind === "pickup" ? PinIcon : PinIcon;
   return (
     <div
@@ -166,7 +173,7 @@ function EtaCard({ kind, label, minutes, miles, primary }: { kind: string; label
       <div className="flex items-center gap-2 text-sm uppercase tracking-widest">
         <Icon size={18} className={primary ? "text-emerald-400" : "text-blue-400"} />
         <span className={primary ? "text-emerald-300" : "text-blue-300"}>
-          {kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination"}
+          {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
         </span>
       </div>
       <div className="mt-2 truncate text-xl text-zinc-300">{label}</div>
