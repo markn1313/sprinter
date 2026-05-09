@@ -44,7 +44,14 @@ export async function POST(req: Request) {
   }
 
   const client = new Client({ connectionString: conn, ssl: { rejectUnauthorized: false } });
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (e) {
+    return NextResponse.json(
+      { error: "connect_failed", message: (e as Error).message, conn_preview: conn.replace(/(:\/\/[^:]+):[^@]+@/, "$1:***@") },
+      { status: 500 },
+    );
+  }
   const applied: Array<{ file: string; ok: boolean; error?: string }> = [];
   try {
     for (const f of files) {
