@@ -1,34 +1,110 @@
 import { VanPosition } from "./types";
+import { supabaseAdmin } from "./supabase";
 
-// Newport Beach as default home base
 const HOME_LAT = 33.6189;
 const HOME_LNG = -117.9298;
 
+const BOUNCIE_API = "https://api.bouncie.dev/v1";
+const BOUNCIE_TOKEN_URL = "https://auth.bouncie.com/oauth/token";
+
 interface BouncieVehicle {
   vin: string;
-  nickName: string;
-  stats: {
-    location: { lat: number; lon: number };
-    heading: number;
-    speed: number;
+  nickName?: string;
+  model?: { make: string; name: string; year: number };
+  stats?: {
+    location?: { lat: number; lon: number };
+    heading?: number;
+    speed?: number;
     fuelLevel?: number;
-    batteryStatus?: { value: number };
     odometer?: number;
     isRunning?: boolean;
     lastUpdated?: string;
   };
 }
 
-export async function fetchBouncieVehicle(): Promise<VanPosition | null> {
-  const token = process.env.BOUNCIE_ACCESS_TOKEN;
-  const vin = process.env.BOUNCIE_VIN;
-  if (!token) return null;
+interface BouncieCreds {
+  access_token: string | null;
+  refresh_token: string | null;
+  expires_at: string | null;
+  vehicle_vin: string | null;
+}
 
-  const url = vin
-    ? `https://api.bouncie.dev/v1/vehicles?vin=${encodeURIComponent(vin)}`
-    : "https://api.bouncie.dev/v1/vehicles";
+async function loadCreds(): Promise<BouncieCreds | null> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from("bouncie_credentials")
+      .select("access_token,refresh_token,expires_at,vehicle_vin")
+      .eq("id", 1)
+      .maybeSingle();
+    return (data as BouncieCreds) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshAccessToken(refreshToken: string): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+} | null> {
+  const clientId = process.env.BOUNCIE_CLIENT_ID;
+  const clientSecret = process.env.BOUNCIE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const res = await fetch(BOUNCIE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    console.warn("Bouncie token refresh failed", res.status, await res.text());
+    return null;
+  }
+  return (await res.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+}
+
+async function ensureFreshToken(): Promise<string | null> {
+  const creds = await loadCreds();
+  if (!creds?.access_token) return null;
+  const expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : null;
+  const skewMs = 60_000;
+  if (!expiresAt || expiresAt - Date.now() > skewMs) {
+    return creds.access_token;
+  }
+  if (!creds.refresh_token) return creds.access_token; // try anyway
+  const refreshed = await refreshAccessToken(creds.refresh_token);
+  if (!refreshed) return creds.access_token;
+  const newExpires = refreshed.expires_in
+    ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
+    : null;
+  await supabaseAdmin()
+    .from("bouncie_credentials")
+    .update({
+      access_token: refreshed.access_token,
+      refresh_token: refreshed.refresh_token ?? creds.refresh_token,
+      expires_at: newExpires,
+      last_refreshed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+  return refreshed.access_token;
+}
+
+export async function fetchBouncieVehicle(): Promise<(VanPosition & { vin?: string; nickname?: string }) | null> {
+  const token = await ensureFreshToken();
+  if (!token) return null;
+  const creds = await loadCreds();
 
   try {
+    const url = creds?.vehicle_vin
+      ? `${BOUNCIE_API}/vehicles?vin=${encodeURIComponent(creds.vehicle_vin)}`
+      : `${BOUNCIE_API}/vehicles`;
     const res = await fetch(url, {
       headers: { Authorization: token },
       cache: "no-store",
@@ -38,18 +114,22 @@ export async function fetchBouncieVehicle(): Promise<VanPosition | null> {
       return null;
     }
     const data = (await res.json()) as BouncieVehicle[];
-    const vehicle = vin ? data.find((v) => v.vin === vin) ?? data[0] : data[0];
-    if (!vehicle) return null;
+    const vehicle = creds?.vehicle_vin
+      ? data.find((v) => v.vin === creds.vehicle_vin) ?? data[0]
+      : data[0];
+    if (!vehicle?.stats?.location) return null;
     return {
       lat: vehicle.stats.location.lat,
       lng: vehicle.stats.location.lon,
       heading: vehicle.stats.heading ?? 0,
       speed_mph: vehicle.stats.speed ?? 0,
-      fuel_pct: vehicle.stats.fuelLevel ?? null,
-      battery_v: vehicle.stats.batteryStatus?.value ?? null,
+      fuel_pct: vehicle.stats.fuelLevel != null ? vehicle.stats.fuelLevel / 100 : null,
+      battery_v: null,
       mileage: vehicle.stats.odometer ?? null,
       ignition: vehicle.stats.isRunning ?? false,
       updated_at: vehicle.stats.lastUpdated ?? new Date().toISOString(),
+      vin: vehicle.vin,
+      nickname: vehicle.nickName,
     };
   } catch (err) {
     console.warn("Bouncie fetch threw", err);
@@ -57,11 +137,9 @@ export async function fetchBouncieVehicle(): Promise<VanPosition | null> {
   }
 }
 
-// Deterministic mock that simulates the van loitering near Newport Beach
-// when Bouncie API isn't wired up. Used only in dev and as a clear fallback.
 function mockPosition(): VanPosition {
   const t = Date.now() / 1000;
-  const radius = 0.005; // ~0.3 miles
+  const radius = 0.005;
   const orbit = (t / 120) % (Math.PI * 2);
   return {
     lat: HOME_LAT + Math.cos(orbit) * radius,
@@ -80,4 +158,118 @@ export async function getVanPosition(): Promise<VanPosition & { source: "bouncie
   const live = await fetchBouncieVehicle();
   if (live) return { ...live, source: "bouncie" };
   return { ...mockPosition(), source: "mock" };
+}
+
+export interface BouncieStatus {
+  connected: boolean;
+  vehicle_vin: string | null;
+  vehicle_nickname: string | null;
+  expires_at: string | null;
+  source: "bouncie" | "mock";
+}
+
+export async function bouncieStatus(): Promise<BouncieStatus> {
+  const creds = await loadCreds();
+  return {
+    connected: !!creds?.access_token,
+    vehicle_vin: creds?.vehicle_vin ?? null,
+    vehicle_nickname: null,
+    expires_at: creds?.expires_at ?? null,
+    source: creds?.access_token ? "bouncie" : "mock",
+  };
+}
+
+export function bouncieAuthUrl(redirectUri: string, state: string): string {
+  const clientId = process.env.BOUNCIE_CLIENT_ID;
+  if (!clientId) throw new Error("BOUNCIE_CLIENT_ID not set");
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    state,
+  });
+  return `https://auth.bouncie.com/dialog/authorize?${params.toString()}`;
+}
+
+export async function exchangeAuthCode(code: string, redirectUri: string): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  token_type?: string;
+} | null> {
+  const clientId = process.env.BOUNCIE_CLIENT_ID;
+  const clientSecret = process.env.BOUNCIE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: redirectUri,
+  });
+  const res = await fetch(BOUNCIE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    console.warn("Bouncie code exchange failed", res.status, await res.text());
+    return null;
+  }
+  return (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: string;
+  };
+}
+
+export async function saveCredentials(token: {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  token_type?: string;
+}): Promise<void> {
+  const expires_at = token.expires_in
+    ? new Date(Date.now() + token.expires_in * 1000).toISOString()
+    : null;
+  await supabaseAdmin()
+    .from("bouncie_credentials")
+    .update({
+      access_token: token.access_token,
+      refresh_token: token.refresh_token ?? null,
+      token_type: token.token_type ?? "Bearer",
+      expires_at,
+      connected_at: new Date().toISOString(),
+      last_refreshed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+}
+
+export async function attachVehicle(): Promise<{ vin: string; nickname: string | null } | null> {
+  const token = await ensureFreshToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${BOUNCIE_API}/vehicles`, {
+      headers: { Authorization: token },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as BouncieVehicle[];
+    const v = data[0];
+    if (!v) return null;
+    await supabaseAdmin()
+      .from("bouncie_credentials")
+      .update({
+        vehicle_vin: v.vin,
+        vehicle_nickname: v.nickName ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1);
+    return { vin: v.vin, nickname: v.nickName ?? null };
+  } catch {
+    return null;
+  }
 }

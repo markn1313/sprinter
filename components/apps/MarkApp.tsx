@@ -10,6 +10,7 @@ import ActiveTripCard from "@/components/ActiveTripCard";
 import LinkGenerator from "@/components/LinkGenerator";
 import TripList from "@/components/TripList";
 import DioStatusBar from "@/components/DioStatusBar";
+import BouncieConnectCard from "@/components/BouncieConnectCard";
 import { dollars, durationMinutes } from "@/lib/format";
 import { Battery, Fuel, Gauge, Signal } from "lucide-react";
 
@@ -108,6 +109,11 @@ export default function MarkApp({ token, name }: { token: string; name: string }
             </div>
           )}
         </div>
+      </section>
+
+      {/* Bouncie status (connect link if not connected) */}
+      <section className="mx-auto mt-3 max-w-6xl px-4">
+        <BouncieConnectCard token={token} />
       </section>
 
       {/* Dispatch + active */}

@@ -48,6 +48,8 @@ create index if not exists trips_status_idx on trips(status);
 create index if not exists trips_scheduled_idx on trips(scheduled_at desc);
 
 alter table links
+  drop constraint if exists links_trip_fk;
+alter table links
   add constraint links_trip_fk
   foreign key (trip_id) references trips(id) on delete set null
   deferrable initially deferred;
@@ -104,6 +106,23 @@ create table if not exists expenses (
   recorded_by text references links(token) on delete set null,
   recorded_at timestamptz not null default now()
 );
+
+-- Bouncie OAuth credentials (singleton)
+create table if not exists bouncie_credentials (
+  id integer primary key check (id = 1),
+  access_token text,
+  refresh_token text,
+  token_type text,
+  expires_at timestamptz,
+  vehicle_vin text,
+  vehicle_imei text,
+  vehicle_nickname text,
+  connected_at timestamptz,
+  last_refreshed_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+insert into bouncie_credentials (id) values (1) on conflict (id) do nothing;
 
 -- Realtime: enable for live dashboards
 alter publication supabase_realtime add table van_position;
