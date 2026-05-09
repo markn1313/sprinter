@@ -13,10 +13,11 @@ export async function GET(req: Request) {
   const q = url.searchParams.get("q")?.trim() ?? "";
   if (q.length < 3) return NextResponse.json({ results: [] });
 
-  // Bias toward Southern California (LA/OC/IE/San Diego). viewbox = lon_left,lat_top,lon_right,lat_bottom.
-  // `bounded=1` restricts results to that box. Anywhere outside SoCal would need to be typed
-  // as a more specific query (city + state). This dramatically cuts down candidate results.
-  const SOCAL_VIEWBOX = "-120.0,34.7,-115.5,32.5";
+  // Bias toward Southern California + Las Vegas valley. viewbox = lon_left,lat_top,lon_right,lat_bottom.
+  // `bounded=1` restricts results to that box.
+  // Box covers SoCal coast (-120) east to Boulder City (-114.5), and from San Diego (32.5)
+  // up to North Las Vegas (36.5).
+  const SOCAL_VIEWBOX = "-120.0,36.5,-114.5,32.5";
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=us&viewbox=${SOCAL_VIEWBOX}&bounded=1&q=${encodeURIComponent(q)}`,
