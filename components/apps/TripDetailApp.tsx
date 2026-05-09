@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Trip } from "@/lib/types";
 import { api, postJson } from "@/lib/api-client";
@@ -10,7 +10,6 @@ import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
-import SmartStop from "@/components/SmartStop";
 import { dollars, statusLabel, statusColor, shortTime, shortDate } from "@/lib/format";
 import { googleMapsMultiStop } from "@/lib/maps-link";
 import { ArrowLeft, Trash2, Navigation, X, Plus, Pencil, Save, Loader2 } from "lucide-react";
@@ -119,12 +118,16 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
     refresh();
   };
 
-  const addStopFromAddress = async (r: { lat: number; lng: number; display: string }) => {
+  const addStopAt = async (
+    index: number,
+    r: { lat: number; lng: number; display: string },
+  ) => {
     await postJson(token, `/api/trips/${tripId}/stops`, {
       kind: "stop",
       address: r.display,
       lat: r.lat,
       lng: r.lng,
+      index,
     });
     refresh();
   };
@@ -224,33 +227,31 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
           </div>
         )}
 
-        {/* Waypoint sequence */}
+        {/* Waypoint sequence — tap any + to insert a stop at that position */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
           <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Route</div>
           <ul className="space-y-2">
             {trip.pickup_address && (
               <Waypoint kind="pickup" label={trip.pickup_address} subline="Pickup" />
             )}
+            {/* + after pickup → insert at index 0 */}
+            <InsertStop token={token} index={0} onAdd={addStopAt} />
             {stops.map((s, i) => (
-              <Waypoint
-                key={s.id}
-                kind="stop"
-                label={s.address}
-                subline={`Stop ${i + 1}${s.category ? ` · ${s.category}` : ""}`}
-                onRemove={() => removeStop(s.id)}
-              />
+              <React.Fragment key={s.id}>
+                <Waypoint
+                  kind="stop"
+                  label={s.address}
+                  subline={`Stop ${i + 1}${s.category ? ` · ${s.category}` : ""}`}
+                  onRemove={() => removeStop(s.id)}
+                />
+                {/* + after this stop → insert at index i+1 */}
+                <InsertStop token={token} index={i + 1} onAdd={addStopAt} />
+              </React.Fragment>
             ))}
             {trip.dropoff_address && (
               <Waypoint kind="dropoff" label={trip.dropoff_address} subline="Final destination" />
             )}
           </ul>
-        </div>
-
-        {/* Add new stop */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4 space-y-3">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">Add a stop on the way</div>
-          <AddressAutocomplete token={token} onSelect={addStopFromAddress} placeholder="Type any address — autocompletes" />
-          <SmartStop token={token} tripId={trip.id} onAdded={refresh} />
         </div>
 
         {/* Guest invite */}
@@ -278,6 +279,53 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <div className="mb-1 text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
       {children}
     </label>
+  );
+}
+
+function InsertStop({
+  token,
+  index,
+  onAdd,
+}: {
+  token: string;
+  index: number;
+  onAdd: (index: number, r: { lat: number; lng: number; display: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <li className="-my-1 flex items-center pl-2">
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-2.5 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+        >
+          <span className="text-base leading-none">+</span> add stop here
+        </button>
+      </li>
+    );
+  }
+  return (
+    <li className="rounded-xl bg-zinc-900/60 px-2 py-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+          Insert stop at position {index + 1}
+        </span>
+        <button
+          onClick={() => setOpen(false)}
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-800"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <AddressAutocomplete
+        token={token}
+        placeholder="Type any address — autocompletes"
+        onSelect={(r) => {
+          onAdd(index, r);
+          setOpen(false);
+        }}
+      />
+    </li>
   );
 }
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { api } from "@/lib/api-client";
-import { MapPin, Loader2 } from "lucide-react";
+import { MapPin, Loader2, X } from "lucide-react";
 
 interface Result {
   lat: number;
@@ -69,6 +69,21 @@ export default function AddressAutocomplete({ token, placeholder = "Add a stop o
           className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
         />
         {loading && <Loader2 size={14} className="animate-spin text-zinc-500" />}
+        {text && !loading && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setText("");
+              setResults([]);
+              setOpen(false);
+            }}
+            className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            aria-label="Clear"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       {open && results.length > 0 && (
         <ul className="absolute z-30 mt-1 w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl backdrop-blur">

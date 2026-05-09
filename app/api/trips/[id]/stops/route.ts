@@ -36,6 +36,7 @@ export async function POST(
         kind?: "stop" | "pickup" | "dropoff";
         category?: string;
         passenger?: string;
+        index?: number; // position to insert at (0 = first stop). Defaults to end.
       }
     | null;
   if (!body || (!body.address && (body.lat == null || body.lng == null))) {
@@ -67,7 +68,9 @@ export async function POST(
     passenger: body.passenger ?? null,
     added_at: new Date().toISOString(),
   };
-  stops.push(newStop);
+  // Insert at requested index, or append if not specified / out of range
+  const idx = typeof body.index === "number" ? Math.max(0, Math.min(stops.length, body.index)) : stops.length;
+  stops.splice(idx, 0, newStop);
   const { error } = await sb.from("trips").update({ stops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ stop: newStop });
