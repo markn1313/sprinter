@@ -59,7 +59,7 @@ export default function LinkGenerator({ token, origin }: Props) {
     try {
       const res = await postJson<{ token: string; reused: boolean }>(token, "/api/links", {
         role: "dio",
-        name: "Dio",
+        name: "Driver",
       });
       setDioToken(res.token);
     } finally {
@@ -82,7 +82,7 @@ export default function LinkGenerator({ token, origin }: Props) {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4 backdrop-blur">
       <div className="text-xs uppercase tracking-wider text-zinc-500">Driver link</div>
       <div className="mt-2 text-sm text-zinc-300">
-        Send Dio his app once — he opens, taps "Add to Home Screen," done.
+        Send the driver his app once — he opens, taps "Add to Home Screen," done.
       </div>
       {dioToken ? (
         <>
@@ -91,7 +91,7 @@ export default function LinkGenerator({ token, origin }: Props) {
               href={smsHref}
               className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500"
             >
-              <MessageSquare size={14} /> Text to Dio
+              <MessageSquare size={14} /> Text to driver
             </a>
             <button
               onClick={() => copy("dio", url)}
@@ -111,7 +111,7 @@ export default function LinkGenerator({ token, origin }: Props) {
           disabled={busy}
           className="mt-3 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50"
         >
-          Generate Dio link
+          Generate driver link
         </button>
       )}
 

@@ -123,6 +123,18 @@ function VitalChip({ children }: { children: React.ReactNode }) {
   );
 }
 
+function SpeedChip({ mph }: { mph: number | null }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2.5 py-1.5 backdrop-blur">
+      <Gauge size={14} className="text-emerald-400" />
+      <span className="font-mono text-base font-bold tabular-nums text-zinc-100">
+        {mph != null ? Math.round(mph) : "—"}
+      </span>
+      <span className="text-[10px] font-semibold text-zinc-500">MPH</span>
+    </div>
+  );
+}
+
 function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (
     <button
@@ -303,10 +315,7 @@ function MapTab({
             <span className="text-emerald-400">↗</span>
             <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
           </VitalChip>
-          <VitalChip>
-            <Gauge size={11} className="text-emerald-400" />
-            <span>{pos.speed_mph != null ? `${pos.speed_mph.toFixed(0)} mph` : "—"}</span>
-          </VitalChip>
+          <SpeedChip mph={pos.speed_mph ?? null} />
         </div>
       )}
 
@@ -475,7 +484,7 @@ function PickMeUpSheet({ token, onClose, onDispatched }: { token: string; onClos
       </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       <div className="mt-3 text-[11px] text-zinc-500">
-        Tap to dispatch Dio to your current location at the chosen time.
+        Tap to dispatch the driver to your current location at the chosen time.
       </div>
     </Sheet>
   );
@@ -633,8 +642,8 @@ function TripsTab({ trips, origin, token }: { trips: Trip[]; origin: string; tok
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="Today's Dio pay" value={dollars(todayPay)} />
-        <Stat label="Week Dio pay" value={dollars(weekPay)} />
+        <Stat label="Today's driver pay" value={dollars(todayPay)} />
+        <Stat label="Week driver pay" value={dollars(weekPay)} />
       </div>
       <TripList trips={trips} role="mark" origin={origin} token={token} onChanged={() => window.location.reload()} />
     </main>

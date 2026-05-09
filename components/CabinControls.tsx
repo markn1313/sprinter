@@ -58,7 +58,7 @@ export default function CabinControls({ token, tripId }: Props) {
           );
         })}
       </div>
-      <div className="mt-2 text-[11px] text-zinc-500">Dio sees these as toasts and adjusts.</div>
+      <div className="mt-2 text-[11px] text-zinc-500">Your driver sees these as toasts and adjusts.</div>
     </div>
   );
 }

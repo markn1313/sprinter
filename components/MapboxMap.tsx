@@ -160,7 +160,29 @@ export default function MapboxMap({
 
     mapRef.current = map;
     return () => {
-      map.remove();
+      // Aggressively null out marker refs before tearing down the map so any
+      // queued mutation observers don't try to read removed DOM nodes.
+      try {
+        if (vanMarkerRef.current) {
+          vanMarkerRef.current.remove();
+          vanMarkerRef.current = null;
+        }
+      } catch {}
+      try {
+        pinMarkersRef.current.forEach((m) => {
+          try { m.remove(); } catch {}
+        });
+        pinMarkersRef.current = [];
+      } catch {}
+      try {
+        if (dropPinMarkerRef.current) {
+          dropPinMarkerRef.current.remove();
+          dropPinMarkerRef.current = null;
+        }
+      } catch {}
+      try {
+        map.remove();
+      } catch {}
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

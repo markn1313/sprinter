@@ -99,10 +99,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
                 <span className="text-emerald-400">↗</span>
                 <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
               </VitalChip>
-              <VitalChip>
-                <Gauge size={11} className="text-emerald-400" />
-                <span>{pos.speed_mph != null ? `${pos.speed_mph.toFixed(0)} mph` : "—"}</span>
-              </VitalChip>
+              <SpeedChip mph={pos.speed_mph ?? null} />
             </div>
           )}
 
@@ -123,7 +120,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
           <main className="mx-auto max-w-2xl space-y-3 px-3 py-3">
             <CabinControls token={token} tripId={trip?.id ?? null} />
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm text-zinc-400">
-              Tap any chip — Dio sees the request as a banner at the top of his app and adjusts the climate.
+              Tap any chip — your driver sees the request as a banner at the top of his app and adjusts the climate.
             </div>
           </main>
         </div>
@@ -195,6 +192,18 @@ function VitalChip({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2 py-1 text-[11px] text-zinc-200 backdrop-blur">
       {children}
+    </div>
+  );
+}
+
+function SpeedChip({ mph }: { mph: number | null }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2.5 py-1.5 backdrop-blur">
+      <Gauge size={14} className="text-emerald-400" />
+      <span className="font-mono text-base font-bold tabular-nums text-zinc-100">
+        {mph != null ? Math.round(mph) : "—"}
+      </span>
+      <span className="text-[10px] font-semibold text-zinc-500">MPH</span>
     </div>
   );
 }
