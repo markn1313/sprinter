@@ -43,7 +43,7 @@ export default function DispatchBar({ token, onDispatched }: Props) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) submit();
           }}
-          placeholder="Send van to Greg at 2pm to LAX"
+          placeholder="Pick up Greg at 2pm, drop off at LAX"
           className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
           disabled={busy}
         />
@@ -57,8 +57,7 @@ export default function DispatchBar({ token, onDispatched }: Props) {
       </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       <div className="mt-2 text-xs text-zinc-500">
-        Try: <em>Send van now to take Greg to LAX</em>, <em>2pm pickup Sarah from
-        Wynn to Cosmo</em>, <em>in 15 min, Mark to John Wayne</em>
+        Try: <em>Pick up Greg now, drop off at LAX</em> · <em>Pick up Sarah at 2pm from Wynn, drop off at Cosmo</em> · <em>Pick me up in 15 min</em>
       </div>
     </div>
   );

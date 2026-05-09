@@ -1,12 +1,13 @@
-// Free routing via OSRM public demo server.
-// No traffic-aware ETA yet (next upgrade: Mapbox driving-traffic profile).
-// Returns a GeoJSON LineString polyline + total drive seconds + meters.
+// Mapbox Directions API with driving-traffic profile (real-time traffic).
+// Falls back to OSRM if MAPBOX_TOKEN is not set.
 
 export interface RouteResult {
-  polyline: string; // encoded polyline (precision 5, OSRM default)
+  polyline: string; // encoded polyline (precision 5)
   distance_m: number;
   duration_s: number;
+  duration_in_traffic_s: number | null;
   geometry: { type: "LineString"; coordinates: [number, number][] };
+  source: "mapbox-traffic" | "osrm";
 }
 
 export interface Waypoint {
@@ -14,12 +15,50 @@ export interface Waypoint {
   lng: number;
 }
 
-const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
-
 export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
+  const mapboxToken = process.env.MAPBOX_TOKEN;
+  if (mapboxToken) {
+    const r = await routeMapbox(waypoints, mapboxToken);
+    if (r) return r;
+  }
+  return routeOsrm(waypoints);
+}
+
+async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteResult | null> {
+  // Mapbox cap: 25 coordinates per request, fine for our use
+  const coords = waypoints.map((p) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=false`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      code: string;
+      routes: Array<{
+        distance: number;
+        duration: number;
+        duration_typical?: number;
+        geometry: { type: "LineString"; coordinates: [number, number][] };
+      }>;
+    };
+    if (data.code !== "Ok" || !data.routes[0]) return null;
+    const r = data.routes[0];
+    return {
+      polyline: encodePolyline(r.geometry.coordinates),
+      distance_m: Math.round(r.distance),
+      duration_s: Math.round(r.duration),
+      duration_in_traffic_s: Math.round(r.duration), // driving-traffic profile is already traffic-adjusted
+      geometry: r.geometry,
+      source: "mapbox-traffic",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function routeOsrm(waypoints: Waypoint[]): Promise<RouteResult | null> {
   const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(";");
-  const url = `${OSRM_BASE}/${coords}?overview=full&geometries=geojson&steps=false`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return null;
@@ -37,15 +76,15 @@ export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> 
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
       duration_s: Math.round(r.duration),
+      duration_in_traffic_s: null,
       geometry: r.geometry,
+      source: "osrm",
     };
   } catch {
     return null;
   }
 }
 
-// Walk along a polyline for `seconds` of drive time at avg speed of the route.
-// Returns the coordinate where the van will be after `seconds`.
 export function projectAlongRoute(
   geometry: { coordinates: [number, number][] },
   totalDurationS: number,
@@ -64,11 +103,7 @@ export function projectAlongRoute(
       const t = seg === 0 ? 0 : remain / seg;
       const lng = a[0] + (b[0] - a[0]) * t;
       const lat = a[1] + (b[1] - a[1]) * t;
-      return {
-        lat,
-        lng,
-        remaining_s: Math.max(0, totalDurationS - seconds),
-      };
+      return { lat, lng, remaining_s: Math.max(0, totalDurationS - seconds) };
     }
     acc += seg;
   }
@@ -81,13 +116,10 @@ export function haversine(lat1: number, lng1: number, lat2: number, lng2: number
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Standard Google polyline algorithm (precision 5)
 function encodePolyline(coords: [number, number][]): string {
   let output = "";
   let prevLat = 0;

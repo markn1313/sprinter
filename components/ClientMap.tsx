@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { ComponentProps } from "react";
 
-const LiveMap = dynamic(() => import("./LiveMap"), {
+const MapboxMap = dynamic(() => import("./MapboxMap"), {
   ssr: false,
   loading: () => (
     <div className="h-full w-full bg-zinc-900 animate-pulse rounded-2xl flex items-center justify-center text-zinc-500">
@@ -12,6 +12,6 @@ const LiveMap = dynamic(() => import("./LiveMap"), {
   ),
 });
 
-export default function ClientMap(props: ComponentProps<typeof LiveMap>) {
-  return <LiveMap {...props} />;
+export default function ClientMap(props: ComponentProps<typeof MapboxMap>) {
+  return <MapboxMap {...props} />;
 }
