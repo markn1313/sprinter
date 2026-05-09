@@ -118,13 +118,10 @@ export default function LinkGenerator({ token, origin }: Props) {
 
       <div className="mt-5 border-t border-zinc-800 pt-4">
         <div className="text-xs uppercase tracking-wider text-zinc-500">In-van TV display</div>
-        <div className="mt-2 text-sm text-zinc-300">
-          Type this URL into the Apple TV / van TV browser. View-only live map.
-        </div>
         {tvToken ? (
           <>
             <div className="mt-3 overflow-hidden rounded-lg border border-blue-900/60 bg-blue-950/30 px-4 py-3">
-              <div className="font-mono text-lg font-bold text-blue-100 break-all leading-tight">
+              <div className="font-mono text-base font-bold text-blue-100 break-all leading-tight">
                 {origin.replace(/^https?:\/\//, "")}/tv/{tvToken}
               </div>
             </div>

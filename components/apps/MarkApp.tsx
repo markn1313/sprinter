@@ -225,6 +225,19 @@ function MapTab({
   name: string;
 }) {
   const { eta } = useEta(token, live?.id ?? null, 25_000);
+  // For the map preview + Maps button: if no trip is in-progress, fall back to
+  // the next upcoming scheduled trip. So pins, polyline, and Maps deep-link
+  // always reflect "what we're about to do."
+  const mapTrip = useMemo<Trip | null>(() => {
+    if (live) return live;
+    const upcoming = trips
+      .filter((t) => t.status === "scheduled")
+      .sort(
+        (a, b) =>
+          new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
+      );
+    return upcoming[0] ?? null;
+  }, [live, trips]);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
   const onMapClick = async (lat: number, lng: number) => {
@@ -260,37 +273,37 @@ function MapTab({
   }, [shareGps]);
 
   const stopsArr =
-    ((live as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
+    ((mapTrip as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
-    if (live?.pickup_lat != null && live.pickup_lng != null)
-      out.push({ kind: "pickup", lat: live.pickup_lat, lng: live.pickup_lng, label: live.pickup_address ?? undefined });
-    if (live?.dropoff_lat != null && live.dropoff_lng != null)
-      out.push({ kind: "dropoff", lat: live.dropoff_lat, lng: live.dropoff_lng, label: live.dropoff_address ?? undefined });
+    if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
+      out.push({ kind: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
+    if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
+      out.push({ kind: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
     stopsArr.forEach((s, i) => {
       if (s.lat != null && s.lng != null)
         out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
     });
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
     return out;
-  }, [live, stopsArr, myGps]);
+  }, [mapTrip, stopsArr, myGps]);
 
-  const polyline = (live as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
+  const polyline = (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
 
   const navUrl = useMemo(() => {
-    if (!live) return null;
+    if (!mapTrip) return null;
     const wp: Array<{ lat: number; lng: number; label?: string }> = [];
-    if (live.pickup_lat != null && live.pickup_lng != null) wp.push({ lat: live.pickup_lat, lng: live.pickup_lng });
+    if (mapTrip.pickup_lat != null && mapTrip.pickup_lng != null) wp.push({ lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng });
     stopsArr.forEach((s) => {
       if (s.lat != null && s.lng != null) wp.push({ lat: s.lat, lng: s.lng });
     });
-    if (live.dropoff_lat != null && live.dropoff_lng != null)
-      wp.push({ lat: live.dropoff_lat, lng: live.dropoff_lng, label: live.dropoff_address ?? undefined });
+    if (mapTrip.dropoff_lat != null && mapTrip.dropoff_lng != null)
+      wp.push({ lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
     if (wp.length === 0) return null;
     if (wp.length === 1) return googleMapsTo(wp[0].lat, wp[0].lng);
     return googleMapsMultiStop(wp);
-  }, [live, stopsArr]);
+  }, [mapTrip, stopsArr]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -328,12 +341,33 @@ function MapTab({
       {/* Map focus + drop-pin controls — left edge */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
         <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Center on van" />
-        {myGps && <FocusBtn label={<span className="text-2xl leading-none">📍</span>} onClick={() => focus("me")} title="Center on me" />}
-        {(live?.dropoff_lat != null || live?.pickup_lat != null) && (
+        <FocusBtn
+          label={<span className="text-2xl leading-none">📍</span>}
+          onClick={() => {
+            // If GPS hasn't reported yet, do a one-shot read so the button
+            // works on first tap instead of needing the watcher to warm up.
+            if (myGps) {
+              focus("me");
+              return;
+            }
+            if (typeof navigator !== "undefined" && navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(
+                (p) => {
+                  setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude });
+                  focus("me");
+                },
+                undefined,
+                { enableHighAccuracy: true, maximumAge: 10_000, timeout: 10_000 },
+              );
+            }
+          }}
+          title="Center on me"
+        />
+        {(mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
           <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
         )}
         {myGps && pos && <FocusBtn label={<span className="flex items-center gap-0.5"><VanIcon size={20} /><span className="text-base">↔</span><span className="text-base">📍</span></span>} onClick={() => focus("van-me")} title="Van + me" />}
-        {myGps && (live?.dropoff_lat != null || live?.pickup_lat != null) && (
+        {myGps && (mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
           <FocusBtn label={<span className="text-base">📍↔🏁</span>} onClick={() => focus("me-dest")} title="Me + destination" />
         )}
         <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />

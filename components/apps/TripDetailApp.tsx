@@ -348,9 +348,6 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     typeof window !== "undefined" && trip?.passenger_link_token
       ? `${window.location.origin}/p/${trip.passenger_link_token}`
       : null;
-  const passengerInviteHref = passengerUrl
-    ? `sms:&body=${encodeURIComponent(`Click for details on your trip:\n${passengerUrl}`)}`
-    : null;
 
   const driverUrl =
     typeof window !== "undefined" && driverToken
@@ -360,29 +357,44 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     ? `sms:&body=${encodeURIComponent(`Open for today's trip:\n${driverUrl}`)}`
     : null;
 
+  // Invite Guests: lazy-mint a passenger link if the trip doesn't have one
+  // yet, then drop into iMessage with the URL prefilled.
+  const inviteGuests = async () => {
+    let url = passengerUrl;
+    if (!url) {
+      const res = await fetch(`/api/trips/${tripId}/invite-guest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { token?: string };
+      if (!data.token) return;
+      url = `${window.location.origin}/p/${data.token}`;
+      await refresh();
+    }
+    const sms = `sms:&body=${encodeURIComponent(`Click for details on your trip:\n${url}`)}`;
+    window.location.href = sms;
+  };
+
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
-      {(passengerInviteHref || driverInviteHref) && (
-        <div className="flex items-center justify-end gap-2 px-3 pt-3">
-          {driverInviteHref && (
-            <a
-              href={driverInviteHref}
-              className="flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
-            >
-              <MessageSquare size={12} /> Invite Driver
-            </a>
-          )}
-          {passengerInviteHref && (
-            <a
-              href={passengerInviteHref}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-            >
-              <MessageSquare size={12} /> Invite Guests
-            </a>
-          )}
-        </div>
-      )}
-      <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
+      <div className="flex items-center justify-end gap-2 px-3 pt-2">
+        {driverInviteHref && (
+          <a
+            href={driverInviteHref}
+            className="flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-700"
+          >
+            <MessageSquare size={12} /> Invite Driver
+          </a>
+        )}
+        <button
+          onClick={inviteGuests}
+          className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+        >
+          <MessageSquare size={12} /> Invite Guest
+        </button>
+      </div>
+      <main className={`mx-auto w-full max-w-3xl space-y-2 px-3 pt-2 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
         {!hideMap && (
           <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
             <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
