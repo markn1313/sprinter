@@ -1,8 +1,21 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { lookupLink } from "@/lib/auth";
 import PassengerApp from "@/components/apps/PassengerApp";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<Metadata> {
+  const { token } = await params;
+  return {
+    manifest: `/p/${token}/manifest.webmanifest`,
+    appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Sprinter" },
+  };
+}
 
 export default async function PassengerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
