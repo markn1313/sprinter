@@ -21,14 +21,16 @@ export async function GET(req: Request) {
   }
 
   if (ctx.role === "dio") {
-    // Dio sees today's + active + upcoming, but never money fields
-    const since = new Date(Date.now() - 12 * 3600_000).toISOString();
+    // Dio sees every non-finished trip, ordered by scheduled_at. Money fields
+    // never returned. We deliberately don't filter by time — a trip Mark
+    // scheduled for last night that didn't run is still relevant until Dio (or
+    // Mark) marks it complete or cancelled.
     const { data, error } = await sb
       .from("trips")
       .select(
-        "id,passenger_name,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at,dispatched_at,arrived_at_pickup_at,onboard_at,arrived_at_dropoff_at,completed_at,status,notes,estimated_minutes",
+        "id,passenger_name,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at,dispatched_at,arrived_at_pickup_at,onboard_at,arrived_at_dropoff_at,completed_at,status,notes,estimated_minutes,stops",
       )
-      .gte("scheduled_at", since)
+      .not("status", "in", "(complete,cancelled)")
       .order("scheduled_at", { ascending: true })
       .limit(20);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
