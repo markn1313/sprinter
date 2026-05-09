@@ -59,7 +59,7 @@ export default function LinkGenerator({ token, origin }: Props) {
 
   const url = dioToken ? `${origin}/d/${dioToken}` : "";
   const smsHref = dioToken
-    ? `sms:&body=${encodeURIComponent(`Sprinter driver app — open & save to your home screen: ${url}`)}`
+    ? `sms:&body=${encodeURIComponent(`Open for today's trip:\n${url}`)}`
     : "#";
 
   return (
