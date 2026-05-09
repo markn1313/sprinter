@@ -9,18 +9,31 @@ export function newToken(): string {
   return generate();
 }
 
-export async function loadSession(token: string): Promise<SessionContext | null> {
-  if (!token) return null;
+export type LinkStatus = "missing" | "expired" | "revoked" | "valid";
+
+export interface LinkLookup {
+  status: LinkStatus;
+  link: Link | null;
+}
+
+// Raw lookup that distinguishes between "doesn't exist", "expired", "revoked",
+// and "valid". Use this when you want to render an expired-specific page.
+export async function lookupLink(token: string): Promise<LinkLookup> {
+  if (!token) return { status: "missing", link: null };
   const sb = supabaseAdmin();
-  const { data, error } = await sb
-    .from("links")
-    .select("*")
-    .eq("token", token)
-    .maybeSingle();
-  if (error || !data) return null;
+  const { data, error } = await sb.from("links").select("*").eq("token", token).maybeSingle();
+  if (error || !data) return { status: "missing", link: null };
   const link = data as Link;
-  if (link.revoked_at) return null;
-  if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) return null;
+  if (link.revoked_at) return { status: "revoked", link };
+  if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) {
+    return { status: "expired", link };
+  }
+  return { status: "valid", link };
+}
+
+export async function loadSession(token: string): Promise<SessionContext | null> {
+  const { status, link } = await lookupLink(token);
+  if (status !== "valid" || !link) return null;
   return {
     token: link.token,
     role: link.role,

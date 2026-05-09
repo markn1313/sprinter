@@ -80,7 +80,8 @@ export async function POST(req: Request) {
       name: parsed.passengerName,
       created_by: ctx.token,
       trip_id: trip.id,
-      expires_at: new Date(new Date(parsed.scheduledAt).getTime() + 12 * 3600_000).toISOString(),
+      // Per-trip link expires 16 hours after the trip's scheduled pickup
+      expires_at: new Date(new Date(parsed.scheduledAt).getTime() + 16 * 3600_000).toISOString(),
     });
     await sb.from("trips").update({ passenger_link_token: guestToken }).eq("id", trip.id);
   }

@@ -1,12 +1,14 @@
-import { notFound } from "next/navigation";
-import { requireRole } from "@/lib/auth";
+import { notFound, redirect } from "next/navigation";
+import { lookupLink } from "@/lib/auth";
 import DioApp from "@/components/apps/DioApp";
 
 export const dynamic = "force-dynamic";
 
 export default async function DioPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const ctx = await requireRole(token, "dio");
-  if (!ctx) notFound();
-  return <DioApp token={ctx.token} name={ctx.name} />;
+  const { status, link } = await lookupLink(token);
+  if (status === "missing") notFound();
+  if (status === "expired" || status === "revoked") redirect("/expired");
+  if (!link || link.role !== "dio") notFound();
+  return <DioApp token={link.token} name={link.name} />;
 }
