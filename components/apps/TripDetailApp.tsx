@@ -11,7 +11,7 @@ import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, statusLabel, statusColor, shortTime, shortDate } from "@/lib/format";
 import { googleMapsMultiStop } from "@/lib/maps-link";
-import { Navigation, X, Save, Loader2 } from "lucide-react";
+import { Navigation, X, Save, Loader2, MessageSquare } from "lucide-react";
 
 interface Stop {
   id: string;
@@ -49,7 +49,8 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   const [dropoff, setDropoff] = useState("");
   const [busy, setBusy] = useState(false);
   const { pos } = usePosition(token, 8000);
-  const { eta } = useEta(token, tripId, 25_000);
+  const { eta: serverEta } = useEta(token, tripId, 25_000);
+  const [previewEta, setPreviewEta] = useState<typeof serverEta>(null);
 
   const refresh = async () => {
     try {
@@ -86,6 +87,51 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
     localStops !== null &&
     (localStops.length !== serverStops.length ||
       localStops.some((s, i) => s.id !== serverStops[i]?.id));
+
+  // When the user has staged changes, compute a preview ETA against the local
+  // waypoint sequence so the badge reflects what they're about to push.
+  useEffect(() => {
+    if (!isDirty || !trip) {
+      setPreviewEta(null);
+      return;
+    }
+    const upcoming: Array<{ lat: number; lng: number; kind: string; label: string }> = [];
+    if (
+      (trip.status === "scheduled" || trip.status === "dispatched") &&
+      trip.pickup_lat != null &&
+      trip.pickup_lng != null
+    ) {
+      upcoming.push({ lat: trip.pickup_lat, lng: trip.pickup_lng, kind: "pickup", label: trip.pickup_address ?? "Pickup" });
+    }
+    stops.forEach((s) => {
+      if (s.lat != null && s.lng != null) {
+        upcoming.push({ lat: s.lat, lng: s.lng, kind: "stop", label: s.address });
+      }
+    });
+    if (trip.dropoff_lat != null && trip.dropoff_lng != null) {
+      upcoming.push({ lat: trip.dropoff_lat, lng: trip.dropoff_lng, kind: "dropoff", label: trip.dropoff_address ?? "Dropoff" });
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/eta`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ waypoints: upcoming }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPreviewEta(data);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDirty, stops, trip, token]);
+
+  const eta = isDirty ? previewEta : serverEta;
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
@@ -190,8 +236,27 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
 
+  const inviteUrl =
+    typeof window !== "undefined" && trip?.passenger_link_token
+      ? `${window.location.origin}/p/${trip.passenger_link_token}`
+      : null;
+  const inviteHref = inviteUrl
+    ? `sms:&body=${encodeURIComponent(`Click for details on your trip:\n${inviteUrl}`)}`
+    : null;
+
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
+      {/* Top-right invite button — only shows when there's a passenger link to share */}
+      {inviteHref && (
+        <div className="flex items-center justify-end px-3 pt-3">
+          <a
+            href={inviteHref}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+          >
+            <MessageSquare size={12} /> Invite
+          </a>
+        </div>
+      )}
       <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
         {/* Map — omitted when embedded (parent already has one) */}
         {!hideMap && (
@@ -322,18 +387,6 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
           </div>
         )}
 
-        {/* Guest invite */}
-        {trip.passenger_link_token && (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-            <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Share with passengers</div>
-            <a
-              href={`sms:&body=${encodeURIComponent(`Click for details on your trip:\n${typeof window !== "undefined" ? window.location.origin : ""}/p/${trip.passenger_link_token}`)}`}
-              className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500"
-            >
-              Invite via iMessage
-            </a>
-          </div>
-        )}
       </main>
     </div>
   );
