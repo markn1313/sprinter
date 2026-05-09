@@ -191,38 +191,102 @@ export function bouncieAuthUrl(redirectUri: string, state: string): string {
   return `https://auth.bouncie.com/dialog/authorize?${params.toString()}`;
 }
 
-export async function exchangeAuthCode(code: string, redirectUri: string): Promise<{
+export interface ExchangeResult {
+  ok: true;
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
   token_type?: string;
-} | null> {
+}
+
+export interface ExchangeError {
+  ok: false;
+  reason: string;
+}
+
+export async function exchangeAuthCode(
+  code: string,
+  redirectUri: string,
+): Promise<ExchangeResult | ExchangeError> {
   const clientId = process.env.BOUNCIE_CLIENT_ID;
   const clientSecret = process.env.BOUNCIE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
-  });
-  const res = await fetch(BOUNCIE_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-  if (!res.ok) {
-    console.warn("Bouncie code exchange failed", res.status, await res.text());
-    return null;
+  if (!clientId || !clientSecret) {
+    return { ok: false, reason: "BOUNCIE_CLIENT_ID/SECRET not set" };
   }
-  return (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-    token_type?: string;
-  };
+
+  // Try multiple body shapes — different OAuth providers expect different things
+  const attempts: { label: string; init: RequestInit }[] = [
+    {
+      label: "form-with-creds",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+        }).toString(),
+      },
+    },
+    {
+      label: "json-with-creds",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "authorization_code",
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+        }),
+      },
+    },
+    {
+      label: "form-with-basic-auth",
+      init: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: redirectUri,
+        }).toString(),
+      },
+    },
+  ];
+
+  const errors: string[] = [];
+  for (const a of attempts) {
+    try {
+      const res = await fetch(BOUNCIE_TOKEN_URL, a.init);
+      const text = await res.text();
+      if (res.ok) {
+        try {
+          const json = JSON.parse(text) as {
+            access_token: string;
+            refresh_token?: string;
+            expires_in?: number;
+            token_type?: string;
+          };
+          if (json.access_token) return { ok: true, ...json };
+          errors.push(`${a.label}: 200 but no access_token: ${text.slice(0, 200)}`);
+        } catch {
+          errors.push(`${a.label}: 200 non-JSON: ${text.slice(0, 200)}`);
+        }
+      } else {
+        errors.push(`${a.label}: ${res.status} ${text.slice(0, 300)}`);
+      }
+    } catch (err) {
+      errors.push(`${a.label}: threw ${(err as Error).message}`);
+    }
+  }
+  return { ok: false, reason: errors.join(" || ") };
 }
 
 export async function saveCredentials(token: {

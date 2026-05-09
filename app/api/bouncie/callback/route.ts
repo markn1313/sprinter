@@ -19,8 +19,11 @@ export async function GET(req: Request) {
   const redirectUri = `${origin}/api/bouncie/callback`;
 
   const tokenResp = await exchangeAuthCode(code, redirectUri);
-  if (!tokenResp) {
-    return new NextResponse("Bouncie token exchange failed — check server logs", { status: 502 });
+  if (!tokenResp.ok) {
+    return new NextResponse(
+      `Bouncie token exchange failed:\n\n${tokenResp.reason}`,
+      { status: 502, headers: { "Content-Type": "text/plain" } },
+    );
   }
 
   await saveCredentials(tokenResp);
