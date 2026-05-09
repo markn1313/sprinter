@@ -1,17 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Trip } from "@/lib/types";
 import { usePosition } from "@/components/usePosition";
 import { useTrips } from "@/components/useTrips";
+import { useEta } from "@/components/useEta";
 import ClientMap from "@/components/ClientMap";
+import { MapPin } from "@/components/LiveMap";
+import EtaBadge from "@/components/EtaBadge";
+import CabinControls from "@/components/CabinControls";
 import { statusLabel, shortTime } from "@/lib/format";
-import { MapPin, Wifi, Tv, Car, Music } from "lucide-react";
+import { MapPin as PinIcon, Wifi, Tv, Car, Music } from "lucide-react";
 
 export default function PassengerApp({ token, name }: { token: string; name: string }) {
-  const { pos } = usePosition(token, 10000);
-  const { trips } = useTrips(token, 6000);
+  const { pos } = usePosition(token, 8000);
+  const { trips } = useTrips(token, 5000);
   const trip = trips[0] ?? null;
+  const { eta } = useEta(token, trip?.id ?? null, 20_000);
+
+  const pins = useMemo<MapPin[]>(() => {
+    const out: MapPin[] = [];
+    if (trip?.pickup_lat != null && trip.pickup_lng != null) {
+      out.push({ kind: "pickup", lat: trip.pickup_lat, lng: trip.pickup_lng, label: trip.pickup_address ?? "Pickup" });
+    }
+    if (trip?.dropoff_lat != null && trip.dropoff_lng != null) {
+      out.push({ kind: "dropoff", lat: trip.dropoff_lat, lng: trip.dropoff_lng, label: trip.dropoff_address ?? "Dropoff" });
+    }
+    return out;
+  }, [trip]);
+
+  const polyline = (trip as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
+  const isLive = trip && trip.status !== "scheduled" && trip.status !== "complete" && trip.status !== "cancelled";
 
   return (
     <div className="min-h-screen bg-zinc-950 pb-12">
@@ -25,48 +44,27 @@ export default function PassengerApp({ token, name }: { token: string; name: str
         </div>
       </header>
 
-      <section className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
+      <section className="relative mx-auto max-w-2xl space-y-3 px-4 pt-4">
         <div className="h-[44vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
-          <ClientMap
-            position={pos}
-            pickup={
-              trip?.pickup_lat != null && trip?.pickup_lng != null
-                ? { lat: trip.pickup_lat, lng: trip.pickup_lng, label: trip.pickup_address ?? undefined }
-                : null
-            }
-            dropoff={
-              trip?.dropoff_lat != null && trip?.dropoff_lng != null
-                ? { lat: trip.dropoff_lat, lng: trip.dropoff_lng, label: trip.dropoff_address ?? undefined }
-                : null
-            }
-          />
+          <ClientMap position={pos} pins={pins} polyline={polyline} />
         </div>
+        {isLive && eta && (
+          <div className="absolute left-6 top-8">
+            <EtaBadge eta={eta} variant="hero" label={trip?.status === "onboard" ? "to your stop" : "until pickup"} />
+          </div>
+        )}
 
-        {trip ? <PassengerTripCard trip={trip} /> : <NoTripCard />}
+        {trip ? <PassengerTripCard trip={trip} etaMinutes={eta?.eta_minutes ?? null} /> : <NoTripCard />}
+
+        {isLive && trip && <CabinControls token={token} tripId={trip.id} />}
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
           <div className="mb-3 text-xs uppercase tracking-wider text-zinc-500">In the van</div>
           <div className="space-y-3 text-sm">
-            <CabinTip
-              icon={<Tv size={16} className="text-emerald-400" />}
-              title="Audio for the TV"
-              body="Push the RD-RGB150A knob to switch to Apple TV (red). Turn the knob to adjust volume."
-            />
-            <CabinTip
-              icon={<Music size={16} className="text-emerald-400" />}
-              title="Play music from your iPhone"
-              body="Tap the Connectivity icon in the bottom-left of the Pioneer screen → pick your phone (or use the magnifying glass to add it for the first time)."
-            />
-            <CabinTip
-              icon={<Car size={16} className="text-emerald-400" />}
-              title="Volume / source knob"
-              body="Located on the driver-side wall between the captain's chair and the bench. Turn = volume; press = switch between Pioneer and Apple TV."
-            />
-            <CabinTip
-              icon={<Wifi size={16} className="text-zinc-500" />}
-              title="WiFi"
-              body="The van's TV runs on cellular and bandwidth is limited — please use your own phone data instead."
-            />
+            <CabinTip icon={<Tv size={16} className="text-emerald-400" />} title="Audio for the TV" body="Push the RD-RGB150A knob to switch to Apple TV (red). Turn the knob to adjust volume." />
+            <CabinTip icon={<Music size={16} className="text-emerald-400" />} title="Play music from your iPhone" body="Tap the Connectivity icon in the bottom-left of the Pioneer screen → pick your phone (or use the magnifying glass to add it)." />
+            <CabinTip icon={<Car size={16} className="text-emerald-400" />} title="Volume / source knob" body="Driver-side wall between the captain's chair and the bench. Turn = volume; press = switch source." />
+            <CabinTip icon={<Wifi size={16} className="text-zinc-500" />} title="WiFi" body="The TV uses cellular and bandwidth is limited — please use your own data." />
           </div>
         </div>
       </section>
@@ -74,18 +72,17 @@ export default function PassengerApp({ token, name }: { token: string; name: str
   );
 }
 
-function PassengerTripCard({ trip }: { trip: Trip }) {
-  const showLive = trip.status !== "scheduled" && trip.status !== "complete";
+function PassengerTripCard({ trip, etaMinutes }: { trip: Trip; etaMinutes: number | null }) {
   const headline = (() => {
     switch (trip.status) {
       case "scheduled":
         return `Pickup at ${shortTime(trip.scheduled_at)}`;
       case "dispatched":
-        return "Van is on the way";
+        return etaMinutes != null ? `Dio is ${etaMinutes} min away` : "Van is on the way";
       case "at_pickup":
         return "Van has arrived";
       case "onboard":
-        return trip.dropoff_address ? `Heading to ${trip.dropoff_address}` : "Onboard";
+        return etaMinutes != null && trip.dropoff_address ? `${etaMinutes} min to ${trip.dropoff_address.split(",")[0]}` : "Onboard";
       case "at_dropoff":
         return "Arrived";
       case "complete":
@@ -101,14 +98,10 @@ function PassengerTripCard({ trip }: { trip: Trip }) {
       <div className="mt-1 text-lg font-semibold text-zinc-100">{headline}</div>
       <div className="mt-3 space-y-1 text-sm">
         {trip.pickup_address && (
-          <div className="flex items-center gap-2 text-zinc-300">
-            <MapPin size={14} className="text-amber-400" /> {trip.pickup_address}
-          </div>
+          <div className="flex items-center gap-2 text-zinc-300"><PinIcon size={14} className="text-amber-400" /> {trip.pickup_address}</div>
         )}
         {trip.dropoff_address && (
-          <div className="flex items-center gap-2 text-zinc-300">
-            <MapPin size={14} className="text-blue-400" /> {trip.dropoff_address}
-          </div>
+          <div className="flex items-center gap-2 text-zinc-300"><PinIcon size={14} className="text-blue-400" /> {trip.dropoff_address}</div>
         )}
       </div>
     </div>
@@ -118,7 +111,7 @@ function PassengerTripCard({ trip }: { trip: Trip }) {
 function NoTripCard() {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-6 text-center text-sm text-zinc-400">
-      Your ride hasn&apos;t been dispatched yet — Mark will let you know when the van is on the way.
+      Your ride hasn&apos;t been dispatched yet — you&apos;ll see it here when Mark sends the van.
     </div>
   );
 }

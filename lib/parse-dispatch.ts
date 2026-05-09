@@ -1,32 +1,39 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+export type DispatchKind = "trip" | "stop_request" | "pickup_now" | "unclear";
+
 export interface ParsedDispatch {
+  kind: DispatchKind;
   passengerName: string;
   isOwnerRiding: boolean;
   pickupHint: string | null;
   dropoffHint: string | null;
   scheduledAt: string; // ISO UTC
+  // Stop-request specific
+  stopCategory: string | null; // e.g. 'coffee', 'food', 'gas'
+  stopOffsetMinutes: number | null; // when (from now) the stop should happen
   rawNotes: string;
 }
 
-const SYSTEM_PROMPT = `You are a dispatch parser for Mark's private Sprinter van service.
-Mark is the owner; Dio is the driver. The user typing into the dispatch bar is always Mark.
+const SYSTEM_PROMPT = `You are a dispatch parser for Mark's private Sprinter van service. The user typing is always Mark (owner). Dio is the driver.
 
-Output STRICT JSON only, no prose, with these keys:
-- passengerName: string  (the rider; if Mark is the rider, use "Mark"; never the imperative verb)
-- isOwnerRiding: boolean (true if Mark himself is the rider — phrases like "me", "myself", "I am going")
-- pickupHint: string|null (e.g. "home", "Wynn lobby", "John Wayne", or null if not specified)
-- dropoffHint: string|null (e.g. "LAX", "Intuit Dome", "Cosmopolitan", or null if not specified) — capitalize venue/city/airport names properly
-- scheduledAt: ISO 8601 UTC timestamp for when pickup happens
+Output STRICT JSON only. Keys:
+- kind: "trip" | "stop_request" | "pickup_now" | "unclear"
+   - "pickup_now": Mark wants to be picked up RIGHT NOW from his current location ("come get me", "pick me up now", "I'm ready", "send the van to me")
+   - "stop_request": Mark wants to add a stop on the way ("stop for coffee", "I need a restroom", "fuel stop", "grab food")
+   - "trip": full trip with passenger / pickup / dropoff
+   - "unclear": cannot determine
+- passengerName: string. Use "Mark" if Mark himself is the rider; never the imperative verb like "Pick" or "Send"
+- isOwnerRiding: boolean. true for "me", "myself", "I", "I'm" — Mark is the rider
+- pickupHint: string|null. e.g. "home", "Wynn lobby"; for pickup_now use "current location"
+- dropoffHint: string|null. Capitalize venues/landmarks ("Intuit Dome" not "intuit dome"). For pickup_now, dropoff is null.
+- scheduledAt: ISO 8601 UTC. Resolve relative times in America/Los_Angeles (PT) and convert to UTC.
+- stopCategory: only for kind="stop_request". One of: coffee, food, fast_food, restroom, gas, grocery, pharmacy, atm, ev_charging, rest_stop. Else null.
+- stopOffsetMinutes: only for kind="stop_request". Minutes from now to make the stop. Default 15 if unspecified.
 
-Mark is in America/Los_Angeles (PT). Resolve all relative times in his timezone and convert to UTC.
-Examples (assuming "now" is Friday 2026-05-08 22:00 PT = 2026-05-09T05:00:00Z):
-- "now" / "asap" / "right away" → now (current UTC)
-- "in 30 minutes" → now + 30m
-- "5pm" or "5" with no modifier → today 5pm PT if still future, otherwise tomorrow 5pm PT
-- "tomorrow at 5pm" → 2026-05-09T17:00 PT = 2026-05-10T00:00:00Z
-- "next Tuesday at 9" → upcoming Tuesday 9am PT (or 9pm if context suggests evening)
-- If you can't determine a time, default to 30 minutes from now`;
+Mark's local time is America/Los_Angeles (PT, currently UTC-7). For "5pm" interpret as 17:00 PT. For "tomorrow at X" interpret as next calendar day in PT.
+
+Default scheduledAt to now+30m if no time given. For pickup_now, scheduledAt = now.`;
 
 export async function parseDispatchWithLLM(input: string, now = new Date()): Promise<ParsedDispatch> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -35,7 +42,6 @@ export async function parseDispatchWithLLM(input: string, now = new Date()): Pro
   }
 
   const anthropic = new Anthropic({ apiKey });
-
   const nowIso = now.toISOString();
   const nowPT = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
@@ -51,71 +57,70 @@ export async function parseDispatchWithLLM(input: string, now = new Date()): Pro
   try {
     const resp = await anthropic.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 256,
+      max_tokens: 320,
       system: SYSTEM_PROMPT,
       messages: [
         {
           role: "user",
-          content: `Now (UTC): ${nowIso}\nNow (Mark's local): ${nowPT}\n\nDispatch input:\n"${input.replace(/"/g, '\\"')}"\n\nReturn only the JSON object.`,
+          content: `Now (UTC): ${nowIso}\nNow (Mark local): ${nowPT}\n\nDispatch input:\n"${input.replace(/"/g, '\\"')}"\n\nReturn only the JSON object.`,
         },
       ],
     });
 
     const block = resp.content[0];
     const text = block && block.type === "text" ? block.text : "";
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.warn("Parser LLM returned non-JSON:", text);
-      return regexFallback(input, now);
-    }
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<ParsedDispatch>;
-
-    return {
-      passengerName: parsed.passengerName || "Guest",
-      isOwnerRiding: !!parsed.isOwnerRiding,
-      pickupHint: parsed.pickupHint || null,
-      dropoffHint: parsed.dropoffHint || null,
-      scheduledAt: parsed.scheduledAt && !isNaN(new Date(parsed.scheduledAt).getTime())
-        ? new Date(parsed.scheduledAt).toISOString()
-        : new Date(now.getTime() + 30 * 60_000).toISOString(),
-      rawNotes: input.trim(),
-    };
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return regexFallback(input, now);
+    const parsed = JSON.parse(m[0]) as Partial<ParsedDispatch>;
+    return finalize(parsed, input, now);
   } catch (err) {
     console.warn("Parser LLM threw:", err);
     return regexFallback(input, now);
   }
 }
 
-// Last-resort regex fallback — kept so dispatch never fails outright.
+function finalize(parsed: Partial<ParsedDispatch>, input: string, now: Date): ParsedDispatch {
+  const validScheduled =
+    parsed.scheduledAt && !isNaN(new Date(parsed.scheduledAt).getTime())
+      ? new Date(parsed.scheduledAt).toISOString()
+      : new Date(now.getTime() + 30 * 60_000).toISOString();
+  return {
+    kind: (parsed.kind as DispatchKind) || "trip",
+    passengerName: parsed.passengerName || "Guest",
+    isOwnerRiding: !!parsed.isOwnerRiding,
+    pickupHint: parsed.pickupHint || null,
+    dropoffHint: parsed.dropoffHint || null,
+    scheduledAt: validScheduled,
+    stopCategory: parsed.stopCategory || null,
+    stopOffsetMinutes:
+      typeof parsed.stopOffsetMinutes === "number" ? parsed.stopOffsetMinutes : null,
+    rawNotes: input.trim(),
+  };
+}
+
 function regexFallback(input: string, now: Date): ParsedDispatch {
   const raw = input.trim();
-  const lower = raw.toLowerCase();
   const isOwner = /\b(me|myself|i am|i'm)\b/i.test(raw);
+  const pickupNow =
+    /\b(pick me up|come get me|send (?:the )?van to me|i'?m ready|i need a ride)\b/i.test(raw);
+  const stopReq = /\b(stop|grab|need)\b/i.test(raw) && /\b(coffee|food|gas|bathroom|restroom)\b/i.test(raw);
   const passengerName = isOwner
     ? "Mark"
-    : (raw.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/)?.[1] ??
-        (raw.match(/\bpick(?:ing|s|ed)?\s+up\s+([a-z]+)/i)?.[1] ?? "Guest"));
-
-  let scheduled = new Date(now.getTime() + 30 * 60_000);
-  const inMatch = lower.match(/\bin\s+(\d+)\s+(min|mins|minutes|hour|hours|hr|hrs)\b/);
-  if (inMatch) {
-    const n = Number(inMatch[1]);
-    const unit = inMatch[2];
-    scheduled = new Date(now.getTime() + n * (unit.startsWith("h") ? 3600_000 : 60_000));
-  }
-
-  const fromMatch = raw.match(/\bfrom\s+([^,]+?)(?:\s+to\s+|$)/i);
-  const toMatch = raw.match(/\bto\s+([^,]+?)(?:\s+at\s+|$)/i);
+    : raw.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/)?.[1] ?? "Guest";
 
   return {
-    passengerName: passengerName.charAt(0).toUpperCase() + passengerName.slice(1).toLowerCase(),
-    isOwnerRiding: isOwner,
-    pickupHint: fromMatch ? fromMatch[1].trim() : null,
-    dropoffHint: toMatch ? toMatch[1].trim() : null,
-    scheduledAt: scheduled.toISOString(),
+    kind: pickupNow ? "pickup_now" : stopReq ? "stop_request" : "trip",
+    passengerName,
+    isOwnerRiding: isOwner || pickupNow,
+    pickupHint: pickupNow ? "current location" : null,
+    dropoffHint: null,
+    scheduledAt: pickupNow
+      ? now.toISOString()
+      : new Date(now.getTime() + 30 * 60_000).toISOString(),
+    stopCategory: null,
+    stopOffsetMinutes: null,
     rawNotes: raw,
   };
 }
 
-// Backwards-compat export name
 export const parseDispatch = parseDispatchWithLLM;

@@ -1,61 +1,89 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker } from "react-leaflet";
-import L from "leaflet";
+import { useEffect, useMemo, useRef } from "react";
+import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker, Polyline } from "react-leaflet";
+import L, { LatLngBoundsExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { VanPosition } from "@/lib/types";
+import { decodePolyline } from "@/lib/routing";
+
+export interface MapPin {
+  kind: "pickup" | "dropoff" | "stop" | "mark" | "passenger";
+  lat: number;
+  lng: number;
+  label?: string;
+  index?: number;
+}
 
 interface Props {
   position: (VanPosition & { source?: "bouncie" | "mock" }) | null;
-  pickup?: { lat: number; lng: number; label?: string } | null;
-  dropoff?: { lat: number; lng: number; label?: string } | null;
+  pins?: MapPin[];
+  polyline?: string | null;
+  polylineColor?: string;
   className?: string;
   zoom?: number;
-  follow?: boolean;
+  fitBounds?: boolean;
 }
 
 const vanIcon = L.divIcon({
   className: "van-marker",
-  html: `<div style="width:28px;height:28px;border-radius:50%;background:#10b981;border:3px solid #052e1f;box-shadow:0 0 0 3px rgba(16,185,129,.35);display:flex;align-items:center;justify-content:center;color:white;font-size:14px;">🚐</div>`,
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
+  html: `<div style="width:32px;height:32px;border-radius:50%;background:#10b981;border:3px solid #052e1f;box-shadow:0 0 0 4px rgba(16,185,129,.35);display:flex;align-items:center;justify-content:center;color:white;font-size:16px;">🚐</div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
 });
 
-const pinIcon = (color: string) =>
-  L.divIcon({
+function pinIcon(color: string, glyph: string, size = 28): L.DivIcon {
+  return L.divIcon({
     className: "pin-marker",
-    html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 2px rgba(0,0,0,.4);"></div>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 2px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:white;font-size:${Math.round(size * 0.45)}px;font-weight:700;">${glyph}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
+}
 
-function FollowVan({ position }: { position: { lat: number; lng: number } | null }) {
+const PICKUP_ICON = pinIcon("#f59e0b", "P");
+const DROPOFF_ICON = pinIcon("#3b82f6", "D");
+const MARK_ICON = pinIcon("#a855f7", "M");
+const PASSENGER_ICON = pinIcon("#ec4899", "👤", 26);
+const stopIcon = (n: number) => pinIcon("#06b6d4", String(n), 22);
+
+function FitBounds({ points }: { points: [number, number][] }) {
   const map = useMap();
-  const lastRef = useRef<string>("");
+  const lastKey = useRef<string>("");
   useEffect(() => {
-    if (!position) return;
-    const key = `${position.lat.toFixed(4)},${position.lng.toFixed(4)}`;
-    if (key === lastRef.current) return;
-    lastRef.current = key;
-    map.panTo([position.lat, position.lng], { animate: true });
-  }, [position, map]);
+    if (points.length < 2) return;
+    const key = points.map((p) => p.join(",")).join(";");
+    if (key === lastKey.current) return;
+    lastKey.current = key;
+    const bounds: LatLngBoundsExpression = points.map((p) => [p[0], p[1]]);
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14, animate: true });
+  }, [points, map]);
   return null;
 }
 
 export default function LiveMap({
   position,
-  pickup,
-  dropoff,
+  pins = [],
+  polyline,
+  polylineColor = "#10b981",
   className,
   zoom = 13,
-  follow = true,
+  fitBounds = true,
 }: Props) {
   const center = useMemo<[number, number]>(() => {
     if (position) return [position.lat, position.lng];
-    if (pickup) return [pickup.lat, pickup.lng];
+    if (pins[0]) return [pins[0].lat, pins[0].lng];
     return [33.6189, -117.9298];
-  }, [position, pickup]);
+  }, [position, pins]);
+
+  const decoded = useMemo(() => (polyline ? decodePolyline(polyline) : null), [polyline]);
+
+  const allPoints = useMemo<[number, number][]>(() => {
+    const pts: [number, number][] = [];
+    if (position) pts.push([position.lat, position.lng]);
+    pins.forEach((p) => pts.push([p.lat, p.lng]));
+    return pts;
+  }, [position, pins]);
 
   return (
     <div className={className}>
@@ -69,40 +97,47 @@ export default function LiveMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        {decoded && decoded.length > 1 && (
+          <Polyline
+            positions={decoded.map(([lng, lat]) => [lat, lng] as [number, number])}
+            pathOptions={{ color: polylineColor, weight: 4, opacity: 0.85 }}
+          />
+        )}
         {position && (
           <>
             <Marker position={[position.lat, position.lng]} icon={vanIcon}>
               <Popup>
-                <div style={{ fontSize: 12 }}>
-                  <div>
-                    <strong>Sprinter</strong>{" "}
-                    {position.source === "mock" ? "(mock)" : ""}
-                  </div>
-                  <div>{position.speed_mph?.toFixed(0) ?? 0} mph</div>
-                  {position.fuel_pct != null && (
-                    <div>Fuel {(position.fuel_pct * 100).toFixed(0)}%</div>
-                  )}
-                </div>
+                <strong>Sprinter</strong>
+                {position.source === "mock" ? " (mock)" : ""}
+                <br />
+                {position.speed_mph?.toFixed(0) ?? 0} mph
               </Popup>
             </Marker>
             <CircleMarker
               center={[position.lat, position.lng]}
               radius={20}
-              pathOptions={{ color: "#10b981", fillColor: "#10b981", fillOpacity: 0.1, weight: 1 }}
+              pathOptions={{ color: "#10b981", fillColor: "#10b981", fillOpacity: 0.08, weight: 1 }}
             />
-            {follow && <FollowVan position={position} />}
           </>
         )}
-        {pickup && (
-          <Marker position={[pickup.lat, pickup.lng]} icon={pinIcon("#f59e0b")}>
-            <Popup>Pickup{pickup.label ? `: ${pickup.label}` : ""}</Popup>
-          </Marker>
-        )}
-        {dropoff && (
-          <Marker position={[dropoff.lat, dropoff.lng]} icon={pinIcon("#3b82f6")}>
-            <Popup>Dropoff{dropoff.label ? `: ${dropoff.label}` : ""}</Popup>
-          </Marker>
-        )}
+        {pins.map((p, i) => {
+          const icon =
+            p.kind === "pickup"
+              ? PICKUP_ICON
+              : p.kind === "dropoff"
+                ? DROPOFF_ICON
+                : p.kind === "mark"
+                  ? MARK_ICON
+                  : p.kind === "passenger"
+                    ? PASSENGER_ICON
+                    : stopIcon(p.index ?? i + 1);
+          return (
+            <Marker key={`${p.kind}-${i}`} position={[p.lat, p.lng]} icon={icon}>
+              <Popup>{p.label ?? p.kind}</Popup>
+            </Marker>
+          );
+        })}
+        {fitBounds && allPoints.length >= 2 && <FitBounds points={allPoints} />}
       </MapContainer>
     </div>
   );
