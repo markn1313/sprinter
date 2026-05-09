@@ -37,6 +37,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ trips: data });
   }
 
+  if (ctx.role === "tv") {
+    // TV mirrors what Dio sees (no money fields), so the in-van display
+    // always reflects the current trip — live or next-scheduled.
+    const { data, error } = await sb
+      .from("trips")
+      .select(
+        "id,passenger_name,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at,dispatched_at,arrived_at_pickup_at,onboard_at,arrived_at_dropoff_at,completed_at,status,notes,estimated_minutes,stops",
+      )
+      .not("status", "in", "(complete,cancelled)")
+      .order("scheduled_at", { ascending: true })
+      .limit(20);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ trips: data });
+  }
+
   if (ctx.role === "passenger") {
     if (!ctx.trip_id) return NextResponse.json({ trips: [] });
     const { data, error } = await sb
