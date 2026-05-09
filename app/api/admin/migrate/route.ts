@@ -28,8 +28,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const conn = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
-  if (!conn) return NextResponse.json({ error: "no POSTGRES_URL" }, { status: 500 });
+  const rawConn = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
+  if (!rawConn) return NextResponse.json({ error: "no POSTGRES_URL" }, { status: 500 });
+  // Strip any sslmode= from the URL so our explicit ssl: { rejectUnauthorized:
+  // false } actually sticks. Supabase's intermediate cert isn't in Vercel's
+  // Node trust store, so verify-full fails with SELF_SIGNED_CERT_IN_CHAIN.
+  const conn = rawConn.replace(/[?&]sslmode=[^&]*/g, "").replace(/\?$/, "");
 
   const dir = join(process.cwd(), "supabase", "migrations");
   let files: string[];
