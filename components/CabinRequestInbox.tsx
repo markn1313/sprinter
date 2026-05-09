@@ -77,7 +77,7 @@ export default function CabinRequestInbox({ token }: Props) {
               <div>
                 <div className="text-sm font-medium text-amber-100">{meta.label}</div>
                 <div className="text-[10px] text-amber-400/60">
-                  {new Date(r.requested_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                  {new Date(r.requested_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" })}
                 </div>
               </div>
             </div>

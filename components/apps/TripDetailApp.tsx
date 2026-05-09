@@ -10,6 +10,7 @@ import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, shortTime, shortDate } from "@/lib/format";
+import { toPTInput, fromPTInput } from "@/lib/pt-time";
 import { googleMapsMultiStop } from "@/lib/maps-link";
 import { Navigation, X, Save, Loader2, MessageSquare } from "lucide-react";
 
@@ -64,7 +65,7 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
       setTrip(t);
       if (t) {
         setPassenger(t.passenger_name);
-        setScheduled(toLocalInput(t.scheduled_at));
+        setScheduled(toPTInput(t.scheduled_at));
       }
     } catch (err) {
       setError((err as Error).message);
@@ -193,7 +194,7 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           passenger_name: passenger,
-          scheduled_at: fromLocalInput(scheduled),
+          scheduled_at: fromPTInput(scheduled),
         }),
       });
       await refresh();
@@ -416,9 +417,9 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
             />
 
             <EditableField
-              label="Scheduled"
+              label="Scheduled (PT)"
               value={scheduled}
-              displayValue={`${shortDate(trip.scheduled_at)} · ${shortTime(trip.scheduled_at)}`}
+              displayValue={`${shortDate(trip.scheduled_at)} · ${shortTime(trip.scheduled_at)} PT`}
               type="datetime-local"
               onChange={setScheduled}
               onCommit={savePassengerOrSchedule}
@@ -632,12 +633,3 @@ function InsertStop({
   );
 }
 
-function toLocalInput(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInput(local: string): string {
-  return new Date(local).toISOString();
-}

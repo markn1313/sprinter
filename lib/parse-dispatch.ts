@@ -31,9 +31,30 @@ Output STRICT JSON only. Keys:
 - stopCategory: only for kind="stop_request". One of: coffee, food, fast_food, restroom, gas, grocery, pharmacy, atm, ev_charging, rest_stop. Else null.
 - stopOffsetMinutes: only for kind="stop_request". Minutes from now to make the stop. Default 15 if unspecified.
 
-Mark's local time is America/Los_Angeles (PT, currently UTC-7). For "5pm" interpret as 17:00 PT. For "tomorrow at X" interpret as next calendar day in PT.
+TIME PARSING RULES — read carefully, this is the most error-prone part:
 
-Default scheduledAt to now+30m if no time given. For pickup_now, scheduledAt = now.`;
+1. Mark's local time is America/Los_Angeles (PT). Resolve every time in PT and emit UTC.
+2. A BARE clock time like "5pm" / "5" / "17:00" with no day word always means the NEXT FUTURE occurrence in PT. The result MUST be after the current PT moment. Never resolve a bare time to a moment that has already passed today — that's wrong even if "today's 5pm" feels natural; if 5pm has already passed today PT, "5pm" means tomorrow's 5pm.
+3. "today at X" = today's calendar day in PT (must still be future; if today's X has passed, treat as the user mis-spoke and use today anyway only if within 5 minutes past, else use tomorrow's X).
+4. "tomorrow at X" = next calendar day in PT.
+5. "tonight" = the upcoming evening (later today PT if it's still before ~8pm PT, else assume the user means right now or imminent).
+6. "in N minutes/hours" = now + N.
+7. Default scheduledAt = now + 30 min if no time given.
+8. For pickup_now, scheduledAt = now.
+
+Examples (assume current PT is shown above each):
+
+  PT now: Friday May 9, 12:30 AM. Input: "Pick me up at 5pm"
+  → 5pm Friday May 9 PT (the next future 5pm, ~16.5 hrs away). NOT 5pm Thursday May 8.
+
+  PT now: Friday May 9, 6:30 PM. Input: "Pick me up at 5pm"
+  → 5pm Saturday May 10 PT (today's 5pm has already passed).
+
+  PT now: Friday May 9, 3:00 PM. Input: "5pm"
+  → 5pm Friday May 9 PT (today, ~2 hrs away).
+
+  PT now: Saturday May 10, 11:00 PM. Input: "tomorrow at 9am"
+  → 9am Sunday May 11 PT.`;
 
 export async function parseDispatchWithLLM(input: string, now = new Date()): Promise<ParsedDispatch> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -80,10 +101,28 @@ export async function parseDispatchWithLLM(input: string, now = new Date()): Pro
 }
 
 function finalize(parsed: Partial<ParsedDispatch>, input: string, now: Date): ParsedDispatch {
-  const validScheduled =
+  let validScheduled =
     parsed.scheduledAt && !isNaN(new Date(parsed.scheduledAt).getTime())
       ? new Date(parsed.scheduledAt).toISOString()
       : new Date(now.getTime() + 30 * 60_000).toISOString();
+
+  // Past-time guard: bare-time inputs ("5pm") that the model resolves to
+  // earlier today (or any time before "now") are almost certainly meant to be
+  // the next future occurrence. Skip the guard for explicit pickup_now (which
+  // is intentionally "now") and stop_request (which is offset-based, not a
+  // scheduled trip). Allow up to 5 min of clock skew.
+  const kind = parsed.kind as DispatchKind | undefined;
+  if (kind !== "pickup_now" && kind !== "stop_request") {
+    const scheduled = new Date(validScheduled).getTime();
+    const cutoff = now.getTime() - 5 * 60_000;
+    if (scheduled < cutoff) {
+      // Advance by full 24-hour increments until it's in the future.
+      let advanced = scheduled;
+      while (advanced < cutoff) advanced += 24 * 3600_000;
+      validScheduled = new Date(advanced).toISOString();
+    }
+  }
+
   return {
     kind: (parsed.kind as DispatchKind) || "trip",
     passengerName: parsed.passengerName || "Guest",

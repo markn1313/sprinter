@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { toPTInput, fromPTInput } from "@/lib/pt-time";
 import { X, Loader2, Save, Trash2 } from "lucide-react";
 
 interface Props {
@@ -16,8 +17,8 @@ export default function EditTripModal({ token, trip, onClose, onSaved }: Props) 
   const [passenger, setPassenger] = useState(trip.passenger_name);
   const [pickup, setPickup] = useState(trip.pickup_address ?? "");
   const [dropoff, setDropoff] = useState(trip.dropoff_address ?? "");
-  // Convert UTC scheduled_at to local datetime-input format YYYY-MM-DDTHH:mm
-  const [scheduled, setScheduled] = useState(() => toLocalInput(trip.scheduled_at));
+  // Always project trip times into PT for editing — wherever Mark's device is.
+  const [scheduled, setScheduled] = useState(() => toPTInput(trip.scheduled_at));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -32,7 +33,7 @@ export default function EditTripModal({ token, trip, onClose, onSaved }: Props) 
           passenger_name: passenger,
           pickup_address: pickup || null,
           dropoff_address: dropoff || null,
-          scheduled_at: fromLocalInput(scheduled),
+          scheduled_at: fromPTInput(scheduled),
         }),
       });
       onSaved();
@@ -94,7 +95,7 @@ export default function EditTripModal({ token, trip, onClose, onSaved }: Props) 
               className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-700"
             />
           </Field>
-          <Field label="Scheduled (local time)">
+          <Field label="Scheduled (PT)">
             <input
               type="datetime-local"
               value={scheduled}
@@ -145,13 +146,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function toLocalInput(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInput(local: string): string {
-  // local is "YYYY-MM-DDTHH:mm" interpreted as the user's local timezone
-  return new Date(local).toISOString();
-}
