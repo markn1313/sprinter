@@ -306,7 +306,7 @@ function MapTab({
 
       {/* Vitals strip — directly under Mapbox zoom controls (top-right) */}
       {pos && (
-        <div className="absolute right-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-28 flex flex-col gap-1.5">
+        <div className="absolute right-3 top-20 z-30 flex flex-col gap-1.5">
           <VitalChip>
             <Fuel size={11} className="text-emerald-400" />
             <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
