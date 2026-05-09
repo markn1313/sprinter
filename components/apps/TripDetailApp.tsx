@@ -63,7 +63,19 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
     return () => clearInterval(t);
   }, [tripId, token]);
 
-  const stops = trip?.stops ?? [];
+  // Local staged stops — edits are NOT pushed to the driver until "Update driver" is tapped
+  const [localStops, setLocalStops] = useState<Stop[] | null>(null);
+  useEffect(() => {
+    if (trip && localStops === null) {
+      setLocalStops(trip.stops ?? []);
+    }
+  }, [trip, localStops]);
+  const stops = localStops ?? trip?.stops ?? [];
+  const serverStops = trip?.stops ?? [];
+  const isDirty =
+    localStops !== null &&
+    (localStops.length !== serverStops.length ||
+      localStops.some((s, i) => s.id !== serverStops[i]?.id));
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
@@ -110,26 +122,49 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
     }
   };
 
-  const removeStop = async (stopId: string) => {
-    await fetch(`/api/trips/${tripId}/stops?stop=${stopId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    refresh();
+  // Local-only operations — stage changes without pushing to driver
+  const removeStop = (stopId: string) => {
+    setLocalStops((prev) => (prev ?? []).filter((s) => s.id !== stopId));
   };
 
-  const addStopAt = async (
+  const addStopAt = (
     index: number,
     r: { lat: number; lng: number; display: string },
   ) => {
-    await postJson(token, `/api/trips/${tripId}/stops`, {
-      kind: "stop",
-      address: r.display,
-      lat: r.lat,
-      lng: r.lng,
-      index,
+    setLocalStops((prev) => {
+      const cur = prev ?? [];
+      const newStop: Stop = {
+        id: crypto.randomUUID(),
+        kind: "stop",
+        address: r.display,
+        lat: r.lat,
+        lng: r.lng,
+      } as Stop;
+      const next = [...cur];
+      next.splice(Math.max(0, Math.min(next.length, index)), 0, newStop);
+      return next;
     });
-    refresh();
+  };
+
+  const pushUpdateToDriver = async () => {
+    if (!localStops) return;
+    setBusy(true);
+    try {
+      await fetch(`/api/trips/${tripId}/stops`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: localStops }),
+      });
+      // Re-pull from server so we sync with whatever was geocoded server-side
+      setLocalStops(null);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const discardChanges = () => {
+    setLocalStops(trip?.stops ?? []);
   };
 
   const deleteTrip = async () => {
@@ -253,6 +288,31 @@ export default function TripDetailApp({ token, tripId }: { token: string; tripId
             )}
           </ul>
         </div>
+
+        {/* Update driver — only when there are pending route changes */}
+        {isDirty && (
+          <div className="sticky bottom-3 z-30 rounded-2xl border border-amber-700/60 bg-amber-950/40 p-3 backdrop-blur shadow-2xl">
+            <div className="mb-2 text-[11px] uppercase tracking-wider text-amber-300">
+              Pending changes — driver hasn&apos;t seen these yet
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={pushUpdateToDriver}
+                disabled={busy}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Update driver
+              </button>
+              <button
+                onClick={discardChanges}
+                disabled={busy}
+                className="rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Guest invite */}
         {trip.passenger_link_token && (

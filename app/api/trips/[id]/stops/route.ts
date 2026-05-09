@@ -76,6 +76,52 @@ export async function POST(
   return NextResponse.json({ stop: newStop });
 }
 
+// PUT replaces the entire stops array atomically — used by trip-detail "Update driver"
+export async function PUT(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const auth = req.headers.get("authorization");
+  const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
+  const ctx = await loadSession(token);
+  if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (ctx.role === "passenger") return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  const body = (await req.json().catch(() => null)) as { stops?: Stop[] } | null;
+  if (!body || !Array.isArray(body.stops)) {
+    return NextResponse.json({ error: "missing stops array" }, { status: 400 });
+  }
+
+  // Geocode any stops missing lat/lng
+  const sb = supabaseAdmin();
+  const next: Stop[] = [];
+  for (const s of body.stops) {
+    let lat = s.lat;
+    let lng = s.lng;
+    if ((lat == null || lng == null) && s.address) {
+      const g = await geocode(s.address);
+      if (g) {
+        lat = g.lat;
+        lng = g.lng;
+      }
+    }
+    next.push({
+      id: s.id ?? crypto.randomUUID(),
+      kind: s.kind ?? "stop",
+      address: s.address,
+      lat,
+      lng,
+      passenger: s.passenger ?? null,
+      arrived_at: s.arrived_at ?? null,
+      added_at: s.added_at ?? new Date().toISOString(),
+    });
+  }
+  const { error } = await sb.from("trips").update({ stops: next }).eq("id", id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ stops: next });
+}
+
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
