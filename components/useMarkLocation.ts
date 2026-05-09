@@ -78,3 +78,45 @@ export function useMarkLocation(token: string, intervalMs = 15_000) {
   }, [token, intervalMs]);
   return loc;
 }
+
+// Driver's phone GPS reporter — Dio's app calls this so ETA routing originates
+// from him (not the van), accounting for his commute to wherever the van is.
+export function useDriverGpsReporter(token: string, enabled: boolean) {
+  const [last, setLast] = useState<MarkLocation | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setError("Geolocation not supported");
+      return;
+    }
+    let lastSent = 0;
+    const id = navigator.geolocation.watchPosition(
+      async (pos) => {
+        const now = Date.now();
+        if (now - lastSent < 15_000) return;
+        lastSent = now;
+        const payload = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy_m: pos.coords.accuracy,
+        };
+        try {
+          await postJson(token, "/api/driver-location", payload);
+          setLast({
+            lat: payload.lat,
+            lng: payload.lng,
+            accuracy_m: payload.accuracy_m,
+            reported_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          setError((err as Error).message);
+        }
+      },
+      (err) => setError(err.message),
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 20_000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [token, enabled]);
+  return { last, error };
+}

@@ -5,7 +5,7 @@ import { Trip } from "@/lib/types";
 import { usePosition } from "@/components/usePosition";
 import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
-import { useMarkLocation } from "@/components/useMarkLocation";
+import { useMarkLocation, useDriverGpsReporter } from "@/components/useMarkLocation";
 import { postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { shortTime } from "@/lib/format";
@@ -42,6 +42,8 @@ export default function DioApp({ token, name }: { token: string; name: string })
   const markLoc = useMarkLocation(token, 12_000);
   const unreadFromMark = useUnreadDriverChat(token, "dio");
   const [tab, setTab] = useState<Tab>("map");
+  // Continuously report Dio's phone GPS so ETA routes from his location
+  useDriverGpsReporter(token, true);
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-zinc-950">

@@ -6,6 +6,41 @@ import { route } from "@/lib/routing";
 
 export const dynamic = "force-dynamic";
 
+// Pick the routing origin based on caller's role. Driver routes from his own
+// phone GPS so ETA includes his commute to the van. Mark / passengers route
+// from the van. Falls back to van GPS if driver location is missing/stale.
+async function originForCaller(role: string): Promise<{
+  lat: number;
+  lng: number;
+  source: "driver" | "bouncie" | "mock";
+  heading?: number;
+  speed_mph?: number;
+}> {
+  if (role === "dio") {
+    const { data } = await supabaseAdmin()
+      .from("driver_location")
+      .select("lat,lng,reported_at")
+      .eq("id", 1)
+      .maybeSingle();
+    const fresh =
+      data?.lat != null &&
+      data?.lng != null &&
+      data?.reported_at &&
+      Date.now() - new Date(data.reported_at).getTime() < 10 * 60_000;
+    if (fresh) {
+      return { lat: data!.lat as number, lng: data!.lng as number, source: "driver" };
+    }
+  }
+  const van = await getVanPosition();
+  return {
+    lat: van.lat,
+    lng: van.lng,
+    heading: van.heading,
+    speed_mph: van.speed_mph,
+    source: van.source,
+  };
+}
+
 interface StopRow {
   id: string;
   lat: number | null;
@@ -28,21 +63,21 @@ export async function POST(req: Request) {
   const wp = (body?.waypoints ?? []).filter(
     (p) => typeof p?.lat === "number" && typeof p?.lng === "number",
   );
-  const van = await getVanPosition();
+  const origin = await originForCaller(ctx.role);
   if (wp.length === 0) {
     return NextResponse.json({
-      van: { lat: van.lat, lng: van.lng, source: van.source },
+      van: { lat: origin.lat, lng: origin.lng, source: origin.source },
       to_next: null,
       to_final: null,
     });
   }
   const next = wp[0];
   const [rNext, rFinal] = await Promise.all([
-    route([{ lat: van.lat, lng: van.lng }, { lat: next.lat, lng: next.lng }]),
-    route([{ lat: van.lat, lng: van.lng }, ...wp.map((p) => ({ lat: p.lat, lng: p.lng }))]),
+    route([{ lat: origin.lat, lng: origin.lng }, { lat: next.lat, lng: next.lng }]),
+    route([{ lat: origin.lat, lng: origin.lng }, ...wp.map((p) => ({ lat: p.lat, lng: p.lng }))]),
   ]);
   return NextResponse.json({
-    van: { lat: van.lat, lng: van.lng, heading: van.heading, speed_mph: van.speed_mph, source: van.source },
+    van: { lat: origin.lat, lng: origin.lng, heading: origin.heading, speed_mph: origin.speed_mph, source: origin.source },
     to_next: rNext
       ? {
           kind: next.kind ?? "stop",
@@ -99,15 +134,15 @@ export async function GET(req: Request) {
   if (targetLat && targetLng) {
     const lat = parseFloat(targetLat);
     const lng = parseFloat(targetLng);
-    const van = await getVanPosition();
+    const origin = await originForCaller(ctx.role);
     const r = await route([
-      { lat: van.lat, lng: van.lng },
+      { lat: origin.lat, lng: origin.lng },
       { lat, lng },
     ]);
     if (!r) {
       return NextResponse.json({
         eta_minutes: null,
-        van: { lat: van.lat, lng: van.lng, source: van.source },
+        van: { lat: origin.lat, lng: origin.lng, source: origin.source },
       });
     }
     return NextResponse.json({
@@ -116,7 +151,7 @@ export async function GET(req: Request) {
       distance_meters: r.distance_m,
       distance_miles: +(r.distance_m / 1609.34).toFixed(1),
       polyline: r.polyline,
-      van: { lat: van.lat, lng: van.lng, heading: van.heading, speed_mph: van.speed_mph, source: van.source },
+      van: { lat: origin.lat, lng: origin.lng, heading: origin.heading, speed_mph: origin.speed_mph, source: origin.source },
       target: { lat, lng },
       traffic_aware: r.source === "mapbox-traffic",
     });
@@ -131,7 +166,7 @@ export async function GET(req: Request) {
     .maybeSingle();
   if (!trip) return NextResponse.json({ error: "trip not found" }, { status: 404 });
   const t = trip as TripWaypoints;
-  const van = await getVanPosition();
+  const origin = await originForCaller(ctx.role);
 
   const upcoming: Array<{ kind: "pickup" | "stop" | "dropoff"; lat: number; lng: number; label: string }> = [];
 
@@ -153,21 +188,21 @@ export async function GET(req: Request) {
 
   if (upcoming.length === 0) {
     return NextResponse.json({
-      van: { lat: van.lat, lng: van.lng, source: van.source },
+      van: { lat: origin.lat, lng: origin.lng, source: origin.source },
       to_next: null,
       to_final: null,
     });
   }
 
-  // Compute van → next AND van → through-all-waypoints
+  // Compute origin → next AND origin → through-all-waypoints
   const next = upcoming[0];
   const [rNext, rFinal] = await Promise.all([
-    route([{ lat: van.lat, lng: van.lng }, { lat: next.lat, lng: next.lng }]),
-    route([{ lat: van.lat, lng: van.lng }, ...upcoming.map((u) => ({ lat: u.lat, lng: u.lng }))]),
+    route([{ lat: origin.lat, lng: origin.lng }, { lat: next.lat, lng: next.lng }]),
+    route([{ lat: origin.lat, lng: origin.lng }, ...upcoming.map((u) => ({ lat: u.lat, lng: u.lng }))]),
   ]);
 
   return NextResponse.json({
-    van: { lat: van.lat, lng: van.lng, heading: van.heading, speed_mph: van.speed_mph, source: van.source },
+    van: { lat: origin.lat, lng: origin.lng, heading: origin.heading, speed_mph: origin.speed_mph, source: origin.source },
     upcoming,
     to_next: rNext
       ? {
