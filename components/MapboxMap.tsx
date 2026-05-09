@@ -216,21 +216,32 @@ export default function MapboxMap({
     }
   }, [position]);
 
-  // Update pin markers
+  // Update pin markers — defensively guard each step so a single bad pin
+  // can't take down the whole tree.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    pinMarkersRef.current.forEach((m) => m.remove());
-    pinMarkersRef.current = pins.map((p) => {
-      const el = document.createElement("div");
-      el.innerHTML = PIN_HTML[p.kind](p.index);
-      // Anchor flag pins by their bottom-left so the pole sits on the spot
-      const anchor = p.kind === "mark" || p.kind === "passenger" ? "center" : "bottom";
-      const marker = new mapboxgl.Marker({ element: el, anchor }).setLngLat([p.lng, p.lat]);
-      if (p.label) marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
-      marker.addTo(map);
-      return marker;
+    pinMarkersRef.current.forEach((m) => {
+      try { m.remove(); } catch {}
     });
+    pinMarkersRef.current = pins
+      .map((p) => {
+        try {
+          const html = PIN_HTML[p.kind]?.(p.index);
+          if (!html) return null;
+          const el = document.createElement("div");
+          el.innerHTML = html;
+          const anchor = p.kind === "mark" || p.kind === "passenger" ? "center" : "bottom";
+          const marker = new mapboxgl.Marker({ element: el, anchor }).setLngLat([p.lng, p.lat]);
+          if (p.label) marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
+          marker.addTo(map);
+          return marker;
+        } catch (err) {
+          console.warn("[MapboxMap] marker failed", err);
+          return null;
+        }
+      })
+      .filter((m): m is mapboxgl.Marker => m !== null);
   }, [pins]);
 
   // Update polyline

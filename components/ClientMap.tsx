@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { ComponentProps } from "react";
+import MapErrorBoundary from "./MapErrorBoundary";
 
 const MapboxMap = dynamic(() => import("./MapboxMap"), {
   ssr: false,
@@ -13,5 +14,9 @@ const MapboxMap = dynamic(() => import("./MapboxMap"), {
 });
 
 export default function ClientMap(props: ComponentProps<typeof MapboxMap>) {
-  return <MapboxMap {...props} />;
+  return (
+    <MapErrorBoundary>
+      <MapboxMap {...props} />
+    </MapErrorBoundary>
+  );
 }
