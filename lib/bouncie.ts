@@ -199,20 +199,27 @@ export async function getVanPosition(): Promise<VanPosition & { source: "bouncie
 
 export interface BouncieStatus {
   connected: boolean;
+  stale: boolean;
   vehicle_vin: string | null;
   vehicle_nickname: string | null;
   expires_at: string | null;
-  source: "bouncie" | "mock";
+  source: "bouncie" | "bouncie_cached" | "mock";
 }
 
 export async function bouncieStatus(): Promise<BouncieStatus> {
   const creds = await loadCreds();
+  const hasToken = !!creds?.access_token;
+  const expiresAt = creds?.expires_at ? new Date(creds.expires_at).getTime() : null;
+  // Stale = token exists but expired more than 2 minutes ago (gives the
+  // auto-refresh a chance before flagging as broken).
+  const stale = hasToken && expiresAt != null && expiresAt < Date.now() - 2 * 60_000;
   return {
-    connected: !!creds?.access_token,
+    connected: hasToken && !stale,
+    stale,
     vehicle_vin: creds?.vehicle_vin ?? null,
     vehicle_nickname: null,
     expires_at: creds?.expires_at ?? null,
-    source: creds?.access_token ? "bouncie" : "mock",
+    source: hasToken ? "bouncie" : "mock",
   };
 }
 
