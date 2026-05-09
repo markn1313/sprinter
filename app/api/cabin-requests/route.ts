@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { logTripEvent, upsertPassengerPrefs } from "@/lib/log";
+import { sendPushToRole } from "@/lib/push";
 
 const VALID_KINDS = [
   "cooler",
@@ -12,6 +14,21 @@ const VALID_KINDS = [
   "restroom",
   "custom",
 ];
+
+const CABIN_KIND_LABELS: Record<string, string> = {
+  cooler: "Cooler please",
+  warmer: "Warmer please",
+  fan_up: "More fan",
+  fan_down: "Less fan",
+  music: "Play music",
+  quiet: "Less music",
+  restroom: "Restroom stop",
+  custom: "Cabin request",
+};
+
+function cabinKindLabel(kind: string): string {
+  return CABIN_KIND_LABELS[kind] ?? "Cabin request";
+}
 
 export async function POST(req: Request) {
   const auth = req.headers.get("authorization");
@@ -25,18 +42,75 @@ export async function POST(req: Request) {
   if (!body?.kind || !VALID_KINDS.includes(body.kind)) {
     return NextResponse.json({ error: "bad kind" }, { status: 400 });
   }
+  const kind = body.kind;
+  const value = body.value ?? null;
+  const tripId = body.trip_id ?? null;
 
   const { data, error } = await supabaseAdmin()
     .from("cabin_requests")
     .insert({
-      kind: body.kind,
-      value: body.value ?? null,
-      trip_id: body.trip_id ?? null,
+      kind,
+      value,
+      trip_id: tripId,
       requested_by: ctx.token,
     })
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Audit log on the trip if scoped to one
+  if (tripId) {
+    logTripEvent({
+      trip_id: tripId,
+      kind: "cabin_request:" + kind,
+      actor_token: ctx.token,
+      payload: { value },
+    });
+  }
+
+  // If a passenger made the request, learn from it: bump their preferred temp
+  // / fan based on the request kind. Read existing prefs first so we can apply
+  // a delta. If anything fails we just skip — preferences are best-effort.
+  if (ctx.role === "passenger") {
+    void (async () => {
+      try {
+        const sb = supabaseAdmin();
+        const { data: existing } = await sb
+          .from("passenger_prefs")
+          .select("preferred_temp_f,preferred_fan,music_pref")
+          .eq("token", ctx.token)
+          .maybeSingle();
+        const baseTemp = existing?.preferred_temp_f ?? 70;
+        const baseFan = existing?.preferred_fan ?? 2;
+        if (kind === "warmer") {
+          upsertPassengerPrefs({ token: ctx.token, preferred_temp_f: baseTemp + 1 });
+        } else if (kind === "cooler") {
+          upsertPassengerPrefs({ token: ctx.token, preferred_temp_f: baseTemp - 1 });
+        } else if (kind === "fan_up") {
+          upsertPassengerPrefs({ token: ctx.token, preferred_fan: baseFan + 1 });
+        } else if (kind === "fan_down") {
+          upsertPassengerPrefs({ token: ctx.token, preferred_fan: baseFan - 1 });
+        }
+      } catch {
+        // skip
+      }
+    })();
+  }
+
+  // Fire-and-forget push to the driver
+  void (async () => {
+    try {
+      await sendPushToRole("dio", {
+        title: "Cabin request",
+        body: cabinKindLabel(kind),
+        url: `/d/${ctx.token}?focus=cabin`,
+        tag: "cabin",
+      });
+    } catch {
+      // non-fatal
+    }
+  })();
+
   return NextResponse.json({ request: data });
 }
 

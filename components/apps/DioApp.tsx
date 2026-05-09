@@ -9,6 +9,7 @@ import { api, postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { shortTime } from "@/lib/format";
 import CabinRequestInbox from "@/components/CabinRequestInbox";
+import PushToggle from "@/components/PushToggle";
 import { Navigation, User, MapPin, Check, ArrowUp, Loader2 } from "lucide-react";
 
 interface ChatMsg {
@@ -52,6 +53,8 @@ export default function DioApp({ token, name: _name }: { token: string; name: st
         )}
 
         <ChatBlock token={token} />
+
+        <PushToggle token={token} />
       </div>
     </div>
   );

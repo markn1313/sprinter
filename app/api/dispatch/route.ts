@@ -5,6 +5,7 @@ import { parseDispatch } from "@/lib/parse-dispatch";
 import { geocode } from "@/lib/geocode";
 import { route, Waypoint } from "@/lib/routing";
 import { getVanPosition } from "@/lib/bouncie";
+import { logTripEvent } from "@/lib/log";
 
 export async function POST(req: Request) {
   const auth = req.headers.get("authorization");
@@ -69,6 +70,18 @@ export async function POST(req: Request) {
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  logTripEvent({
+    trip_id: trip.id,
+    kind: "created",
+    actor_token: ctx.token,
+    payload: {
+      passenger: parsed.passengerName,
+      pickup: parsed.pickupHint,
+      dropoff: parsed.dropoffHint,
+      scheduled_at: parsed.scheduledAt,
+    },
+  });
 
   let guestToken: string | null = null;
   const shouldMint = body.mintGuestLink !== false && !parsed.isOwnerRiding;

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
+import { useRealtime } from "@/components/useRealtime";
 
 export interface EtaLeg {
   kind: "pickup" | "stop" | "dropoff";
@@ -30,10 +31,27 @@ export interface EtaData {
   traffic_aware: boolean;
 }
 
-export function useEta(token: string, tripId: string | null, intervalMs = 25_000) {
+export function useEta(token: string, tripId: string | null, intervalMs = 30_000) {
   const [eta, setEta] = useState<EtaData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!tripId) {
+      setEta(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await api<EtaData>(token, `/api/eta?trip=${tripId}`);
+      setEta(data);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, tripId]);
 
   useEffect(() => {
     if (!tripId) {
@@ -44,28 +62,25 @@ export function useEta(token: string, tripId: string | null, intervalMs = 25_000
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       if (cancelled) return;
-      setLoading(true);
-      try {
-        const data = await api<EtaData>(token, `/api/eta?trip=${tripId}`);
-        if (!cancelled) {
-          setEta(data);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setError((err as Error).message);
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-          timer = setTimeout(tick, intervalMs);
-        }
-      }
+      await refresh();
+      if (!cancelled) timer = setTimeout(tick, intervalMs);
     };
     tick();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [token, tripId, intervalMs]);
+  }, [refresh, tripId, intervalMs]);
+
+  // Realtime: any driver_location change → recompute ETA.
+  useRealtime({ table: "driver_location", onChange: refresh, enabled: !!tripId });
+  // Trip rows (status / stops) changing also affect ETA.
+  useRealtime({
+    table: "trips",
+    filter: tripId ? `id=eq.${tripId}` : undefined,
+    onChange: refresh,
+    enabled: !!tripId,
+  });
 
   return { eta, loading, error };
 }

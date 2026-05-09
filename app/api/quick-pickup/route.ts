@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { logTripEvent } from "@/lib/log";
 
 // One-tap "pick me up" — uses Mark's current GPS as pickup
 export async function POST(req: Request) {
@@ -47,6 +48,17 @@ export async function POST(req: Request) {
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  logTripEvent({
+    trip_id: trip.id,
+    kind: "created",
+    actor_token: ctx.token,
+    payload: {
+      quick_pickup: true,
+      lat: body.lat ?? null,
+      lng: body.lng ?? null,
+    },
+  });
 
   // Update Mark's live location too
   if (typeof body.lat === "number" && typeof body.lng === "number") {

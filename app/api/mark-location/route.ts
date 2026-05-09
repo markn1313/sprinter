@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadSession, requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { logVehiclePosition } from "@/lib/log";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,7 @@ export async function POST(req: Request) {
       reported_at: new Date().toISOString(),
     })
     .eq("id", 1);
+  logVehiclePosition({ source: "mark_phone", lat: body.lat, lng: body.lng });
   return NextResponse.json({ ok: true });
 }
 

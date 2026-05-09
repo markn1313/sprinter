@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, postJson } from "@/lib/api-client";
 import { Bell, Check, ThermometerSnowflake, ThermometerSun, Wind, Music, VolumeX, Toilet } from "lucide-react";
+import { useRealtime } from "@/components/useRealtime";
 
 interface Req {
   id: string;
@@ -41,9 +42,11 @@ export default function CabinRequestInbox({ token }: Props) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 8000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [token]);
+
+  useRealtime({ table: "cabin_requests", onChange: load });
 
   const ack = async (id: string) => {
     setRequests((prev) => prev.filter((r) => r.id !== id));
