@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
+import { shortenAddress } from "@/lib/address-format";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +17,21 @@ export async function GET(req: Request) {
 
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+      `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&namedetails=1&lat=${lat}&lon=${lng}`,
       {
         headers: { "User-Agent": "SprinterOps/1.0 (mark@mnafinancial.com)" },
         cache: "no-store",
       },
     );
     if (!res.ok) return NextResponse.json({ display: `${lat},${lng}` });
-    const data = (await res.json()) as { display_name?: string };
+    const data = (await res.json()) as {
+      display_name?: string;
+      name?: string;
+      address?: Record<string, string>;
+      class?: string;
+    };
     return NextResponse.json({
-      display: data.display_name ?? `${lat},${lng}`,
+      display: shortenAddress(data) || data.display_name || `${lat},${lng}`,
       lat: parseFloat(lat),
       lng: parseFloat(lng),
     });

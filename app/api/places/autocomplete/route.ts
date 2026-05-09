@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
+import { shortenAddress } from "@/lib/address-format";
 
 export const dynamic = "force-dynamic";
 
@@ -13,14 +14,11 @@ export async function GET(req: Request) {
   const q = url.searchParams.get("q")?.trim() ?? "";
   if (q.length < 3) return NextResponse.json({ results: [] });
 
-  // Bias toward Southern California + Las Vegas valley. viewbox = lon_left,lat_top,lon_right,lat_bottom.
-  // `bounded=1` restricts results to that box.
-  // Box covers SoCal coast (-120) east to Boulder City (-114.5), and from San Diego (32.5)
-  // up to North Las Vegas (36.5).
+  // SoCal + Las Vegas valley viewbox.
   const SOCAL_VIEWBOX = "-120.0,36.5,-114.5,32.5";
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=us&viewbox=${SOCAL_VIEWBOX}&bounded=1&q=${encodeURIComponent(q)}`,
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=5&countrycodes=us&viewbox=${SOCAL_VIEWBOX}&bounded=1&q=${encodeURIComponent(q)}`,
       {
         headers: { "User-Agent": "SprinterOps/1.0 (mark@mnafinancial.com)" },
         cache: "no-store",
@@ -33,12 +31,14 @@ export async function GET(req: Request) {
       display_name: string;
       class: string;
       type: string;
+      name?: string;
+      address?: Record<string, string>;
     }>;
     return NextResponse.json({
       results: data.map((d) => ({
         lat: parseFloat(d.lat),
         lng: parseFloat(d.lon),
-        display: d.display_name,
+        display: shortenAddress(d) || d.display_name,
         category: d.class,
       })),
     });
