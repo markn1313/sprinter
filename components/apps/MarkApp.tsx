@@ -101,6 +101,18 @@ function ScrollableTab({ children }: { children: React.ReactNode }) {
   );
 }
 
+function FocusBtn({ label, onClick, title }: { label: string; onClick: () => void; title?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/85 text-sm backdrop-blur hover:bg-zinc-900 active:scale-95"
+    >
+      {label}
+    </button>
+  );
+}
+
 function VitalChip({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-950/85 px-2 py-1 text-[11px] text-zinc-200 backdrop-blur">
@@ -142,6 +154,22 @@ function MapTab({
 }) {
   const { eta } = useEta(token, live?.id ?? null, 25_000);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip">("none");
+  const [focusMode, setFocusMode] = useState<"auto" | "van" | "me" | "dest" | "van-me" | "me-dest">("auto");
+  const [focusKey, setFocusKey] = useState(0);
+  const focus = (mode: typeof focusMode) => {
+    setFocusMode(mode);
+    setFocusKey((k) => k + 1);
+  };
+  const [myGps, setMyGps] = useState<{ lat: number; lng: number } | null>(null);
+  useEffect(() => {
+    if (!shareGps || typeof navigator === "undefined" || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      undefined,
+      { enableHighAccuracy: true, maximumAge: 10_000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [shareGps]);
 
   const stopsArr =
     ((live as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
@@ -156,8 +184,9 @@ function MapTab({
       if (s.lat != null && s.lng != null)
         out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
     });
+    if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
     return out;
-  }, [live, stopsArr]);
+  }, [live, stopsArr, myGps]);
 
   const polyline = (live as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
 
@@ -177,7 +206,7 @@ function MapTab({
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
+      <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" focusMode={focusMode} focusKey={focusKey} />
 
       {/* Top header — overlaid on map */}
       <header className="absolute inset-x-0 top-0 z-30 px-3 pt-[max(env(safe-area-inset-top),12px)]">
@@ -190,21 +219,33 @@ function MapTab({
             📍 {shareGps ? "" : "off"}
           </button>
           <button
-            onClick={() => setSheet("dispatch")}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-900/40 hover:bg-emerald-500"
+            onClick={() => setSheet("pickup")}
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-4 py-3 text-base font-semibold text-white shadow-lg shadow-fuchsia-900/40 hover:from-violet-500 hover:to-fuchsia-600"
           >
-            <Send size={14} /> Dispatch
+            Pickup
           </button>
           <button
-            onClick={() => setSheet("pickup")}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-2.5 text-sm font-semibold text-white shadow-lg shadow-fuchsia-900/40 hover:from-violet-500 hover:to-fuchsia-600"
-            title="Pick me up"
+            onClick={() => setSheet("dispatch")}
+            className="flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500"
           >
-            <Hand size={14} />
-            <span className="hidden xs:inline">Pick me up</span>
+            <Send size={12} /> Dispatch
           </button>
         </div>
       </header>
+
+      {/* Map focus controls — left edge */}
+      <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
+        <FocusBtn label="🚐" onClick={() => focus("van")} title="Center on van" />
+        {myGps && <FocusBtn label="📍" onClick={() => focus("me")} title="Center on me" />}
+        {(live?.dropoff_lat != null || live?.pickup_lat != null) && (
+          <FocusBtn label="🏁" onClick={() => focus("dest")} title="Center on destination" />
+        )}
+        {myGps && pos && <FocusBtn label="🚐↔📍" onClick={() => focus("van-me")} title="Van + me" />}
+        {myGps && (live?.dropoff_lat != null || live?.pickup_lat != null) && (
+          <FocusBtn label="📍↔🏁" onClick={() => focus("me-dest")} title="Me + destination" />
+        )}
+        <FocusBtn label="⤢" onClick={() => focus("auto")} title="Auto-fit" />
+      </div>
 
       {/* Vitals strip — top-right overlay */}
       {pos && (

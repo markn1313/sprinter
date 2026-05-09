@@ -14,12 +14,16 @@ export interface MapPin {
   index?: number;
 }
 
+type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
+
 interface Props {
   position: (VanPosition & { source?: "bouncie" | "mock" }) | null;
   pins?: MapPin[];
   polyline?: string | null;
   className?: string;
   fitBounds?: boolean;
+  focusMode?: FocusMode;
+  focusKey?: number;
 }
 
 const PIN_STYLE: Record<MapPin["kind"], { color: string; glyph: string }> = {
@@ -30,7 +34,7 @@ const PIN_STYLE: Record<MapPin["kind"], { color: string; glyph: string }> = {
   passenger: { color: "#ec4899", glyph: "·" },
 };
 
-export default function MapboxMap({ position, pins = [], polyline, className, fitBounds = true }: Props) {
+export default function MapboxMap({ position, pins = [], polyline, className, fitBounds = true, focusMode = "auto", focusKey = 0 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const vanMarkerRef = useRef<mapboxgl.Marker | null>(null);
@@ -179,7 +183,7 @@ export default function MapboxMap({ position, pins = [], polyline, className, fi
     else map.once("load", apply);
   }, [polyline]);
 
-  // Auto-fit bounds
+  // Auto-fit bounds (only in "auto" mode)
   const allPoints = useMemo<[number, number][]>(() => {
     const pts: [number, number][] = [];
     if (position) pts.push([position.lng, position.lat]);
@@ -189,14 +193,34 @@ export default function MapboxMap({ position, pins = [], polyline, className, fi
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !fitBounds || allPoints.length < 2) return;
+    if (!map || !fitBounds || focusMode !== "auto" || allPoints.length < 2) return;
     const key = allPoints.map((p) => p.join(",")).join(";");
     if (key === fittedRef.current) return;
     fittedRef.current = key;
     const bounds = new mapboxgl.LngLatBounds();
     allPoints.forEach((p) => bounds.extend(p));
     map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
-  }, [allPoints, fitBounds]);
+  }, [allPoints, fitBounds, focusMode]);
+
+  // Imperative focus modes — triggered by focusKey changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || focusMode === "auto") return;
+    const me = pins.find((p) => p.kind === "mark");
+    const dest = pins.find((p) => p.kind === "dropoff") ?? pins.find((p) => p.kind === "pickup");
+    const flyTo = (lat: number, lng: number) => map.flyTo({ center: [lng, lat], zoom: 14, duration: 700 });
+    const fit = (pts: Array<{ lat: number; lng: number }>) => {
+      const b = new mapboxgl.LngLatBounds();
+      pts.forEach((p) => b.extend([p.lng, p.lat]));
+      map.fitBounds(b, { padding: 80, maxZoom: 14, duration: 700 });
+    };
+    if (focusMode === "van" && position) flyTo(position.lat, position.lng);
+    else if (focusMode === "me" && me) flyTo(me.lat, me.lng);
+    else if (focusMode === "dest" && dest) flyTo(dest.lat, dest.lng);
+    else if (focusMode === "van-me" && position && me) fit([{ lat: position.lat, lng: position.lng }, me]);
+    else if (focusMode === "me-dest" && me && dest) fit([me, dest]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, focusMode]);
 
   return <div ref={containerRef} className={className} />;
 }
