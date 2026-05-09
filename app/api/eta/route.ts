@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 async function originForCaller(role: string): Promise<{
   lat: number;
   lng: number;
-  source: "driver" | "bouncie" | "mock";
+  source: "driver" | "bouncie" | "bouncie_cached" | "mock";
   heading?: number;
   speed_mph?: number;
 }> {

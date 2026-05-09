@@ -8,7 +8,7 @@ interface Status {
   connected: boolean;
   vehicle_vin: string | null;
   expires_at: string | null;
-  source: "bouncie" | "mock";
+  source: "bouncie" | "bouncie_cached" | "mock";
 }
 
 export default function BouncieConnectCard({ token }: { token: string }) {

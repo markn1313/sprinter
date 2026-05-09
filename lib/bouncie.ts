@@ -62,11 +62,17 @@ async function refreshAccessToken(refreshToken: string): Promise<{
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
+  const text = await res.text();
   if (!res.ok) {
-    console.warn("Bouncie token refresh failed", res.status, await res.text());
+    console.warn(`[bouncie] refresh failed status=${res.status} body=${text.slice(0, 300)}`);
     return null;
   }
-  return (await res.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+  try {
+    return JSON.parse(text) as { access_token: string; refresh_token?: string; expires_in?: number };
+  } catch {
+    console.warn(`[bouncie] refresh 200 but non-JSON: ${text.slice(0, 300)}`);
+    return null;
+  }
 }
 
 async function ensureFreshToken(): Promise<string | null> {
@@ -154,9 +160,40 @@ function mockPosition(): VanPosition {
   };
 }
 
-export async function getVanPosition(): Promise<VanPosition & { source: "bouncie" | "mock" }> {
+// Fall back ladder: live Bouncie → last-known good Bouncie ping (logged to
+// vehicle_positions) → orbiting mock. The last-known-good path matters most
+// when the OAuth token has expired — better to show stale-but-real data
+// than to put the van back at home with 78% fuel.
+export async function getVanPosition(): Promise<VanPosition & { source: "bouncie" | "bouncie_cached" | "mock" }> {
   const live = await fetchBouncieVehicle();
   if (live) return { ...live, source: "bouncie" };
+
+  try {
+    const { data } = await supabaseAdmin()
+      .from("vehicle_positions")
+      .select("lat,lng,heading,speed_mph,fuel_pct,ignition,mileage,recorded_at")
+      .eq("source", "bouncie")
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data && data.lat != null && data.lng != null) {
+      return {
+        lat: data.lat as number,
+        lng: data.lng as number,
+        heading: (data.heading as number) ?? 0,
+        speed_mph: 0, // last-known ping isn't "current" speed
+        fuel_pct: (data.fuel_pct as number) ?? null,
+        battery_v: null,
+        mileage: (data.mileage as number) ?? null,
+        ignition: (data.ignition as boolean) ?? false,
+        updated_at: (data.recorded_at as string) ?? new Date().toISOString(),
+        source: "bouncie_cached",
+      };
+    }
+  } catch {
+    // ignore — fall through to mock
+  }
+
   return { ...mockPosition(), source: "mock" };
 }
 

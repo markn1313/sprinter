@@ -24,7 +24,7 @@ export interface EtaData {
     lng: number;
     heading: number;
     speed_mph: number;
-    source: "bouncie" | "mock";
+    source: "bouncie" | "bouncie_cached" | "mock";
   };
   to_next?: EtaLeg | null;
   to_final?: EtaLeg | null;

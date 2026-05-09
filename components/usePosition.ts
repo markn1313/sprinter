@@ -5,7 +5,7 @@ import { VanPosition } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { useRealtime } from "@/components/useRealtime";
 
-type PosWithSource = VanPosition & { source?: "bouncie" | "mock" };
+type PosWithSource = VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" };
 
 // LocalStorage cache so reloads (and the TV display in particular) don't sit
 // blank for 6 seconds before the first /api/position poll returns. Stale by

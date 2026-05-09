@@ -16,7 +16,7 @@ export interface MapPin {
 }
 
 interface Props {
-  position: (VanPosition & { source?: "bouncie" | "mock" }) | null;
+  position: (VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" }) | null;
   pins?: MapPin[];
   polyline?: string | null;
   polylineColor?: string;
