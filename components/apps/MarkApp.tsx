@@ -46,7 +46,25 @@ type Tab = "map" | "trips" | "chat" | "help" | "settings";
 export default function MarkApp({ token, name }: { token: string; name: string }) {
   const { pos } = usePosition(token, 8000);
   const { trips, refresh } = useTrips(token, 5000);
-  const [tab, setTab] = useState<Tab>("map");
+  // Restore tab + open trip on refresh so reload doesn't dump us back to the map.
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "map";
+    const v = window.localStorage.getItem(`sprinter:tab:${token}`);
+    return (v === "trips" || v === "chat" || v === "help" || v === "settings") ? v : "map";
+  });
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(`sprinter:trip:${token}`);
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(`sprinter:tab:${token}`, tab);
+  }, [tab, token]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (selectedTripId) window.localStorage.setItem(`sprinter:trip:${token}`, selectedTripId);
+    else window.localStorage.removeItem(`sprinter:trip:${token}`);
+  }, [selectedTripId, token]);
+
   const [origin, setOrigin] = useState("");
   const [shareGps, setShareGps] = useState(true);
   useMarkGpsReporter(token, shareGps);
@@ -57,7 +75,6 @@ export default function MarkApp({ token, name }: { token: string; name: string }
 
   const live = activeTrip(trips);
   const unreadDriver = useUnreadDriverChat(token, "mark");
-  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
   // All tabs stay mounted so the Mapbox GL instance is never torn down on tab
   // switch. Inactive tabs are hidden via CSS instead of conditionally rendered.

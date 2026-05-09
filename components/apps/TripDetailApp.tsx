@@ -407,8 +407,8 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
           </div>
         )}
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-          <ul className="flex flex-col gap-3">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
+          <ul className="flex flex-col gap-1.5">
             <EditableField
               label="Passenger"
               value={passenger}
@@ -555,14 +555,14 @@ function UnifiedStop({
   const [editing, setEditing] = useState(false);
   if (!editing) {
     return (
-      <li className="flex items-center justify-between gap-2 rounded-xl bg-zinc-900/60 px-3 py-3">
+      <li className="flex items-center gap-2 rounded-xl bg-zinc-900/60 px-2.5 py-1.5">
+        <span className="shrink-0 w-5 text-center text-xs font-semibold text-amber-300 tabular-nums">{index}</span>
         <button onClick={() => setEditing(true)} className="min-w-0 flex-1 text-left">
-          <div className="text-[10px] uppercase tracking-wider text-amber-300">Stop {index}</div>
-          <div className="mt-0.5 truncate text-sm text-zinc-100">{address}</div>
+          <div className="truncate text-sm text-zinc-100">{address}</div>
         </button>
         <button
           onClick={onRemove}
-          className="shrink-0 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
+          className="shrink-0 rounded-lg p-1 text-zinc-500 hover:bg-zinc-800 hover:text-red-400"
         >
           <X size={14} />
         </button>
@@ -570,9 +570,10 @@ function UnifiedStop({
     );
   }
   return (
-    <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wider text-amber-300">Stop {index}</span>
+    <li className="rounded-xl border border-emerald-700/60 bg-zinc-900/60 px-2.5 py-2">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="shrink-0 w-5 text-center text-xs font-semibold text-amber-300 tabular-nums">{index}</span>
+        <span className="flex-1 text-[10px] uppercase tracking-wider text-emerald-400">Editing</span>
         <button onClick={() => setEditing(false)} className="rounded p-1 text-zinc-400 hover:bg-zinc-800">
           <X size={12} />
         </button>
@@ -604,9 +605,9 @@ function InsertStop({
       <li>
         <button
           onClick={() => setOpen(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40 px-3 py-2.5 text-[11px] text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 px-2 py-1 text-[10px] text-zinc-500 hover:border-zinc-600 hover:bg-zinc-800/60 hover:text-zinc-200"
         >
-          <span className="text-base leading-none">+</span> add stop here
+          <span className="text-sm leading-none">+</span> add stop
         </button>
       </li>
     );

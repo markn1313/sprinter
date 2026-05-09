@@ -24,7 +24,14 @@ export default function PassengerApp({ token }: { token: string; name: string })
   const { trips } = useTrips(token, 5000);
   const trip = trips[0] ?? null;
   const { eta } = useEta(token, trip?.id ?? null, 20_000);
-  const [tab, setTab] = useState<Tab>("map");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "map";
+    const v = window.localStorage.getItem(`sprinter:tab:${token}`);
+    return (v === "comfort" || v === "chat") ? v : "map";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(`sprinter:tab:${token}`, tab);
+  }, [tab, token]);
   const [focusMode, setFocusMode] = useState<"auto" | "van" | "me" | "dest">("auto");
   const [focusKey, setFocusKey] = useState(0);
   const focus = (m: typeof focusMode) => {
