@@ -21,6 +21,9 @@ export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> 
   if (mapboxToken) {
     const r = await routeMapbox(waypoints, mapboxToken);
     if (r) return r;
+    console.warn("[routing] Mapbox unavailable — falling back to OSRM");
+  } else {
+    console.warn("[routing] MAPBOX_TOKEN not set in env");
   }
   return routeOsrm(waypoints);
 }
@@ -31,7 +34,10 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
   const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=false`;
   try {
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[routing] Mapbox failed", res.status, (await res.text()).slice(0, 200));
+      return null;
+    }
     const data = (await res.json()) as {
       code: string;
       routes: Array<{
@@ -51,7 +57,8 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
       geometry: r.geometry,
       source: "mapbox-traffic",
     };
-  } catch {
+  } catch (err) {
+    console.warn("[routing] Mapbox threw:", (err as Error).message);
     return null;
   }
 }
