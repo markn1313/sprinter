@@ -149,18 +149,22 @@ function DriverHero({
   );
 }
 
+// Simplified driver-facing button labels. Two states cycle as the trip
+// progresses ("On my way" / "Arrived"), with "Complete" only at the end.
+// The underlying status machine still has 5 stops so passengers/Mark see
+// progress, but Dio sees just the next action he needs.
 function nextAction(status: Trip["status"]): { label: string; action: string; color: string } | null {
   switch (status) {
     case "scheduled":
-      return { label: "I'm on the way", action: "dispatch", color: "bg-blue-600 hover:bg-blue-500" };
+      return { label: "On my way", action: "dispatch", color: "bg-blue-600 hover:bg-blue-500" };
     case "dispatched":
-      return { label: "I'm at pickup", action: "at_pickup", color: "bg-amber-600 hover:bg-amber-500" };
+      return { label: "Arrived", action: "at_pickup", color: "bg-emerald-600 hover:bg-emerald-500" };
     case "at_pickup":
-      return { label: "Passenger onboard", action: "onboard", color: "bg-emerald-600 hover:bg-emerald-500" };
+      return { label: "On my way", action: "onboard", color: "bg-blue-600 hover:bg-blue-500" };
     case "onboard":
-      return { label: "Arrived at dropoff", action: "at_dropoff", color: "bg-amber-600 hover:bg-amber-500" };
+      return { label: "Arrived", action: "at_dropoff", color: "bg-emerald-600 hover:bg-emerald-500" };
     case "at_dropoff":
-      return { label: "Trip complete", action: "complete", color: "bg-emerald-700 hover:bg-emerald-600" };
+      return { label: "Complete", action: "complete", color: "bg-emerald-700 hover:bg-emerald-600" };
     default:
       return null;
   }
