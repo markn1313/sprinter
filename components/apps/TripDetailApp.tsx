@@ -11,7 +11,7 @@ import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { dollars, statusLabel, statusColor, shortTime, shortDate } from "@/lib/format";
 import { googleMapsMultiStop } from "@/lib/maps-link";
-import { ArrowLeft, Trash2, Navigation, X, Pencil, Save, Loader2 } from "lucide-react";
+import { Navigation, X, Save, Loader2 } from "lucide-react";
 
 interface Stop {
   id: string;
@@ -190,42 +190,8 @@ export default function TripDetailApp({ token, tripId, onBack, hideMap }: TripDe
   if (error) return <div className="p-6 text-sm text-red-400">{error}</div>;
   if (!trip) return <div className="p-6 text-sm text-zinc-500">Loading…</div>;
 
-  // When embedded inside MarkApp (hideMap=true), the parent already shows the
-  // map. When viewed directly via /m/[token]/trip/[id] we still render the map
-  // for shareability — but in-app navigation via the Trips tab uses the
-  // embedded version so we never mount two Mapbox instances at once.
-  const handleBack = () => {
-    if (onBack) onBack();
-    else window.location.href = `/m/${token}`;
-  };
-
   return (
     <div className={hideMap ? "flex h-full flex-col bg-zinc-950" : "min-h-screen bg-zinc-950 pb-24"}>
-      <header className="sticky top-0 z-20 border-b border-zinc-900 bg-zinc-950/95 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-2 px-3 py-3">
-          <button
-            onClick={handleBack}
-            className="flex items-center gap-1 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-900"
-            aria-label="Back"
-          >
-            <ArrowLeft size={16} />
-          </button>
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider text-white ${statusColor(trip.status)}`}>
-              {statusLabel(trip.status)}
-            </span>
-            {trip.passenger_name}
-          </div>
-          <button
-            onClick={deleteTrip}
-            className="rounded-lg p-1.5 text-red-400 hover:bg-red-950/40"
-            title="Delete trip"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </header>
-
       <main className={`mx-auto w-full max-w-3xl space-y-3 px-3 pt-3 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
         {/* Map — omitted when embedded (parent already has one) */}
         {!hideMap && (

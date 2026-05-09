@@ -4,6 +4,7 @@ import { Trip, Role } from "@/lib/types";
 import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
 import { Copy, MessageSquare, ExternalLink } from "lucide-react";
 import { useState, MouseEvent } from "react";
+import SwipeToDelete from "./SwipeToDelete";
 
 function buildInviteBody(_trip: Trip, url: string): string {
   return `Click for details on your trip:\n${url}`;
@@ -20,8 +21,17 @@ interface Props {
   onOpenTrip?: (tripId: string) => void;
 }
 
-export default function TripList({ trips, role, origin, token, onOpenTrip }: Props) {
+export default function TripList({ trips, role, origin, token, onOpenTrip, onChanged }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
+
+  const deleteTrip = async (id: string) => {
+    if (!token) return;
+    await fetch(`/api/trips/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    onChanged?.();
+  };
 
   if (!trips.length) {
     return (
@@ -49,9 +59,8 @@ export default function TripList({ trips, role, origin, token, onOpenTrip }: Pro
         const openTrip = () => {
           if (tappable) onOpenTrip!(t.id);
         };
-        return (
-          <li
-            key={t.id}
+        const inner = (
+          <div
             onClick={openTrip}
             role={tappable ? "button" : undefined}
             className={`px-4 py-3 text-sm transition ${tappable ? "cursor-pointer hover:bg-zinc-900/40 active:bg-zinc-900/60" : ""}`}
@@ -111,6 +120,16 @@ export default function TripList({ trips, role, origin, token, onOpenTrip }: Pro
                 </a>
               </div>
             )}
+          </div>
+        );
+        if (role !== "mark" || !token) {
+          return <li key={t.id}>{inner}</li>;
+        }
+        return (
+          <li key={t.id}>
+            <SwipeToDelete onDelete={() => deleteTrip(t.id)} confirmLabel="Delete">
+              {inner}
+            </SwipeToDelete>
           </li>
         );
       })}

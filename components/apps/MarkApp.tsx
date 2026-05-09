@@ -743,7 +743,7 @@ function TripsTab({ trips, origin, token, refresh, onOpenTrip }: { trips: Trip[]
       >
         <Send size={16} /> New trip — Dispatch
       </button>
-      <TripList trips={trips} role="mark" origin={origin} token={token} onOpenTrip={onOpenTrip} />
+      <TripList trips={trips} role="mark" origin={origin} token={token} onOpenTrip={onOpenTrip} onChanged={refresh} />
       {open && <DispatchSheet token={token} onClose={() => setOpen(false)} onDispatched={() => { setOpen(false); refresh(); }} />}
     </main>
   );
