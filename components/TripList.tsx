@@ -6,17 +6,8 @@ import { Copy, ExternalLink, MessageSquare, Pencil } from "lucide-react";
 import { useState } from "react";
 import EditTripModal from "./EditTripModal";
 
-function buildInviteBody(trip: Trip, url: string): string {
-  const time = new Date(trip.scheduled_at).toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  const dest = trip.dropoff_address ? ` to ${trip.dropoff_address.split(",")[0]}` : "";
-  return `You're riding in the Sprinter with Mark${dest} — pickup ${time}. Live tracker + ETA: ${url}`;
+function buildInviteBody(_trip: Trip, url: string): string {
+  return `Click for details on your trip:\n${url}`;
 }
 
 

@@ -41,7 +41,6 @@ export default function PassengerApp({ token, name }: { token: string; name: str
             <span className="text-xl">🚐</span>
             <span className="text-sm font-medium text-zinc-100">Sprinter</span>
           </div>
-          <div className="text-xs text-zinc-400">Hi, {name}</div>
         </div>
       </header>
 
