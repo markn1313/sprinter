@@ -153,7 +153,24 @@ function MapTab({
   name: string;
 }) {
   const { eta } = useEta(token, live?.id ?? null, 25_000);
-  const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip">("none");
+  const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
+  const [dropPinMode, setDropPinMode] = useState(false);
+  const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
+  const onMapClick = async (lat: number, lng: number) => {
+    setDropPinMode(false);
+    setDroppedPin({ lat, lng });
+    try {
+      const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDroppedPin({ lat, lng, address: data.display });
+      }
+    } catch {
+      // ignore
+    }
+  };
   const [focusMode, setFocusMode] = useState<"auto" | "van" | "me" | "dest" | "van-me" | "me-dest">("auto");
   const [focusKey, setFocusKey] = useState(0);
   const focus = (mode: typeof focusMode) => {
@@ -206,7 +223,18 @@ function MapTab({
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" focusMode={focusMode} focusKey={focusKey} />
+      <ClientMap
+        position={pos}
+        pins={pins}
+        polyline={polyline}
+        className="h-full w-full"
+        focusMode={focusMode}
+        focusKey={focusKey}
+        dropPinMode={dropPinMode}
+        droppedPin={droppedPin}
+        onMapClick={onMapClick}
+        onDroppedPinClick={() => setSheet("droppedPin")}
+      />
 
       {/* Top header — overlaid on map */}
       <header className="absolute inset-x-0 top-0 z-30 px-3 pt-[max(env(safe-area-inset-top),12px)]">
@@ -233,7 +261,7 @@ function MapTab({
         </div>
       </header>
 
-      {/* Map focus controls — left edge */}
+      {/* Map focus + drop-pin controls — left edge */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
         <FocusBtn label="🚐" onClick={() => focus("van")} title="Center on van" />
         {myGps && <FocusBtn label="📍" onClick={() => focus("me")} title="Center on me" />}
@@ -245,7 +273,22 @@ function MapTab({
           <FocusBtn label="📍↔🏁" onClick={() => focus("me-dest")} title="Me + destination" />
         )}
         <FocusBtn label="⤢" onClick={() => focus("auto")} title="Auto-fit" />
+        <FocusBtn
+          label={dropPinMode ? "✕" : "📌"}
+          onClick={() => {
+            setDropPinMode((v) => !v);
+            if (droppedPin) setDroppedPin(null);
+          }}
+          title={dropPinMode ? "Cancel pin drop" : "Drop a pin (then tap map)"}
+        />
       </div>
+      {dropPinMode && (
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 z-30 text-center">
+          <div className="inline-block rounded-full bg-amber-500/90 px-3 py-1 text-xs font-semibold text-zinc-900 shadow-lg">
+            Tap anywhere on the map to drop a pin
+          </div>
+        </div>
+      )}
 
       {/* Vitals strip — top-right overlay */}
       {pos && (
@@ -297,6 +340,19 @@ function MapTab({
           stops={stopsArr}
           onClose={() => setSheet("none")}
           refresh={refresh}
+        />
+      )}
+      {sheet === "droppedPin" && droppedPin && (
+        <DroppedPinSheet
+          token={token}
+          live={live}
+          pin={droppedPin}
+          onClose={() => setSheet("none")}
+          onApplied={() => {
+            setDroppedPin(null);
+            setSheet("none");
+            refresh();
+          }}
         />
       )}
     </div>
@@ -455,6 +511,91 @@ function TripSheet({
         <SmartStop token={token} tripId={trip.id} onAdded={refresh} />
         <AddressAutocomplete token={token} onSelect={addStopAddress} placeholder="Add a stop or destination — autocompletes" />
       </div>
+    </Sheet>
+  );
+}
+
+function DroppedPinSheet({
+  token,
+  live,
+  pin,
+  onClose,
+  onApplied,
+}: {
+  token: string;
+  live: Trip | null;
+  pin: { lat: number; lng: number; address?: string };
+  onClose: () => void;
+  onApplied: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const setAsDestination = async () => {
+    if (!live) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await postJson(token, `/api/trips/${live.id}`, {});
+      // Use PATCH via fetch since postJson doesn't expose method override
+      await fetch(`/api/trips/${live.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ dropoff_address: pin.address ?? `${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}` }),
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addAsStop = async () => {
+    if (!live) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await postJson(token, `/api/trips/${live.id}/stops`, {
+        kind: "stop",
+        address: pin.address ?? `${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}`,
+        lat: pin.lat,
+        lng: pin.lng,
+      });
+      onApplied();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet title="Pin dropped" onClose={onClose}>
+      <div className="text-sm text-zinc-300">{pin.address ?? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`}</div>
+      {!live ? (
+        <div className="mt-3 text-xs text-zinc-500">
+          Need an active trip to set this as a destination or stop. Use Pickup or Dispatch first.
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            onClick={setAsDestination}
+            disabled={busy}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 py-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            🏁 Set as destination
+          </button>
+          <button
+            onClick={addAsStop}
+            disabled={busy}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-3 py-3 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+          >
+            🚩 Add as stop
+          </button>
+        </div>
+      )}
+      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </Sheet>
   );
 }

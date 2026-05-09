@@ -16,6 +16,11 @@ export interface MapPin {
 
 type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
 
+interface DroppedPin {
+  lat: number;
+  lng: number;
+}
+
 interface Props {
   position: (VanPosition & { source?: "bouncie" | "mock" }) | null;
   pins?: MapPin[];
@@ -24,6 +29,10 @@ interface Props {
   fitBounds?: boolean;
   focusMode?: FocusMode;
   focusKey?: number;
+  dropPinMode?: boolean;
+  droppedPin?: DroppedPin | null;
+  onMapClick?: (lat: number, lng: number) => void;
+  onDroppedPinClick?: () => void;
 }
 
 const PIN_HTML: Record<MapPin["kind"], (idx?: number) => string> = {
@@ -43,11 +52,24 @@ const PIN_HTML: Record<MapPin["kind"], (idx?: number) => string> = {
     `<div style="font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
 };
 
-export default function MapboxMap({ position, pins = [], polyline, className, fitBounds = true, focusMode = "auto", focusKey = 0 }: Props) {
+export default function MapboxMap({
+  position,
+  pins = [],
+  polyline,
+  className,
+  fitBounds = true,
+  focusMode = "auto",
+  focusKey = 0,
+  dropPinMode = false,
+  droppedPin = null,
+  onMapClick,
+  onDroppedPinClick,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const vanMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const dropPinMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const fittedRef = useRef<string>("");
 
   // Init
@@ -224,6 +246,44 @@ export default function MapboxMap({ position, pins = [], polyline, className, fi
     allPoints.forEach((p) => bounds.extend(p));
     map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 800 });
   }, [allPoints, fitBounds, focusMode]);
+
+  // Map click → drop a pin (when in drop-pin mode)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const handler = (e: mapboxgl.MapMouseEvent) => {
+      if (dropPinMode && onMapClick) {
+        onMapClick(e.lngLat.lat, e.lngLat.lng);
+      }
+    };
+    map.on("click", handler);
+    map.getCanvas().style.cursor = dropPinMode ? "crosshair" : "";
+    return () => {
+      map.off("click", handler);
+      map.getCanvas().style.cursor = "";
+    };
+  }, [dropPinMode, onMapClick]);
+
+  // Render the dropped pin marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (dropPinMarkerRef.current) {
+      dropPinMarkerRef.current.remove();
+      dropPinMarkerRef.current = null;
+    }
+    if (!droppedPin) return;
+    const el = document.createElement("div");
+    el.style.cursor = "pointer";
+    el.innerHTML = `<div style="position:relative;font-size:36px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));animation:drop-bounce .5s ease-out;">📍</div>`;
+    el.onclick = (e) => {
+      e.stopPropagation();
+      onDroppedPinClick?.();
+    };
+    dropPinMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+      .setLngLat([droppedPin.lng, droppedPin.lat])
+      .addTo(map);
+  }, [droppedPin, onDroppedPinClick]);
 
   // Imperative focus modes — triggered by focusKey changes
   useEffect(() => {
