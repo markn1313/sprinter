@@ -315,29 +315,14 @@ export default function MapboxMap({
         .addTo(map);
       animatedVanRef.current = { lng: position.lng, lat: position.lat };
     } else {
-      // Smooth animation from currently-animated position → new target over
-      // ~5.5 s so it stays slightly behind the next poll. Linear ease keeps
-      // it visually steady.
-      const start = animatedVanRef.current ?? { lng: position.lng, lat: position.lat };
-      const end = { lng: position.lng, lat: position.lat };
-      const t0 = performance.now();
-      const dur = 5500;
-      if (vanAnimFrameRef.current != null) cancelAnimationFrame(vanAnimFrameRef.current);
-      const step = (now: number) => {
-        const t = Math.min(1, (now - t0) / dur);
-        const lng = start.lng + (end.lng - start.lng) * t;
-        const lat = start.lat + (end.lat - start.lat) * t;
-        animatedVanRef.current = { lng, lat };
-        try {
-          vanMarkerRef.current?.setLngLat([lng, lat]);
-        } catch {}
-        if (t < 1) {
-          vanAnimFrameRef.current = requestAnimationFrame(step);
-        } else {
-          vanAnimFrameRef.current = null;
-        }
-      };
-      vanAnimFrameRef.current = requestAnimationFrame(step);
+      // Direct setLngLat — earlier rAF interpolation appeared to starve the
+      // Mapbox tile loader (no tiles fetched while animation was running).
+      // Going back to discrete jumps every poll until we have a safer
+      // animation strategy.
+      try {
+        vanMarkerRef.current.setLngLat([position.lng, position.lat]);
+      } catch {}
+      animatedVanRef.current = { lng: position.lng, lat: position.lat };
       const outer = vanMarkerRef.current.getElement();
       if (outer && (outer.style.width !== `${w}px` || outer.style.height !== `${h}px`)) {
         outer.style.width = `${w}px`;
