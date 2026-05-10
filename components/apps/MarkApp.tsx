@@ -10,6 +10,9 @@ import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import LinkGenerator from "@/components/LinkGenerator";
 import PushToggle from "@/components/PushToggle";
+import InsightsCard from "@/components/InsightsCard";
+import QuickDispatchChips from "@/components/QuickDispatchChips";
+import ShareTripButton from "@/components/ShareTripButton";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
@@ -447,16 +450,27 @@ function MapTab({
           <button onClick={() => setSheet("trip")} className="flex-1 text-left">
             <EtaBottomBar eta={eta} />
           </button>
-          {navUrl && (
-            <a
-              href={navUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
-            >
-              <Navigation size={14} /> Maps
-            </a>
-          )}
+          <div className="flex items-stretch gap-2">
+            <ShareTripButton token={token} tripId={live.id} label="Share" />
+            {navUrl && (
+              <a
+                href={navUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
+              >
+                <Navigation size={14} /> Maps
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* No active trip — show smart quick-dispatch chips for top frequent
+          destinations. Tap any to dispatch a fresh trip from current GPS. */}
+      {!live && (
+        <div className="absolute inset-x-3 bottom-3 z-30">
+          <QuickDispatchChips token={token} onDispatched={refresh} />
         </div>
       )}
       {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar branch
@@ -950,6 +964,7 @@ function getGps(): Promise<{ lat: number; lng: number }> {
 function SettingsTab({ token, origin }: { token: string; origin: string }) {
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
+      <InsightsCard token={token} />
       <PushToggle token={token} />
       <BouncieConnectCard token={token} />
       <LinkGenerator token={token} origin={origin} />
