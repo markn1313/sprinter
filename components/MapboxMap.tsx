@@ -135,8 +135,14 @@ export default function MapboxMap({
     // Zoom/compass controls intentionally NOT added — Mark prefers a clean map.
     // Pinch-to-zoom + double-tap zoom still work natively.
 
-    // Add traffic layer once style loads
+    // Add overlays once the style loads. The traffic layer and the trip-route
+    // layer used to share a single try/catch — if the Mapbox traffic source
+    // failed (token-scope / network), the catch swallowed the error and the
+    // trip-route layer never got added, so the highlighted route polyline
+    // silently disappeared. Each overlay now has its own try/catch so a
+    // traffic-tiles failure can't take the route line down with it.
     map.on("load", () => {
+      // Traffic congestion overlay — premium token scope required.
       try {
         map.addSource("mapbox-traffic", {
           type: "vector",
@@ -165,8 +171,12 @@ export default function MapboxMap({
             "line-opacity": 0.7,
           },
         });
+      } catch (err) {
+        console.warn("[MapboxMap] traffic overlay failed:", err);
+      }
 
-        // Empty source for our route polyline
+      // Trip-route polyline — must always be added even if traffic above failed.
+      try {
         map.addSource("trip-route", {
           type: "geojson",
           data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [] } },
@@ -193,7 +203,7 @@ export default function MapboxMap({
           },
         });
       } catch (err) {
-        console.warn("Traffic layer add failed:", err);
+        console.warn("[MapboxMap] trip-route layer failed:", err);
       }
     });
 
