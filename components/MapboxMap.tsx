@@ -260,30 +260,40 @@ export default function MapboxMap({
     const w = vanIconSize;
     const h = Math.round(vanIconSize * (20 / 36));
     if (!vanMarkerRef.current) {
-      const el = document.createElement("div");
-      el.style.cssText = `width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;`;
-      el.innerHTML = `
-        <svg width="${w}" height="${h}" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">
+      // Outer wrapper: Mapbox controls its translate. Inner div: we control
+      // rotation. Keeps Mapbox's positioning untouched.
+      const outer = document.createElement("div");
+      outer.style.cssText = `width:${w}px;height:${w}px;display:flex;align-items:center;justify-content:center;`;
+      const inner = document.createElement("div");
+      inner.className = "sprinter-van-rotor";
+      inner.style.cssText = `width:${w}px;height:${h}px;transform-origin:center center;will-change:transform;transition:transform 250ms linear;display:flex;align-items:center;justify-content:center;`;
+      inner.innerHTML = `
+        <svg width="${w}" height="${h}" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));overflow:visible;">
           <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.4"/>
           <path d="M40 8 L48 10 L56 16 L40 16 Z" fill="#3b3b3b"/>
           <rect x="14" y="10" width="22" height="6" rx="1" fill="#3b3b3b"/>
           <circle cx="16" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
           <circle cx="48" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
         </svg>`;
-      vanMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "center" })
+      outer.appendChild(inner);
+      vanMarkerRef.current = new mapboxgl.Marker({ element: outer, anchor: "center" })
         .setLngLat([position.lng, position.lat])
         .addTo(map);
     } else {
       vanMarkerRef.current.setLngLat([position.lng, position.lat]);
-      // Resize existing marker if vanIconSize changed (e.g. TV vs phone)
-      const el = vanMarkerRef.current.getElement();
-      if (el && el.style.width !== `${w}px`) {
-        el.style.width = `${w}px`;
-        el.style.height = `${h}px`;
-        const svg = el.querySelector("svg");
-        if (svg) {
-          svg.setAttribute("width", String(w));
-          svg.setAttribute("height", String(h));
+      const outer = vanMarkerRef.current.getElement();
+      if (outer && outer.style.width !== `${w}px`) {
+        outer.style.width = `${w}px`;
+        outer.style.height = `${w}px`;
+        const inner = outer.querySelector(".sprinter-van-rotor") as HTMLElement | null;
+        if (inner) {
+          inner.style.width = `${w}px`;
+          inner.style.height = `${h}px`;
+          const svg = inner.querySelector("svg");
+          if (svg) {
+            svg.setAttribute("width", String(w));
+            svg.setAttribute("height", String(h));
+          }
         }
       }
     }
@@ -315,11 +325,12 @@ export default function MapboxMap({
       }
     }
     lastVanLngLatRef.current = { lng: position.lng, lat: position.lat, bearing };
-    try {
-      vanMarkerRef.current.setRotation(bearing - 90);
-      vanMarkerRef.current.setRotationAlignment("map");
-    } catch {
-      // older mapbox-gl versions may lack setRotation
+    // Apply rotation to the inner div (SVG natively faces RIGHT, so subtract
+    // 90° so bearing 0/north points up).
+    const outer = vanMarkerRef.current.getElement();
+    const inner = outer?.querySelector(".sprinter-van-rotor") as HTMLElement | null;
+    if (inner) {
+      inner.style.transform = `rotate(${bearing - 90}deg)`;
     }
   }, [position, vanIconSize]);
 

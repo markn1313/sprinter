@@ -202,31 +202,40 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
   // big numbers row underneath. Roughly 40% shorter than the prior card.
   return (
     <div
-      className={`rounded-3xl border px-6 py-4 backdrop-blur shadow-2xl ${
+      className={`rounded-2xl border px-5 py-3 backdrop-blur shadow-2xl ${
         primary
           ? "border-emerald-700/60 bg-gradient-to-br from-emerald-900/60 to-zinc-950/95"
           : "border-blue-700/60 bg-gradient-to-br from-blue-900/40 to-zinc-950/95"
       }`}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest">
-          <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
-          <span className={primary ? "text-emerald-300" : "text-blue-300"}>
-            {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
-          </span>
-        </div>
-        <div className="truncate text-xl font-medium text-zinc-100 max-w-[55%]">{label}</div>
+      {/* Top row: label (big, prominent) */}
+      <div className="flex items-center gap-2">
+        <Icon size={20} className={primary ? "text-emerald-400" : "text-blue-400"} />
+        <span className={`text-sm uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
+          {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
+        </span>
+        <span className="ml-2 truncate text-2xl font-semibold text-zinc-100">{label}</span>
       </div>
-      <div className="mt-2 flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-2">
-          <span className={`font-mono text-6xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
-          <span className="text-xl font-semibold text-zinc-500">min</span>
-          <span className="ml-3 font-mono text-3xl font-semibold tabular-nums text-zinc-200">{miles}</span>
-          <span className="text-xl text-zinc-500">mi</span>
+      {/* Bottom row: 3 columns each with label-on-top, value-below. Labels
+          are big enough to read; values are huge. */}
+      <div className="mt-2 grid grid-cols-3 gap-4 items-end">
+        <div>
+          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Time</div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className={`font-mono text-5xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
+            <span className="text-xl text-zinc-400">min</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Distance</div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="font-mono text-5xl font-bold tabular-nums leading-none text-zinc-100">{miles}</span>
+            <span className="text-xl text-zinc-400">mi</span>
+          </div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-widest text-zinc-500 leading-none">Arrive</div>
-          <div className="font-mono text-4xl font-bold tabular-nums text-zinc-100 leading-tight">{arrival}</div>
+          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Arrival</div>
+          <div className="mt-1 font-mono text-5xl font-bold tabular-nums leading-none text-zinc-100">{arrival}</div>
         </div>
       </div>
     </div>
