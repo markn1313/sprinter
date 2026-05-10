@@ -33,6 +33,12 @@ interface Props {
   // legible from across the cabin. Defaults are tuned for phone screens.
   routeLineWidth?: number;
   routeGlowWidth?: number;
+  // Pixel size of the van marker. The van rotates to its `heading` so it
+  // visibly points in the direction of travel.
+  vanIconSize?: number;
+  // Multiplier for pickup / dropoff / stop pin icons. 1 = phone default,
+  // 2+ = TV / large screens.
+  pinScale?: number;
   focusMode?: FocusMode;
   focusKey?: number;
   dropPinMode?: boolean;
@@ -41,21 +47,24 @@ interface Props {
   onDroppedPinClick?: () => void;
 }
 
-const PIN_HTML: Record<MapPin["kind"], (idx?: number) => string> = {
-  // Red flag for pickup spots (start of trip)
-  pickup: () =>
-    `<div style="font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🚩</div>`,
-  // Finish-line flag for the final destination
-  dropoff: () =>
-    `<div style="font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🏁</div>`,
-  // Red flag for intermediate stops (numbered)
-  stop: (idx) =>
-    `<div style="position:relative;font-size:30px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));">🚩<span style="position:absolute;top:8px;left:14px;background:#dc2626;color:white;border-radius:9999px;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:-apple-system,system-ui,sans-serif;">${idx ?? ""}</span></div>`,
-  // Blue pulsing dot — "you are here"
-  mark: () =>
-    `<div style="position:relative;width:18px;height:18px;"><span style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;box-shadow:0 0 0 2px white,0 0 0 4px rgba(59,130,246,.45);"></span><span style="position:absolute;inset:-6px;border-radius:50%;background:#3b82f6;opacity:.35;animation:sprinter-pulse 1.6s ease-out infinite;"></span></div>`,
-  passenger: () =>
-    `<div style="font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
+const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => string> => {
+  const base = Math.round(30 * scale);
+  const stopBadgeOffset = Math.round(8 * scale);
+  const stopBadgeLeft = Math.round(14 * scale);
+  const stopBadgeSize = Math.round(16 * scale);
+  const stopBadgeFont = Math.max(10, Math.round(10 * scale));
+  return {
+    pickup: () =>
+      `<div style="font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩</div>`,
+    dropoff: () =>
+      `<div style="font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🏁</div>`,
+    stop: (idx) =>
+      `<div style="position:relative;font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩<span style="position:absolute;top:${stopBadgeOffset}px;left:${stopBadgeLeft}px;background:#dc2626;color:white;border-radius:9999px;width:${stopBadgeSize}px;height:${stopBadgeSize}px;display:inline-flex;align-items:center;justify-content:center;font-size:${stopBadgeFont}px;font-weight:700;font-family:-apple-system,system-ui,sans-serif;">${idx ?? ""}</span></div>`,
+    mark: () =>
+      `<div style="position:relative;width:18px;height:18px;"><span style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;box-shadow:0 0 0 2px white,0 0 0 4px rgba(59,130,246,.45);"></span><span style="position:absolute;inset:-6px;border-radius:50%;background:#3b82f6;opacity:.35;animation:sprinter-pulse 1.6s ease-out infinite;"></span></div>`,
+    passenger: () =>
+      `<div style="font-size:${Math.round(24 * scale)}px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
+  };
 };
 
 export default function MapboxMap({
@@ -68,6 +77,8 @@ export default function MapboxMap({
   fitMaxZoom = 14,
   routeLineWidth = 4,
   routeGlowWidth = 8,
+  vanIconSize = 36,
+  pinScale = 1,
   focusMode = "auto",
   focusKey = 0,
   dropPinMode = false,
@@ -235,22 +246,24 @@ export default function MapboxMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update van marker — black Sprinter silhouette
+  // Update van marker — black Sprinter silhouette. Rotates to position.heading
+  // so it visibly points in the direction of travel. Bouncie reports heading
+  // 0–360 with 0 = north, 90 = east. Mapbox markers don't rotate natively, so
+  // we apply CSS transform via setRotation. The SVG itself faces RIGHT (east),
+  // so we offset by -90deg so heading=0 (north) points up.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !position) return;
+    const w = vanIconSize;
+    const h = Math.round(vanIconSize * (20 / 36));
     if (!vanMarkerRef.current) {
       const el = document.createElement("div");
-      el.style.cssText = "width:36px;height:20px;display:flex;align-items:center;justify-content:center;";
+      el.style.cssText = `width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;`;
       el.innerHTML = `
-        <svg width="36" height="20" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));">
-          <!-- Sprinter van silhouette -->
-          <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.2"/>
-          <!-- Windshield -->
+        <svg width="${w}" height="${h}" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">
+          <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.4"/>
           <path d="M40 8 L48 10 L56 16 L40 16 Z" fill="#3b3b3b"/>
-          <!-- Side window -->
           <rect x="14" y="10" width="22" height="6" rx="1" fill="#3b3b3b"/>
-          <!-- Wheels -->
           <circle cx="16" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
           <circle cx="48" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
         </svg>`;
@@ -259,8 +272,27 @@ export default function MapboxMap({
         .addTo(map);
     } else {
       vanMarkerRef.current.setLngLat([position.lng, position.lat]);
+      // Resize existing marker if vanIconSize changed (e.g. TV vs phone)
+      const el = vanMarkerRef.current.getElement();
+      if (el && el.style.width !== `${w}px`) {
+        el.style.width = `${w}px`;
+        el.style.height = `${h}px`;
+        const svg = el.querySelector("svg");
+        if (svg) {
+          svg.setAttribute("width", String(w));
+          svg.setAttribute("height", String(h));
+        }
+      }
     }
-  }, [position]);
+    // Rotate to heading. SVG faces east, so subtract 90° to align north=0.
+    const heading = typeof position.heading === "number" ? position.heading : 0;
+    try {
+      vanMarkerRef.current.setRotation(heading - 90);
+      vanMarkerRef.current.setRotationAlignment("map");
+    } catch {
+      // older mapbox-gl versions may lack setRotation
+    }
+  }, [position, vanIconSize]);
 
   // Update pin markers — defensively guard each step so a single bad pin
   // can't take down the whole tree.
@@ -270,10 +302,11 @@ export default function MapboxMap({
     pinMarkersRef.current.forEach((m) => {
       try { m.remove(); } catch {}
     });
+    const pinHtml = PIN_HTML(pinScale);
     pinMarkersRef.current = pins
       .map((p) => {
         try {
-          const html = PIN_HTML[p.kind]?.(p.index);
+          const html = pinHtml[p.kind]?.(p.index);
           if (!html) return null;
           const el = document.createElement("div");
           el.innerHTML = html;
@@ -288,7 +321,7 @@ export default function MapboxMap({
         }
       })
       .filter((m): m is mapboxgl.Marker => m !== null);
-  }, [pins]);
+  }, [pins, pinScale]);
 
   // Update polyline
   useEffect(() => {

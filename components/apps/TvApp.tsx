@@ -88,6 +88,8 @@ export default function TvApp({ token }: { token: string }) {
           fitMaxZoom={18}
           routeLineWidth={12}
           routeGlowWidth={28}
+          vanIconSize={96}
+          pinScale={2.4}
         />
       </div>
 

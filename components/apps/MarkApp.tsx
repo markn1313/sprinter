@@ -246,21 +246,55 @@ function MapTab({
   const stopsArr =
     ((mapTrip as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
 
+  // Mirror TV behavior: pin set comes from the live ETA's `upcoming` array
+  // (which knows to drop pickup once onboard, etc.) so Mark's home map
+  // shows only what's left of the trip.
+  const upcoming = (eta as unknown as { upcoming?: Array<{ kind: "pickup" | "stop" | "dropoff"; lat: number; lng: number; label: string }> })?.upcoming;
+
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
-    if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
-      out.push({ kind: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
-    if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
-      out.push({ kind: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
-    stopsArr.forEach((s, i) => {
-      if (s.lat != null && s.lng != null)
-        out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
-    });
+    if (upcoming && upcoming.length > 0) {
+      let stopIdx = 0;
+      upcoming.forEach((w) => {
+        const idx = w.kind === "stop" ? ++stopIdx : undefined;
+        out.push({ kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}) });
+      });
+    } else {
+      // Fallback while ETA hasn't loaded yet
+      if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
+        out.push({ kind: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
+      if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
+        out.push({ kind: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
+      stopsArr.forEach((s, i) => {
+        if (s.lat != null && s.lng != null)
+          out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+      });
+    }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
     return out;
-  }, [mapTrip, stopsArr, myGps]);
+  }, [upcoming, mapTrip, stopsArr, myGps]);
 
-  const polyline = (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
+  // Live ETA polyline first (reflects van's current position through what's
+  // remaining); fall back to the saved route_polyline only if ETA hasn't
+  // computed yet.
+  const polyline = eta?.polyline ?? (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? null;
+
+  // "Van is X min / Y mi from me" — quick haversine distance and naive ETA
+  // (van speed if moving, else assume 25 mph). Updates every position poll.
+  const vanFromMe = useMemo(() => {
+    if (!pos || !myGps) return null;
+    const R = 3959; // miles
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(myGps.lat - pos.lat);
+    const dLng = toRad(myGps.lng - pos.lng);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(pos.lat)) * Math.cos(toRad(myGps.lat)) * Math.sin(dLng / 2) ** 2;
+    const miles = 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+    const speed = (pos.speed_mph ?? 0) > 5 ? (pos.speed_mph as number) : 25;
+    const minutes = Math.max(1, Math.round((miles / speed) * 60));
+    return { miles: +miles.toFixed(miles < 10 ? 1 : 0), minutes };
+  }, [pos, myGps]);
 
   const navUrl = useMemo(() => {
     if (!mapTrip) return null;
@@ -288,7 +322,26 @@ function MapTab({
         droppedPin={droppedPin}
         onMapClick={onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
+        routeLineWidth={6}
+        routeGlowWidth={14}
+        vanIconSize={56}
+        pinScale={1.4}
       />
+
+      {/* "Van is N min / X mi from me" — always visible when both GPS sources
+          are reporting. Useful when waiting for pickup or knowing how close
+          the van is on a walk-back. */}
+      {vanFromMe && (
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/85 px-3 py-1.5 backdrop-blur shadow-xl">
+          <div className="flex items-baseline gap-2 text-xs">
+            <span className="text-zinc-500 uppercase tracking-wider">Van</span>
+            <span className="font-mono text-base font-bold tabular-nums text-emerald-300">{vanFromMe.minutes}</span>
+            <span className="text-zinc-400">min</span>
+            <span className="ml-1 font-mono text-base font-semibold tabular-nums text-zinc-200">{vanFromMe.miles}</span>
+            <span className="text-zinc-400">mi from you</span>
+          </div>
+        </div>
+      )}
 
       {/* Top header — overlaid on map */}
       <header className="absolute inset-x-0 top-0 z-30 px-3 pt-[max(env(safe-area-inset-top),12px)]">
