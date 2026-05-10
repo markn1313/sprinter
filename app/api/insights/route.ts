@@ -4,16 +4,6 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-interface VPRow {
-  lat: number | null;
-  lng: number | null;
-  speed_mph: number | null;
-  fuel_pct: number | null;
-  mileage: number | null;
-  ignition: boolean | null;
-  recorded_at: string;
-}
-
 interface TripRow {
   id: string;
   status: string;
@@ -69,11 +59,13 @@ export async function GET(req: Request) {
     return Math.max(0, hi - lo);
   }
 
-  // Direct count queries: each Bouncie row ≈ 5–6s of state.
-  // count(speed > 1) × pollInterval ≈ driving seconds — much more accurate
-  // than sampling a sparse window.
-  async function counts(sinceIso: string): Promise<{ moving: number; idle: number }> {
-    const [movingRes, idleRes] = await Promise.all([
+  // Counts are dilution-prone (multiple clients polling at the same time =
+  // duplicate rows for the same second). So instead of counts × poll-interval
+  // we compute the FRACTION of moving / idle rows and multiply by actual
+  // wall-clock elapsed time. That gives the right answer regardless of how
+  // many clients were polling.
+  async function counts(sinceIso: string): Promise<{ moving: number; idle: number; total: number }> {
+    const [movingRes, idleRes, totalRes] = await Promise.all([
       sb
         .from("vehicle_positions")
         .select("*", { count: "exact", head: true })
@@ -87,8 +79,17 @@ export async function GET(req: Request) {
         .gte("recorded_at", sinceIso)
         .lte("speed_mph", 1)
         .eq("ignition", true),
+      sb
+        .from("vehicle_positions")
+        .select("*", { count: "exact", head: true })
+        .eq("source", "bouncie")
+        .gte("recorded_at", sinceIso),
     ]);
-    return { moving: movingRes.count ?? 0, idle: idleRes.count ?? 0 };
+    return {
+      moving: movingRes.count ?? 0,
+      idle: idleRes.count ?? 0,
+      total: totalRes.count ?? 0,
+    };
   }
 
   // Average speed: pull a capped sample of moving rows and average.
@@ -105,7 +106,6 @@ export async function GET(req: Request) {
     return sum / data.length;
   }
 
-  const POLL_S = 6;
   const [todayMilesOdo, weekMilesOdo, todayCounts, weekCounts, todayAvg, weekAvg] = await Promise.all([
     odometerDelta(todayStart),
     odometerDelta(weekStart),
@@ -115,8 +115,20 @@ export async function GET(req: Request) {
     avgSpeedFor(weekStart),
   ]);
 
-  const today = { driving_s: todayCounts.moving * POLL_S, idle_s: todayCounts.idle * POLL_S };
-  const week = { driving_s: weekCounts.moving * POLL_S, idle_s: weekCounts.idle * POLL_S };
+  const todayElapsedSec = Math.max(1, (now - new Date(todayStart).getTime()) / 1000);
+  const weekElapsedSec = 7 * 86400;
+  const today = todayCounts.total > 0
+    ? {
+        driving_s: (todayCounts.moving / todayCounts.total) * todayElapsedSec,
+        idle_s: (todayCounts.idle / todayCounts.total) * todayElapsedSec,
+      }
+    : { driving_s: 0, idle_s: 0 };
+  const week = weekCounts.total > 0
+    ? {
+        driving_s: (weekCounts.moving / weekCounts.total) * weekElapsedSec,
+        idle_s: (weekCounts.idle / weekCounts.total) * weekElapsedSec,
+      }
+    : { driving_s: 0, idle_s: 0 };
   const todayMiles = todayMilesOdo ?? 0;
   const weekMiles = weekMilesOdo ?? 0;
   const avgSpeed = (which: "today" | "week"): number => (which === "today" ? todayAvg : weekAvg);
@@ -194,13 +206,4 @@ export async function GET(req: Request) {
     },
     top_destinations: topDestinations,
   });
-}
-
-function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 3959;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
