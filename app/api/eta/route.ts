@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getVanPosition } from "@/lib/bouncie";
-import { route } from "@/lib/routing";
+import { route, nextManeuver } from "@/lib/routing";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +104,7 @@ export async function POST(req: Request) {
     eta_seconds: rNext ? rNext.duration_s : null,
     distance_miles: rNext ? +(rNext.distance_m / 1609.34).toFixed(1) : null,
     polyline: rFinal?.polyline ?? rNext?.polyline ?? null,
+    next_maneuver: rFinal?.steps ? nextManeuver(origin.lng, origin.lat, rFinal.steps) : null,
     traffic_aware: (rNext?.source === "mapbox-traffic") || (rFinal?.source === "mapbox-traffic"),
   });
 }
@@ -233,6 +234,7 @@ export async function GET(req: Request) {
     eta_seconds: rNext ? rNext.duration_s : null,
     distance_miles: rNext ? +(rNext.distance_m / 1609.34).toFixed(1) : null,
     polyline: rFinal?.polyline ?? rNext?.polyline ?? null,
+    next_maneuver: rFinal?.steps ? nextManeuver(origin.lng, origin.lat, rFinal.steps) : null,
     traffic_aware: (rNext?.source === "mapbox-traffic") || (rFinal?.source === "mapbox-traffic"),
   });
 }

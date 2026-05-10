@@ -39,6 +39,12 @@ interface Props {
   // Multiplier for pickup / dropoff / stop pin icons. 1 = phone default,
   // 2+ = TV / large screens.
   pinScale?: number;
+  // Follow-cam mode: pitch the map, rotate it to the van's bearing, lock
+  // center on the van. Real-GPS feel for the TV in-trip view. Overrides
+  // fitBounds while active.
+  followCam?: boolean;
+  followCamPitch?: number; // degrees, 0 = top-down, 60 = strong perspective
+  followCamZoom?: number;
   focusMode?: FocusMode;
   focusKey?: number;
   dropPinMode?: boolean;
@@ -79,6 +85,9 @@ export default function MapboxMap({
   routeGlowWidth = 8,
   vanIconSize = 36,
   pinScale = 1,
+  followCam = false,
+  followCamPitch = 60,
+  followCamZoom = 16.5,
   focusMode = "auto",
   focusKey = 0,
   dropPinMode = false,
@@ -334,14 +343,51 @@ export default function MapboxMap({
       }
     }
     lastVanLngLatRef.current = { lng: position.lng, lat: position.lat, bearing };
-    // Overhead SVG natively faces UP (north) at rotation 0, so we rotate by
-    // the bearing directly with no offset.
+    // Overhead SVG natively faces UP (north) at rotation 0. In follow-cam
+    // mode the map itself rotates to the van's bearing, so the icon stays
+    // pointing up on the screen (= forward in the driver's view). In normal
+    // 2D mode we rotate the icon to the bearing instead.
     const outer = vanMarkerRef.current.getElement();
     const inner = outer?.querySelector(".sprinter-van-rotor") as HTMLElement | null;
     if (inner) {
-      inner.style.transform = `rotate(${bearing}deg)`;
+      inner.style.transform = followCam ? `rotate(0deg)` : `rotate(${bearing}deg)`;
     }
-  }, [position, vanIconSize]);
+  }, [position, vanIconSize, followCam]);
+
+  // Follow-cam: keep the map centered on the van, tilted, and rotated to
+  // the van's heading so the road ahead is always "up" — like a real GPS.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !followCam || !position) return;
+    const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+    const apply = () => {
+      try {
+        map.easeTo({
+          center: [position.lng, position.lat],
+          bearing,
+          pitch: followCamPitch,
+          zoom: followCamZoom,
+          duration: 1200,
+          essential: true,
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [position, followCam, followCamPitch, followCamZoom]);
+
+  // When follow-cam is turned OFF, reset pitch/bearing so subsequent fits
+  // give a true top-down view again.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || followCam) return;
+    try {
+      map.easeTo({ pitch: 0, bearing: 0, duration: 600, essential: true });
+    } catch {}
+    fittedRef.current = ""; // force a re-fit on next allPoints change
+  }, [followCam]);
 
   // Update pin markers — defensively guard each step so a single bad pin
   // can't take down the whole tree.
@@ -421,6 +467,7 @@ export default function MapboxMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !fitBounds || focusMode !== "auto" || allPoints.length < 2) return;
+    if (followCam) return; // follow-cam owns the camera
     // Round the dedupe key to ~5m precision so the van's normal jitter doesn't
     // re-fire fitBounds on every poll. We still re-fit when something
     // meaningfully moves or a stop is added/removed.
@@ -430,7 +477,7 @@ export default function MapboxMap({
     const bounds = new mapboxgl.LngLatBounds();
     allPoints.forEach((p) => bounds.extend(p));
     map.fitBounds(bounds, { padding: fitPadding, maxZoom: fitMaxZoom, duration: 800 });
-  }, [allPoints, fitBounds, focusMode, fitPadding, fitMaxZoom]);
+  }, [allPoints, fitBounds, focusMode, fitPadding, fitMaxZoom, followCam]);
 
   // Long-press / right-click on the map → drop a pin at that point.
   // Mapbox's `contextmenu` event fires on long-press for touch devices and

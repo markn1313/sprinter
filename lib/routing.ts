@@ -1,12 +1,23 @@
 // Mapbox Directions API with driving-traffic profile (real-time traffic).
 // Falls back to OSRM if MAPBOX_TOKEN is not set.
 
+export interface RouteStep {
+  instruction: string; // e.g. "Take exit 39A toward Inglewood Blvd"
+  type: string; // 'turn' | 'merge' | 'fork' | 'on ramp' | 'off ramp' | 'roundabout' | 'arrive' | …
+  modifier?: string; // 'left' | 'right' | 'sharp left' | 'slight right' | 'straight' | …
+  distance_m: number; // meters from this maneuver to the NEXT one
+  duration_s: number;
+  location: [number, number]; // [lng, lat] of the maneuver point
+  street_name?: string; // road being entered after this maneuver
+}
+
 export interface RouteResult {
   polyline: string; // encoded polyline (precision 5)
   distance_m: number;
   duration_s: number;
   duration_in_traffic_s: number | null;
   geometry: { type: "LineString"; coordinates: [number, number][] };
+  steps: RouteStep[]; // empty array if not requested or unavailable
   source: "mapbox-traffic" | "osrm";
 }
 
@@ -31,12 +42,28 @@ export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> 
 async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteResult | null> {
   // Mapbox cap: 25 coordinates per request, fine for our use
   const coords = waypoints.map((p) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
-  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=false`;
+  // Request steps so we can render turn-by-turn maneuvers on the TV / Mark
+  // home cards. `language=en` keeps instructions in English.
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&language=en`;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
       console.warn("[routing] Mapbox failed", res.status, (await res.text()).slice(0, 200));
       return null;
+    }
+    interface MapboxStep {
+      maneuver: {
+        instruction: string;
+        type?: string;
+        modifier?: string;
+        location: [number, number];
+      };
+      distance: number;
+      duration: number;
+      name?: string;
+    }
+    interface MapboxLeg {
+      steps: MapboxStep[];
     }
     const data = (await res.json()) as {
       code: string;
@@ -45,16 +72,32 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
         duration: number;
         duration_typical?: number;
         geometry: { type: "LineString"; coordinates: [number, number][] };
+        legs?: MapboxLeg[];
       }>;
     };
     if (data.code !== "Ok" || !data.routes[0]) return null;
     const r = data.routes[0];
+    const steps: RouteStep[] = [];
+    for (const leg of r.legs ?? []) {
+      for (const s of leg.steps ?? []) {
+        steps.push({
+          instruction: s.maneuver.instruction,
+          type: s.maneuver.type ?? "",
+          modifier: s.maneuver.modifier,
+          distance_m: Math.round(s.distance),
+          duration_s: Math.round(s.duration),
+          location: s.maneuver.location,
+          street_name: s.name,
+        });
+      }
+    }
     return {
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
       duration_s: Math.round(r.duration),
-      duration_in_traffic_s: Math.round(r.duration), // driving-traffic profile is already traffic-adjusted
+      duration_in_traffic_s: Math.round(r.duration),
       geometry: r.geometry,
+      steps,
       source: "mapbox-traffic",
     };
   } catch (err) {
@@ -85,11 +128,41 @@ async function routeOsrm(waypoints: Waypoint[]): Promise<RouteResult | null> {
       duration_s: Math.round(r.duration),
       duration_in_traffic_s: null,
       geometry: r.geometry,
+      steps: [],
       source: "osrm",
     };
   } catch {
     return null;
   }
+}
+
+// Find the step we're currently in: the one whose maneuver point is closest
+// AHEAD of the van. We approximate by finding the nearest geometry vertex to
+// the van, then mapping it to the step that contains it.
+export function nextManeuver(
+  vanLng: number,
+  vanLat: number,
+  steps: RouteStep[],
+): { step: RouteStep; meters_to: number } | null {
+  if (steps.length === 0) return null;
+  // Find closest step location
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < steps.length; i++) {
+    const [sLng, sLat] = steps[i].location;
+    const d = haversine(vanLat, vanLng, sLat, sLng);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  if (best < 0) return null;
+  // The "next" maneuver is the one we haven't reached yet. If we're past the
+  // closest one (within 30m), step forward.
+  const nextIdx = bestDist < 30 && best + 1 < steps.length ? best + 1 : best;
+  const target = steps[nextIdx];
+  const distance = haversine(vanLat, vanLng, target.location[1], target.location[0]);
+  return { step: target, meters_to: distance };
 }
 
 export function projectAlongRoute(

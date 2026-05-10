@@ -87,6 +87,9 @@ export default function TvApp({ token }: { token: string }) {
           routeGlowWidth={28}
           vanIconSize={144}
           pinScale={2.8}
+          followCam={focus?.status === "onboard"}
+          followCamPitch={55}
+          followCamZoom={16}
         />
       </div>
 
@@ -99,6 +102,11 @@ export default function TvApp({ token }: { token: string }) {
           <div className="text-xs text-zinc-500">{dateStr}</div>
         </div>
       </div>
+
+      {/* Next maneuver — top-center, ONLY when onboard. Big GPS-style banner. */}
+      {focus?.status === "onboard" && eta?.next_maneuver && (
+        <ManeuverBanner maneuver={eta.next_maneuver} />
+      )}
 
       {/* Vitals — top-right. Range stacked over Speed (no separate fuel %
           chip — Mark only cares about how far it can go and how fast). */}
@@ -166,6 +174,58 @@ export default function TvApp({ token }: { token: string }) {
       )}
     </div>
   );
+}
+
+function ManeuverBanner({ maneuver }: { maneuver: { step: { instruction: string; type: string; modifier?: string; street_name?: string }; meters_to: number } }) {
+  const m = maneuver.step;
+  const arrow = maneuverArrow(m.type, m.modifier);
+  // Format distance like a real GPS: "0.3 mi" / "850 ft" / "2.4 mi"
+  const meters = maneuver.meters_to;
+  const dist = meters < 300
+    ? `${Math.max(50, Math.round(meters * 3.281 / 50) * 50)} ft`
+    : meters < 1609
+    ? `${(meters * 0.000621371).toFixed(1)} mi`
+    : `${(meters * 0.000621371).toFixed(1)} mi`;
+  const isClose = meters < 200;
+  return (
+    <div
+      className={`absolute left-1/2 top-8 z-30 -translate-x-1/2 flex items-center gap-5 rounded-2xl border bg-zinc-950 px-6 py-3 shadow-2xl transition-all ${
+        isClose ? "border-emerald-400 ring-4 ring-emerald-500/30 scale-105" : "border-zinc-800"
+      }`}
+    >
+      <div className={`text-6xl leading-none ${isClose ? "text-emerald-300" : "text-emerald-400"}`}>{arrow}</div>
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-4xl font-bold tabular-nums text-zinc-100">{dist}</span>
+          {m.street_name && (
+            <span className="truncate text-2xl text-zinc-300 max-w-[600px]">on {m.street_name}</span>
+          )}
+        </div>
+        <div className="mt-0.5 truncate text-xl text-zinc-300 max-w-[800px]">{m.instruction}</div>
+      </div>
+    </div>
+  );
+}
+
+// Map Mapbox maneuver type+modifier to a simple Unicode arrow. Could swap
+// for SVG icons later, but Unicode is bold and instantly readable on a TV.
+function maneuverArrow(type: string, modifier?: string): string {
+  if (type === "arrive") return "🏁";
+  if (type === "roundabout" || type === "rotary") return "⟲";
+  if (type === "uturn" || modifier === "uturn") return "↶";
+  switch (modifier) {
+    case "left":        return "←";
+    case "right":       return "→";
+    case "sharp left":  return "↰";
+    case "sharp right": return "↱";
+    case "slight left": return "↖";
+    case "slight right":return "↗";
+    case "straight":    return "↑";
+  }
+  if (type === "merge") return "⤵";
+  if (type === "on ramp") return "↗";
+  if (type === "off ramp") return "↘";
+  return "↑";
 }
 
 function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: string; unit: string; label: string }) {

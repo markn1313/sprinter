@@ -14,6 +14,19 @@ export interface EtaLeg {
   traffic_aware: boolean;
 }
 
+export interface ManeuverInfo {
+  step: {
+    instruction: string;
+    type: string;
+    modifier?: string;
+    distance_m: number;
+    duration_s: number;
+    location: [number, number];
+    street_name?: string;
+  };
+  meters_to: number;
+}
+
 export interface EtaData {
   eta_seconds: number | null;
   eta_minutes: number | null;
@@ -28,6 +41,7 @@ export interface EtaData {
   };
   to_next?: EtaLeg | null;
   to_final?: EtaLeg | null;
+  next_maneuver?: ManeuverInfo | null;
   traffic_aware: boolean;
 }
 
