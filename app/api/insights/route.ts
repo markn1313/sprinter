@@ -69,74 +69,57 @@ export async function GET(req: Request) {
     return Math.max(0, hi - lo);
   }
 
-  // For driving / idle / avg-speed we sample every Nth row to keep the
-  // payload reasonable. ~1000-row sample over a week is plenty resolution
-  // for these aggregates given a 6s polling cadence (~100k rows/week).
-  async function sampleRows(sinceIso: string, limit = 1500): Promise<VPRow[]> {
-    const { data } = await sb
-      .from("vehicle_positions")
-      .select("lat,lng,speed_mph,fuel_pct,mileage,ignition,recorded_at")
-      .eq("source", "bouncie")
-      .gte("recorded_at", sinceIso)
-      .order("recorded_at", { ascending: true })
-      .limit(limit);
-    return (data ?? []) as VPRow[];
+  // Direct count queries: each Bouncie row ≈ 5–6s of state.
+  // count(speed > 1) × pollInterval ≈ driving seconds — much more accurate
+  // than sampling a sparse window.
+  async function counts(sinceIso: string): Promise<{ moving: number; idle: number }> {
+    const [movingRes, idleRes] = await Promise.all([
+      sb
+        .from("vehicle_positions")
+        .select("*", { count: "exact", head: true })
+        .eq("source", "bouncie")
+        .gte("recorded_at", sinceIso)
+        .gt("speed_mph", 1),
+      sb
+        .from("vehicle_positions")
+        .select("*", { count: "exact", head: true })
+        .eq("source", "bouncie")
+        .gte("recorded_at", sinceIso)
+        .lte("speed_mph", 1)
+        .eq("ignition", true),
+    ]);
+    return { moving: movingRes.count ?? 0, idle: idleRes.count ?? 0 };
   }
 
-  const [todayMilesOdo, weekMilesOdo, todaySample, weekSample] = await Promise.all([
+  // Average speed: pull a capped sample of moving rows and average.
+  async function avgSpeedFor(sinceIso: string): Promise<number> {
+    const { data } = await sb
+      .from("vehicle_positions")
+      .select("speed_mph")
+      .eq("source", "bouncie")
+      .gte("recorded_at", sinceIso)
+      .gt("speed_mph", 1)
+      .limit(1000);
+    if (!data || data.length === 0) return 0;
+    const sum = (data as Array<{ speed_mph: number }>).reduce((a, r) => a + r.speed_mph, 0);
+    return sum / data.length;
+  }
+
+  const POLL_S = 6;
+  const [todayMilesOdo, weekMilesOdo, todayCounts, weekCounts, todayAvg, weekAvg] = await Promise.all([
     odometerDelta(todayStart),
     odometerDelta(weekStart),
-    sampleRows(todayStart, 800),
-    sampleRows(weekStart, 1500),
+    counts(todayStart),
+    counts(weekStart),
+    avgSpeedFor(todayStart),
+    avgSpeedFor(weekStart),
   ]);
 
-  const milesFromHaversine = (rows: VPRow[]): number => {
-    let total = 0;
-    for (let i = 1; i < rows.length; i++) {
-      const a = rows[i - 1];
-      const b = rows[i];
-      if (a.lat == null || a.lng == null || b.lat == null || b.lng == null) continue;
-      const seg = haversineMi(a.lat, a.lng, b.lat, b.lng);
-      if (seg < 2 && (b.speed_mph ?? 0) >= 1) total += seg;
-    }
-    return total;
-  };
-  const todayMiles = todayMilesOdo ?? milesFromHaversine(todaySample);
-  const weekMiles = weekMilesOdo ?? milesFromHaversine(weekSample);
-
-  // Driving / idle from the time-bucketed sample. Sample is sparse but the
-  // SUM of dt over moving samples * (sample_density_factor) is close enough
-  // for a dashboard. We just sum directly here — overestimates idle if rows
-  // are far apart, so we cap each gap at 5s before counting.
-  const driveAndIdleSeconds = (rows: VPRow[]): { driving_s: number; idle_s: number } => {
-    let drv = 0;
-    let idle = 0;
-    for (let i = 1; i < rows.length; i++) {
-      const dt = Math.min(
-        (new Date(rows[i].recorded_at).getTime() - new Date(rows[i - 1].recorded_at).getTime()) / 1000,
-        15,
-      );
-      if (dt <= 0) continue;
-      const moving = (rows[i].speed_mph ?? 0) > 1;
-      if (moving) drv += dt;
-      else if ((rows[i].ignition ?? false)) idle += dt;
-    }
-    // Density factor: extrapolate from sample to true elapsed. Sample
-    // covers (sample-rows × ~6s) seconds; window covers (lastTs-firstTs).
-    if (rows.length < 2) return { driving_s: 0, idle_s: 0 };
-    const sampleSec = (new Date(rows[rows.length - 1].recorded_at).getTime() - new Date(rows[0].recorded_at).getTime()) / 1000;
-    const samplePoints = rows.length;
-    const factor = sampleSec > 0 && samplePoints > 0 ? sampleSec / (samplePoints * 6) : 1;
-    return { driving_s: drv * Math.max(1, factor), idle_s: idle * Math.max(1, factor) };
-  };
-  const today = driveAndIdleSeconds(todaySample);
-  const week = driveAndIdleSeconds(weekSample);
-
-  const avgSpeed = (rows: VPRow[]): number => {
-    const moving = rows.filter((r) => (r.speed_mph ?? 0) > 1);
-    if (moving.length === 0) return 0;
-    return moving.reduce((s, r) => s + (r.speed_mph as number), 0) / moving.length;
-  };
+  const today = { driving_s: todayCounts.moving * POLL_S, idle_s: todayCounts.idle * POLL_S };
+  const week = { driving_s: weekCounts.moving * POLL_S, idle_s: weekCounts.idle * POLL_S };
+  const todayMiles = todayMilesOdo ?? 0;
+  const weekMiles = weekMilesOdo ?? 0;
+  const avgSpeed = (which: "today" | "week"): number => (which === "today" ? todayAvg : weekAvg);
 
   // Trip cost estimate. Sprinter ~ 18 mpg combined. Fuel cost ~ $5/gal CA.
   // Driver pay would be tracked separately; this is just fuel.
@@ -197,7 +180,7 @@ export async function GET(req: Request) {
       miles: +todayMiles.toFixed(1),
       driving_minutes: Math.round(today.driving_s / 60),
       idle_minutes: Math.round(today.idle_s / 60),
-      avg_speed_mph: +avgSpeed(todaySample).toFixed(1),
+      avg_speed_mph: +avgSpeed("today").toFixed(1),
       fuel_cost_dollars: fuelCost(todayMiles),
       trips_completed: completedToday,
     },
@@ -205,7 +188,7 @@ export async function GET(req: Request) {
       miles: +weekMiles.toFixed(1),
       driving_minutes: Math.round(week.driving_s / 60),
       idle_minutes: Math.round(week.idle_s / 60),
-      avg_speed_mph: +avgSpeed(weekSample).toFixed(1),
+      avg_speed_mph: +avgSpeed("week").toFixed(1),
       fuel_cost_dollars: fuelCost(weekMiles),
       trips_completed: completedWeek,
     },
