@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
+import { cancelOpenTrips } from "@/lib/single-trip";
 
 // One-tap "pick me up" — uses Mark's current GPS as pickup
 export async function POST(req: Request) {
@@ -24,6 +25,9 @@ export async function POST(req: Request) {
     | null;
 
   if (!body) return NextResponse.json({ error: "missing body" }, { status: 400 });
+
+  // Single-trip mode: tapping Pickup replaces any prior open trip.
+  await cancelOpenTrips(ctx.token);
 
   const sb = supabaseAdmin();
 

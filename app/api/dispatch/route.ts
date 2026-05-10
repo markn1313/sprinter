@@ -6,6 +6,7 @@ import { geocode } from "@/lib/geocode";
 import { route, Waypoint } from "@/lib/routing";
 import { getVanPosition } from "@/lib/bouncie";
 import { logTripEvent } from "@/lib/log";
+import { cancelOpenTrips } from "@/lib/single-trip";
 
 export async function POST(req: Request) {
   const auth = req.headers.get("authorization");
@@ -21,6 +22,11 @@ export async function POST(req: Request) {
   }
 
   const parsed = await parseDispatch(body.input);
+
+  // Single-trip mode: a new dispatch replaces any open trip so the focus
+  // selector only ever has one candidate. Avoids "ghost" trips hijacking
+  // the live map.
+  await cancelOpenTrips(ctx.token);
 
   // Geocode pickup + dropoff in parallel
   const [pickupGeo, dropoffGeo] = await Promise.all([
