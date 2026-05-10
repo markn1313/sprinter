@@ -65,16 +65,20 @@ export async function GET(req: Request) {
     let activeTrip: {
       id: string;
       status: string;
+      pickup_address: string | null;
       pickup_lat: number | null;
       pickup_lng: number | null;
       dropoff_lat: number | null;
       dropoff_lng: number | null;
     } | null = null;
     try {
+      // Includes `scheduled` so "Take me home" / Quick-Dispatch trips that
+      // never explicitly transitioned through dispatch can still get
+      // auto-advanced by movement (see below).
       const { data } = await supabaseAdmin()
         .from("trips")
-        .select("id,status,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
-        .in("status", ["dispatched", "at_pickup", "onboard", "at_dropoff"])
+        .select("id,status,pickup_address,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
+        .in("status", ["scheduled", "dispatched", "at_pickup", "onboard", "at_dropoff"])
         .order("scheduled_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -127,6 +131,33 @@ export async function GET(req: Request) {
               .eq("id", t.id)
               .eq("status", "onboard");
             logTripEvent({ trip_id: t.id, kind: "auto_at_dropoff", payload: { reason: "geofence" } });
+          }
+          // scheduled → onboard for "current-location" pickups where the van
+          // has clearly left pickup behind (>400m, moving). These are
+          // "Take me home" / Quick-Dispatch trips that never go through the
+          // explicit dispatch→at_pickup→onboard flow because Mark is already
+          // in the van. Without this they stay `scheduled` forever and the
+          // ETA route doubles back to the recorded pickup point.
+          if (
+            (t.status === "scheduled" || t.status === "dispatched") &&
+            t.pickup_address &&
+            /current\s+location|my\s+location|mark.?s\s+location/i.test(t.pickup_address) &&
+            t.pickup_lat != null &&
+            t.pickup_lng != null &&
+            (pos.speed_mph ?? 0) > 5 &&
+            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) > 400
+          ) {
+            await sb
+              .from("trips")
+              .update({
+                status: "onboard",
+                dispatched_at: new Date().toISOString(),
+                arrived_at_pickup_at: new Date().toISOString(),
+                onboard_at: new Date().toISOString(),
+              })
+              .eq("id", t.id)
+              .in("status", ["scheduled", "dispatched"]);
+            logTripEvent({ trip_id: t.id, kind: "auto_onboard", payload: { reason: "left current-location pickup" } });
           }
         } catch {
           // non-fatal

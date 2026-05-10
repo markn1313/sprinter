@@ -175,7 +175,29 @@ export async function GET(req: Request) {
   // - scheduled / dispatched / at_pickup → start with pickup (if not yet there), then stops, then dropoff
   // - onboard → skip pickup; stops + dropoff
   // - at_dropoff / complete → just dropoff
-  const includePickup = t.status === "scheduled" || t.status === "dispatched";
+  let includePickup = t.status === "scheduled" || t.status === "dispatched";
+
+  // "Take me home" / Quick-Dispatch / pick-me-up flows write pickup_address as
+  // the sentinel "My current location" with the van's lat/lng at dispatch.
+  // Mark is already in the van — there is no pickup leg to drive. The trip
+  // never auto-advances out of `scheduled`, so without this guard the route
+  // doubles back: van NOW → pickup (where van WAS at dispatch) → dropoff.
+  // Once the van has moved >400 m away from the recorded pickup point, drop
+  // pickup so the route, ETA, and map-fit reflect "current location → dropoff."
+  if (includePickup && t.pickup_lat != null && t.pickup_lng != null && t.pickup_address) {
+    const sentinel = /current\s+location|my\s+location|mark.?s\s+location/i.test(t.pickup_address);
+    if (sentinel) {
+      const R = 6_371_000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(t.pickup_lat - origin.lat);
+      const dLng = toRad(t.pickup_lng - origin.lng);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(origin.lat)) * Math.cos(toRad(t.pickup_lat)) * Math.sin(dLng / 2) ** 2;
+      const distM = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (distM > 400) includePickup = false;
+    }
+  }
   if (includePickup && t.pickup_lat != null && t.pickup_lng != null) {
     upcoming.push({ kind: "pickup", lat: t.pickup_lat, lng: t.pickup_lng, label: t.pickup_address ?? "Pickup" });
   }
