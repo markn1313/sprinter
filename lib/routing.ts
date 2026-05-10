@@ -55,7 +55,16 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
   // polyline can be rendered green/amber/red instead of one solid color.
   const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&annotations=congestion&language=en`;
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    // The pk.* Mapbox token is URL-allowlist-gated by Referer. Browser
+    // calls pass automatically; server-side fetches send no Referer and
+    // get 403 Forbidden — quietly falling back to OSRM with no traffic
+    // congestion data. Set the Referer to our production origin so the
+    // allowlist check passes for server-to-server calls too.
+    const referer = process.env.MAPBOX_REFERER ?? "https://sprinter-tau.vercel.app/";
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { Referer: referer },
+    });
     if (!res.ok) {
       console.warn("[routing] Mapbox failed", res.status, (await res.text()).slice(0, 200));
       return null;
