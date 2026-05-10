@@ -85,9 +85,13 @@ export default function MapboxMap({
   // Init
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    // Read at module-eval time too in case the inlined value got cached weirdly.
+    const token: string | undefined =
+      process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
+      (globalThis as { __MAPBOX_TOKEN__?: string }).__MAPBOX_TOKEN__ ||
+      undefined;
     if (!token) {
-      console.warn("NEXT_PUBLIC_MAPBOX_TOKEN missing");
+      console.warn("NEXT_PUBLIC_MAPBOX_TOKEN missing — map will be blank");
       return;
     }
     mapboxgl.accessToken = token;
