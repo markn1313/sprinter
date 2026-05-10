@@ -4,6 +4,7 @@ import { getVanPosition } from "@/lib/bouncie";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logVehiclePosition, logTripEvent } from "@/lib/log";
 import { deriveHeading } from "@/lib/bearing";
+import { fuseFromPhone } from "@/lib/fuse-position";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +30,25 @@ export async function GET(req: Request) {
 
   const pos = await getVanPosition();
 
+  // Bouncie's consumer tier reports every ~15–30s — at 55 mph that's a
+  // third of a mile of position lag. When Mark's or Dio's phone is in
+  // the van and reporting fresh GPS via /api/mark-location or
+  // /api/driver-location, we use that for lat/lng (still keeping
+  // Bouncie's vehicle-side speed/fuel/odometer). Fuser falls back to
+  // null when no fresh phone fix is close enough to the van.
+  if (pos.source === "bouncie" || pos.source === "bouncie_cached") {
+    const fused = await fuseFromPhone({ lat: pos.lat, lng: pos.lng });
+    if (fused) {
+      pos.lat = fused.lat;
+      pos.lng = fused.lng;
+      pos.updated_at = fused.reported_at;
+    }
+  }
+
   // Bouncie reports heading=0 on our tier. Compute a real bearing from the
   // last ~50m of vehicle_positions so the on-screen van icon points the
-  // direction the van is actually going.
+  // direction the van is actually going. Runs AFTER fusion so the bearing
+  // reflects the (possibly phone-overridden) current point.
   if (pos.source === "bouncie" || pos.source === "bouncie_cached") {
     const derived = await deriveHeading(pos.lat, pos.lng);
     if (derived != null) pos.heading = derived;

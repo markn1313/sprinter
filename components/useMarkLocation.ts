@@ -10,8 +10,9 @@ export interface MarkLocation {
   reported_at: string;
 }
 
-// Sends Mark's GPS to the server every 20s when enabled. Used for pickup-from-current-location
-// and Dio's app showing where Mark is in real time.
+// Sends Mark's GPS to the server. Throttled to 3s — frequent enough that
+// the server-side fuser in /api/position can prefer phone GPS over
+// Bouncie's 15–30s OBD cadence while Mark is in the van.
 export function useMarkGpsReporter(token: string, enabled: boolean) {
   const [last, setLast] = useState<MarkLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function useMarkGpsReporter(token: string, enabled: boolean) {
     const id = navigator.geolocation.watchPosition(
       async (pos) => {
         const now = Date.now();
-        if (now - lastSent < 15_000) return; // throttle
+        if (now - lastSent < 3_000) return; // throttle
         lastSent = now;
         const payload = {
           lat: pos.coords.latitude,
@@ -79,8 +80,10 @@ export function useMarkLocation(token: string, intervalMs = 15_000) {
   return loc;
 }
 
-// Driver's phone GPS reporter — Dio's app calls this so ETA routing originates
-// from him (not the van), accounting for his commute to wherever the van is.
+// Driver's phone GPS reporter — Dio's app calls this so ETA routing
+// originates from him (not the van) when he hasn't picked Mark up yet,
+// AND so the in-van /api/position fuser has a fresh fix to prefer over
+// Bouncie's lagged OBD reports while driving. Throttled to 3s.
 export function useDriverGpsReporter(token: string, enabled: boolean) {
   const [last, setLast] = useState<MarkLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +97,7 @@ export function useDriverGpsReporter(token: string, enabled: boolean) {
     const id = navigator.geolocation.watchPosition(
       async (pos) => {
         const now = Date.now();
-        if (now - lastSent < 15_000) return;
+        if (now - lastSent < 3_000) return;
         lastSent = now;
         const payload = {
           lat: pos.coords.latitude,
