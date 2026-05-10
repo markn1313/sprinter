@@ -87,9 +87,7 @@ export default function TvApp({ token }: { token: string }) {
           routeGlowWidth={28}
           vanIconSize={144}
           pinScale={2.8}
-          followCam={focus?.status === "onboard"}
-          followCamPitch={55}
-          followCamZoom={16}
+          followCam={false}
         />
       </div>
 
@@ -177,9 +175,25 @@ export default function TvApp({ token }: { token: string }) {
         );
       })()}
 
+      {/* Arrival celebration — when within ~150m of dropoff. Big, friendly,
+          one-line. Auto-disappears once trip status moves to at_dropoff /
+          complete because then `focus` flips to a different (or no) trip. */}
+      {focus?.status === "onboard" && eta?.to_final && eta.to_final.distance_miles < 0.15 && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-32 z-40 flex justify-center">
+          <div className="rounded-2xl border border-emerald-400 bg-emerald-950/95 px-8 py-4 shadow-2xl ring-4 ring-emerald-500/30 animate-pulse">
+            <div className="text-sm uppercase tracking-widest text-emerald-300 text-center">Arriving</div>
+            <div className="mt-1 text-3xl font-bold text-emerald-200 text-center">{eta.to_final.label}</div>
+          </div>
+        </div>
+      )}
+
       {!focus && (
-        <div className="absolute bottom-12 left-8 right-8 z-30 rounded-3xl border border-zinc-800 bg-zinc-950/80 px-12 py-10 text-center backdrop-blur shadow-2xl">
-          <div className="text-3xl font-semibold text-zinc-200">No active trip</div>
+        <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950 px-16 py-12 text-center shadow-2xl">
+            <div className="text-7xl">🚐</div>
+            <div className="mt-4 text-3xl font-semibold text-zinc-100">Sprinter ready</div>
+            <div className="mt-2 text-lg text-zinc-500">Waiting for the next dispatch</div>
+          </div>
         </div>
       )}
     </div>
