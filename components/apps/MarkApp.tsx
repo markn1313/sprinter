@@ -13,6 +13,7 @@ import PushToggle from "@/components/PushToggle";
 import InsightsCard from "@/components/InsightsCard";
 import QuickDispatchChips from "@/components/QuickDispatchChips";
 import ShareTripButton from "@/components/ShareTripButton";
+import WelcomeCard from "@/components/WelcomeCard";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
@@ -466,10 +467,20 @@ function MapTab({
         </div>
       )}
 
-      {/* No active trip — show smart quick-dispatch chips for top frequent
-          destinations. Tap any to dispatch a fresh trip from current GPS. */}
+      {/* No active trip — show smart welcome + quick-dispatch chips for top
+          frequent destinations. WelcomeCard surfaces a big "Take me home"
+          button when far from home base; chips below give other one-tap
+          options. */}
       {!live && (
-        <div className="absolute inset-x-3 bottom-3 z-30">
+        <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
+          <WelcomeCard
+            token={token}
+            vanLat={pos?.lat ?? null}
+            vanLng={pos?.lng ?? null}
+            myLat={myGps?.lat ?? null}
+            myLng={myGps?.lng ?? null}
+            onDispatched={refresh}
+          />
           <QuickDispatchChips token={token} onDispatched={refresh} />
         </div>
       )}
