@@ -3,6 +3,13 @@ import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
 import { cancelOpenTrips } from "@/lib/single-trip";
+import { reverseGeocode } from "@/lib/geocode";
+
+// Sentinel strings the client sends when the user taps a "pick me up here"
+// or "take me home" button — we reverse-geocode the lat/lng to a real
+// address before inserting the trip so history & the TV bottom strip don't
+// echo "My current location" forever.
+const SENTINEL_ADDRESSES = /^(my\s+current\s+location|my\s+location|mark.?s\s+location|current\s+location)$/i;
 
 // One-tap "pick me up" — uses Mark's current GPS as pickup
 export async function POST(req: Request) {
@@ -34,11 +41,25 @@ export async function POST(req: Request) {
   // Default scheduled time: now (immediate dispatch)
   const scheduledAt = body.scheduled_at ?? new Date().toISOString();
 
+  // Resolve pickup address. If the client sent a sentinel ("My current
+  // location" / "Mark's location" / etc) and we have lat/lng, reverse-
+  // geocode to get a real street address. Falls back to coords on failure.
+  let pickupAddress: string = body.address ?? "Mark's location";
+  if (
+    typeof body.lat === "number" &&
+    typeof body.lng === "number" &&
+    (!body.address || SENTINEL_ADDRESSES.test(body.address.trim()))
+  ) {
+    const real = await reverseGeocode(body.lat, body.lng);
+    if (real) pickupAddress = real;
+    else pickupAddress = `${body.lat.toFixed(5)}, ${body.lng.toFixed(5)}`;
+  }
+
   const { data: trip, error } = await sb
     .from("trips")
     .insert({
       passenger_name: "Mark",
-      pickup_address: body.address ?? "Mark's location",
+      pickup_address: pickupAddress,
       pickup_lat: body.lat ?? null,
       pickup_lng: body.lng ?? null,
       dropoff_address: body.dropoff_address ?? null,

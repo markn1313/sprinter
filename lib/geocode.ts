@@ -23,6 +23,29 @@ const SHORTHAND: Record<string, GeoPoint> = {
   "newport beach": HOME_FALLBACK,
 };
 
+// Coordinates → human-readable address. Used at dispatch time so trips
+// recorded from "current location" buttons get a real pickup_address
+// instead of the literal sentinel string.
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&namedetails=1&lat=${lat}&lon=${lng}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "SprinterOps/1.0 (mark@mnafinancial.com)" },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      display_name?: string;
+      name?: string;
+      address?: Record<string, string>;
+      class?: string;
+    };
+    return shortenAddress(data) || data.display_name || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function geocode(address: string | null | undefined): Promise<GeoPoint | null> {
   if (!address || !address.trim()) return null;
   const lower = address.trim().toLowerCase();
