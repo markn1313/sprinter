@@ -3,6 +3,7 @@ import { loadSession } from "@/lib/auth";
 import { getVanPosition } from "@/lib/bouncie";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logVehiclePosition, logTripEvent } from "@/lib/log";
+import { deriveHeading } from "@/lib/bearing";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,14 @@ export async function GET(req: Request) {
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const pos = await getVanPosition();
+
+  // Bouncie reports heading=0 on our tier. Compute a real bearing from the
+  // last ~50m of vehicle_positions so the on-screen van icon points the
+  // direction the van is actually going.
+  if (pos.source === "bouncie" || pos.source === "bouncie_cached") {
+    const derived = await deriveHeading(pos.lat, pos.lng);
+    if (derived != null) pos.heading = derived;
+  }
 
   // Also persist latest so realtime subscribers (other dashboards) get pushed
   try {

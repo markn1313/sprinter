@@ -475,13 +475,27 @@ export default function MapboxMap({
       .filter((m): m is mapboxgl.Marker => m !== null);
   }, [pins, pinScale]);
 
-  // Update polyline
+  // Update polyline. Guard against the race where this effect fires BEFORE
+  // the load handler creates the trip-route source. If the source isn't
+  // there yet, register a styledata listener (fires when a source is added)
+  // and retry. Previous logic silently bailed and never re-tried — meaning
+  // the route line could disappear if polyline arrived before load, or if
+  // isStyleLoaded() returned false after a style mutation.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    let cancelled = false;
     const apply = () => {
+      if (cancelled) return;
       const src = map.getSource("trip-route") as mapboxgl.GeoJSONSource | undefined;
-      if (!src) return;
+      if (!src) {
+        const onStyle = () => {
+          map.off("styledata", onStyle);
+          apply();
+        };
+        map.on("styledata", onStyle);
+        return;
+      }
       const coords = polyline ? decodePolyline(polyline) : [];
       src.setData({
         type: "Feature",
@@ -489,8 +503,10 @@ export default function MapboxMap({
         geometry: { type: "LineString", coordinates: coords },
       });
     };
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
+    apply();
+    return () => {
+      cancelled = true;
+    };
   }, [polyline]);
 
   // Live-update line widths when caller bumps them (e.g. TV mode).
