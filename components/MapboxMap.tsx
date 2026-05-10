@@ -355,38 +355,48 @@ export default function MapboxMap({
   }, [position, vanIconSize, followCam]);
 
   // Follow-cam: keep the map centered on the van, tilted, and rotated to
-  // the van's heading so the road ahead is always "up" — like a real GPS.
+  // the van's bearing so the road ahead is always "up" — like a real GPS.
+  // Reads bearing from the SAME ref the marker effect maintains; this
+  // effect runs AFTER it because it sits below in source order. Wrapped
+  // tightly in try/catch so any single bad call can't take the map down.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !followCam || !position) return;
-    const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+    let raf: number | null = null;
     const apply = () => {
       try {
-        map.easeTo({
+        if (!map.isStyleLoaded()) return; // wait for next position update
+        const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+        // jumpTo is synchronous and won't stack animations like easeTo can.
+        map.jumpTo({
           center: [position.lng, position.lat],
           bearing,
           pitch: followCamPitch,
           zoom: followCamZoom,
-          duration: 1200,
-          essential: true,
         });
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.warn("[MapboxMap] follow-cam apply failed", err);
       }
     };
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
+    // Defer to next frame so the marker effect runs first and the bearing
+    // ref is up-to-date before we read it.
+    raf = requestAnimationFrame(apply);
+    return () => {
+      if (raf != null) cancelAnimationFrame(raf);
+    };
   }, [position, followCam, followCamPitch, followCamZoom]);
 
-  // When follow-cam is turned OFF, reset pitch/bearing so subsequent fits
-  // give a true top-down view again.
+  // When follow-cam turns OFF, reset pitch/bearing so subsequent fitBounds
+  // gives a clean top-down view.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || followCam) return;
     try {
-      map.easeTo({ pitch: 0, bearing: 0, duration: 600, essential: true });
+      if (map.isStyleLoaded() && (map.getPitch() > 1 || Math.abs(map.getBearing()) > 1)) {
+        map.easeTo({ pitch: 0, bearing: 0, duration: 600, essential: true });
+      }
     } catch {}
-    fittedRef.current = ""; // force a re-fit on next allPoints change
+    fittedRef.current = "";
   }, [followCam]);
 
   // Update pin markers — defensively guard each step so a single bad pin
