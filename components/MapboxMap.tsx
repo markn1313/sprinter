@@ -113,7 +113,8 @@ export default function MapboxMap({
         : [-117.9298, 33.6189];
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: "mapbox://styles/mapbox/navigation-night-v1",
+      // Hybrid: satellite imagery with street labels/roads on top.
+      style: "mapbox://styles/mapbox/satellite-streets-v12",
       center,
       zoom: 13,
       attributionControl: false,
