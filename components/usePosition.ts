@@ -3,14 +3,13 @@
 import { useEffect, useState } from "react";
 import { VanPosition } from "@/lib/types";
 import { api } from "@/lib/api-client";
-import { useRealtime } from "@/components/useRealtime";
 
 type PosWithSource = VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" };
 
 // LocalStorage cache so reloads (and the TV display in particular) don't sit
-// blank for 6 seconds before the first /api/position poll returns. Stale by
-// a few seconds is ALWAYS better than "no current location" on a screen that
-// is physically inside the van — Bouncie's last reading is the truth.
+// blank before the first /api/position poll returns. Stale by a few seconds is
+// always better than "no current location" on a screen that's physically
+// inside the van.
 const CACHE_KEY = "sprinter:last-position";
 
 function readCache(): PosWithSource | null {
@@ -33,29 +32,47 @@ function writeCache(p: PosWithSource): void {
   }
 }
 
+// Round to ~5m precision so identical-with-GPS-noise readings don't trigger
+// re-renders that re-fit the map and jitter the marker.
+function near(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a == null || b == null) return a == b;
+  return Math.abs(a - b) < 0.00005; // ~5.5m of latitude
+}
+
 export function usePosition(token: string, intervalMs = 8000) {
   const [pos, setPos] = useState<PosWithSource | null>(() => readCache());
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
-    try {
-      const data = await api<PosWithSource>(token, "/api/position");
-      setPos(data);
-      writeCache(data);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let last: PosWithSource | null = readCache();
 
     const tick = async () => {
       if (cancelled) return;
-      await refresh();
-      if (!cancelled) timer = setTimeout(tick, intervalMs);
+      try {
+        const data = await api<PosWithSource>(token, "/api/position");
+        if (cancelled) return;
+        // Suppress the state update if the new reading is essentially the
+        // same as the last one — keeps the map marker still instead of
+        // ping-ponging on tiny GPS jitter.
+        const same =
+          last &&
+          near(data.lat, last.lat) &&
+          near(data.lng, last.lng) &&
+          data.fuel_pct === last.fuel_pct &&
+          Math.abs((data.speed_mph ?? 0) - (last.speed_mph ?? 0)) < 1;
+        if (!same) {
+          setPos(data);
+          writeCache(data);
+          last = data;
+        }
+        setError(null);
+      } catch (err) {
+        if (!cancelled) setError((err as Error).message);
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, intervalMs);
+      }
     };
 
     tick();
@@ -66,9 +83,10 @@ export function usePosition(token: string, intervalMs = 8000) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, intervalMs]);
 
-  // Push fresh position to every connected client whenever Bouncie writes a
-  // new row to van_position. Bypasses the 6–8s polling cadence.
-  useRealtime({ table: "van_position", onChange: refresh });
+  // Note: previously this hook also subscribed to van_position realtime, but
+  // that triggered a feedback loop — every /api/position write to the cache
+  // table fired a CDC event that triggered another /api/position fetch, and
+  // GPS noise made the marker ping-pong. Polling alone is fine here.
 
   return { pos, error };
 }
