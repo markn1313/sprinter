@@ -246,11 +246,14 @@ export default function MapboxMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update van marker — black Sprinter silhouette. Rotates to position.heading
-  // so it visibly points in the direction of travel. Bouncie reports heading
-  // 0–360 with 0 = north, 90 = east. Mapbox markers don't rotate natively, so
-  // we apply CSS transform via setRotation. The SVG itself faces RIGHT (east),
-  // so we offset by -90deg so heading=0 (north) points up.
+  // Track last position so we can derive a heading when Bouncie's heading
+  // field is missing or stuck at 0 (which is the case on the free Bouncie
+  // tier we have today).
+  const lastVanLngLatRef = useRef<{ lng: number; lat: number; bearing: number } | null>(null);
+
+  // Update van marker — black Sprinter silhouette. Rotates to derived bearing
+  // so it visibly points in the direction of travel. The SVG faces RIGHT
+  // (east) at rotation 0, so we offset by -90° so bearing 0 (north) = up.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !position) return;
@@ -284,10 +287,36 @@ export default function MapboxMap({
         }
       }
     }
-    // Rotate to heading. SVG faces east, so subtract 90° to align north=0.
-    const heading = typeof position.heading === "number" ? position.heading : 0;
+    // Derive bearing from successive lng/lat (since Bouncie's heading field
+    // is reported as 0 on our tier). Use Bouncie heading if it's non-zero;
+    // else compute from movement; else hold the last bearing so the icon
+    // doesn't snap to north when stopped at a light.
+    let bearing = lastVanLngLatRef.current?.bearing ?? 0;
+    const reported = typeof position.heading === "number" ? position.heading : 0;
+    if (reported > 0 && reported < 360) {
+      bearing = reported;
+    } else if (lastVanLngLatRef.current) {
+      const prev = lastVanLngLatRef.current;
+      const dLng = position.lng - prev.lng;
+      const dLat = position.lat - prev.lat;
+      // Only update bearing on meaningful movement (~10m) to avoid spinning
+      // at idle.
+      if (Math.abs(dLng) + Math.abs(dLat) > 0.0001) {
+        const φ1 = (prev.lat * Math.PI) / 180;
+        const φ2 = (position.lat * Math.PI) / 180;
+        const λ1 = (prev.lng * Math.PI) / 180;
+        const λ2 = (position.lng * Math.PI) / 180;
+        const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
+        const x =
+          Math.cos(φ1) * Math.sin(φ2) -
+          Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
+        bearing = (Math.atan2(y, x) * 180) / Math.PI;
+        if (bearing < 0) bearing += 360;
+      }
+    }
+    lastVanLngLatRef.current = { lng: position.lng, lat: position.lat, bearing };
     try {
-      vanMarkerRef.current.setRotation(heading - 90);
+      vanMarkerRef.current.setRotation(bearing - 90);
       vanMarkerRef.current.setRotationAlignment("map");
     } catch {
       // older mapbox-gl versions may lack setRotation
