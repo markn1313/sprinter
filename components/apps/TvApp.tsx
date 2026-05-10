@@ -108,6 +108,16 @@ export default function TvApp({ token }: { token: string }) {
         <ManeuverBanner maneuver={eta.next_maneuver} />
       )}
 
+      {/* Trip progress bar — appears below header when there's a live ETA.
+          Visualizes how much of the original distance has been driven. */}
+      {focus && eta?.to_final && (
+        <TripProgressBar
+          dispatchedAt={focus.dispatched_at ?? null}
+          arrivalMinutes={eta.to_final.eta_minutes}
+          etaMinutes={eta.eta_minutes ?? eta.to_final.eta_minutes}
+        />
+      )}
+
       {/* Vitals — top-right. Range stacked over Speed (no separate fuel %
           chip — Mark only cares about how far it can go and how fast). */}
       {pos && (
@@ -172,6 +182,29 @@ export default function TvApp({ token }: { token: string }) {
           <div className="text-3xl font-semibold text-zinc-200">No active trip</div>
         </div>
       )}
+    </div>
+  );
+}
+
+function TripProgressBar({ dispatchedAt, etaMinutes, arrivalMinutes }: { dispatchedAt: string | null; etaMinutes: number | null; arrivalMinutes: number }) {
+  // % progress = elapsed / (elapsed + remaining). Clamps to 0–100. If we
+  // don't have a dispatched_at we show 100 - eta% as best-effort.
+  const remaining = etaMinutes ?? arrivalMinutes;
+  let pct = 0;
+  if (dispatchedAt) {
+    const elapsed = Math.max(0, (Date.now() - new Date(dispatchedAt).getTime()) / 60000);
+    const total = elapsed + Math.max(0, remaining);
+    pct = total > 0 ? Math.min(100, Math.max(0, (elapsed / total) * 100)) : 0;
+  }
+  const close = remaining <= 1; // arrived / arriving
+  return (
+    <div className="absolute inset-x-0 bottom-[136px] z-30 px-8 pointer-events-none">
+      <div className="relative h-2 rounded-full bg-zinc-800/90 overflow-hidden">
+        <div
+          className={`absolute inset-y-0 left-0 transition-all duration-1000 ${close ? "bg-emerald-300 shadow-[0_0_24px_rgba(16,185,129,.7)]" : "bg-emerald-500"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }

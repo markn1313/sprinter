@@ -122,8 +122,11 @@ export default function MapboxMap({
         : [-117.9298, 33.6189];
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      // Hybrid: satellite imagery with street labels/roads on top.
-      style: "mapbox://styles/mapbox/satellite-streets-v12",
+      // Navigation-style dark theme. Satellite hybrid was attempted but the
+      // public token's scope doesn't include the mapbox.satellite raster
+      // tileset, so only labels rendered (no imagery). Nav-night looks great
+      // and is proven to work with this token.
+      style: "mapbox://styles/mapbox/navigation-night-v1",
       center,
       zoom: 13,
       attributionControl: false,
@@ -228,6 +231,10 @@ export default function MapboxMap({
       try {
         ro?.disconnect();
       } catch {}
+      if (vanAnimFrameRef.current != null) {
+        cancelAnimationFrame(vanAnimFrameRef.current);
+        vanAnimFrameRef.current = null;
+      }
       // Aggressively null out marker refs before tearing down the map so any
       // queued mutation observers don't try to read removed DOM nodes.
       try {
@@ -258,8 +265,13 @@ export default function MapboxMap({
 
   // Track last position so we can derive a heading when Bouncie's heading
   // field is missing or stuck at 0 (which is the case on the free Bouncie
-  // tier we have today).
+  // tier we have today). Also drives the smooth marker animation between
+  // the discrete /api/position polls — instead of teleporting every 6s, the
+  // marker eases from previous to current over ~6s, giving a buttery
+  // "this is the van moving" feel.
   const lastVanLngLatRef = useRef<{ lng: number; lat: number; bearing: number } | null>(null);
+  const animatedVanRef = useRef<{ lng: number; lat: number } | null>(null);
+  const vanAnimFrameRef = useRef<number | null>(null);
 
   // Update van marker — black Sprinter silhouette. Rotates to derived bearing
   // so it visibly points in the direction of travel. The SVG faces RIGHT
@@ -295,14 +307,37 @@ export default function MapboxMap({
       outer.style.cssText = `width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;`;
       const inner = document.createElement("div");
       inner.className = "sprinter-van-rotor";
-      inner.style.cssText = `width:${w}px;height:${h}px;transform-origin:center center;will-change:transform;transition:transform 250ms linear;display:flex;align-items:center;justify-content:center;`;
+      inner.style.cssText = `width:${w}px;height:${h}px;transform-origin:center center;will-change:transform;transition:transform 400ms linear;display:flex;align-items:center;justify-content:center;`;
       inner.innerHTML = overheadSvg;
       outer.appendChild(inner);
       vanMarkerRef.current = new mapboxgl.Marker({ element: outer, anchor: "center" })
         .setLngLat([position.lng, position.lat])
         .addTo(map);
+      animatedVanRef.current = { lng: position.lng, lat: position.lat };
     } else {
-      vanMarkerRef.current.setLngLat([position.lng, position.lat]);
+      // Smooth animation from currently-animated position → new target over
+      // ~5.5 s so it stays slightly behind the next poll. Linear ease keeps
+      // it visually steady.
+      const start = animatedVanRef.current ?? { lng: position.lng, lat: position.lat };
+      const end = { lng: position.lng, lat: position.lat };
+      const t0 = performance.now();
+      const dur = 5500;
+      if (vanAnimFrameRef.current != null) cancelAnimationFrame(vanAnimFrameRef.current);
+      const step = (now: number) => {
+        const t = Math.min(1, (now - t0) / dur);
+        const lng = start.lng + (end.lng - start.lng) * t;
+        const lat = start.lat + (end.lat - start.lat) * t;
+        animatedVanRef.current = { lng, lat };
+        try {
+          vanMarkerRef.current?.setLngLat([lng, lat]);
+        } catch {}
+        if (t < 1) {
+          vanAnimFrameRef.current = requestAnimationFrame(step);
+        } else {
+          vanAnimFrameRef.current = null;
+        }
+      };
+      vanAnimFrameRef.current = requestAnimationFrame(step);
       const outer = vanMarkerRef.current.getElement();
       if (outer && (outer.style.width !== `${w}px` || outer.style.height !== `${h}px`)) {
         outer.style.width = `${w}px`;
@@ -354,37 +389,39 @@ export default function MapboxMap({
     }
   }, [position, vanIconSize, followCam]);
 
-  // Follow-cam: keep the map centered on the van, tilted, and rotated to
-  // the van's bearing so the road ahead is always "up" — like a real GPS.
-  // Reads bearing from the SAME ref the marker effect maintains; this
-  // effect runs AFTER it because it sits below in source order. Wrapped
-  // tightly in try/catch so any single bad call can't take the map down.
+  // Follow-cam: each frame, snap the map's center to the animated van
+  // position so the camera tracks the smooth movement instead of teleporting
+  // every poll. Bearing comes from the marker effect's ref (= last computed
+  // direction of travel). Style + try/catch so any single bad frame can't
+  // take the map down.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !followCam || !position) return;
+    if (!map || !followCam) return;
     let raf: number | null = null;
-    const apply = () => {
+    const tick = () => {
       try {
-        if (!map.isStyleLoaded()) return; // wait for next position update
-        const bearing = lastVanLngLatRef.current?.bearing ?? 0;
-        // jumpTo is synchronous and won't stack animations like easeTo can.
-        map.jumpTo({
-          center: [position.lng, position.lat],
-          bearing,
-          pitch: followCamPitch,
-          zoom: followCamZoom,
-        });
+        if (map.isStyleLoaded()) {
+          const a = animatedVanRef.current;
+          if (a) {
+            const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+            map.jumpTo({
+              center: [a.lng, a.lat],
+              bearing,
+              pitch: followCamPitch,
+              zoom: followCamZoom,
+            });
+          }
+        }
       } catch (err) {
-        console.warn("[MapboxMap] follow-cam apply failed", err);
+        console.warn("[MapboxMap] follow-cam tick failed", err);
       }
+      raf = requestAnimationFrame(tick);
     };
-    // Defer to next frame so the marker effect runs first and the bearing
-    // ref is up-to-date before we read it.
-    raf = requestAnimationFrame(apply);
+    raf = requestAnimationFrame(tick);
     return () => {
       if (raf != null) cancelAnimationFrame(raf);
     };
-  }, [position, followCam, followCamPitch, followCamZoom]);
+  }, [followCam, followCamPitch, followCamZoom]);
 
   // When follow-cam turns OFF, reset pitch/bearing so subsequent fitBounds
   // gives a clean top-down view.

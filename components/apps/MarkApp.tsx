@@ -135,6 +135,25 @@ export default function MarkApp({ token, name }: { token: string; name: string }
   );
 }
 
+function markManeuverArrow(type: string, modifier?: string): string {
+  if (type === "arrive") return "🏁";
+  if (type === "roundabout" || type === "rotary") return "⟲";
+  if (type === "uturn" || modifier === "uturn") return "↶";
+  switch (modifier) {
+    case "left":        return "←";
+    case "right":       return "→";
+    case "sharp left":  return "↰";
+    case "sharp right": return "↱";
+    case "slight left": return "↖";
+    case "slight right":return "↗";
+    case "straight":    return "↑";
+  }
+  if (type === "merge") return "⤵";
+  if (type === "on ramp") return "↗";
+  if (type === "off ramp") return "↘";
+  return "↑";
+}
+
 function ScrollableTab({ children }: { children: React.ReactNode }) {
   return <div className="flex-1 overflow-y-auto">{children}</div>;
 }
@@ -331,14 +350,30 @@ function MapTab({
       {/* "Van is N min / X mi from me" — always visible when both GPS sources
           are reporting. Useful when waiting for pickup or knowing how close
           the van is on a walk-back. */}
-      {vanFromMe && (
-        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950/85 px-3 py-1.5 backdrop-blur shadow-xl">
+      {vanFromMe && live?.status !== "onboard" && (
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-1.5 shadow-xl">
           <div className="flex items-baseline gap-2 text-xs">
             <span className="text-zinc-500 uppercase tracking-wider">Van</span>
             <span className="font-mono text-base font-bold tabular-nums text-emerald-300">{vanFromMe.minutes}</span>
             <span className="text-zinc-400">min</span>
             <span className="ml-1 font-mono text-base font-semibold tabular-nums text-zinc-200">{vanFromMe.miles}</span>
             <span className="text-zinc-400">mi from you</span>
+          </div>
+        </div>
+      )}
+
+      {/* Turn-by-turn maneuver chip — only when onboard. Mirrors TV banner
+          but in phone-friendly compact form. */}
+      {live?.status === "onboard" && eta?.next_maneuver && (
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 flex items-center gap-2 rounded-2xl border border-emerald-700/50 bg-zinc-950 px-3 py-2 shadow-xl">
+          <span className="text-2xl leading-none text-emerald-300">{markManeuverArrow(eta.next_maneuver.step.type, eta.next_maneuver.step.modifier)}</span>
+          <div className="min-w-0">
+            <div className="font-mono text-sm font-bold tabular-nums text-zinc-100">
+              {eta.next_maneuver.meters_to < 300
+                ? `${Math.max(50, Math.round(eta.next_maneuver.meters_to * 3.281 / 50) * 50)} ft`
+                : `${(eta.next_maneuver.meters_to * 0.000621371).toFixed(1)} mi`}
+            </div>
+            <div className="truncate text-[11px] text-zinc-400 max-w-[260px]">{eta.next_maneuver.step.instruction}</div>
           </div>
         </div>
       )}
