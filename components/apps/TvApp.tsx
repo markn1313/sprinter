@@ -77,14 +77,17 @@ export default function TvApp({ token }: { token: string }) {
           className="h-full w-full"
           fitBounds={true}
           fitPadding={{
-            // Reserve space under the floating overlays so pins don't slide
-            // under the branding strip, vitals, or ETA cards.
-            top: 160,
-            bottom: eta && (eta.to_next || eta.to_final) ? 260 : 80,
-            left: 80,
-            right: 80,
+            // Tight padding so the remaining route fills the screen — but
+            // still clear of the branding strip, vitals, and ETA cards that
+            // float over the map.
+            top: 110,
+            bottom: eta && (eta.to_next || eta.to_final) ? 220 : 60,
+            left: 50,
+            right: 50,
           }}
-          fitMaxZoom={17}
+          fitMaxZoom={18}
+          routeLineWidth={12}
+          routeGlowWidth={28}
         />
       </div>
 

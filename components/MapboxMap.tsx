@@ -29,6 +29,10 @@ interface Props {
   fitBounds?: boolean;
   fitPadding?: number | { top: number; bottom: number; left: number; right: number };
   fitMaxZoom?: number;
+  // TV / large-screen mode renders a much thicker polyline so the route is
+  // legible from across the cabin. Defaults are tuned for phone screens.
+  routeLineWidth?: number;
+  routeGlowWidth?: number;
   focusMode?: FocusMode;
   focusKey?: number;
   dropPinMode?: boolean;
@@ -62,6 +66,8 @@ export default function MapboxMap({
   fitBounds = true,
   fitPadding = 60,
   fitMaxZoom = 14,
+  routeLineWidth = 4,
+  routeGlowWidth = 8,
   focusMode = "auto",
   focusKey = 0,
   dropPinMode = false,
@@ -143,9 +149,9 @@ export default function MapboxMap({
           source: "trip-route",
           paint: {
             "line-color": "#10b981",
-            "line-width": 8,
-            "line-opacity": 0.18,
-            "line-blur": 4,
+            "line-width": routeGlowWidth,
+            "line-opacity": 0.25,
+            "line-blur": 6,
           },
         });
         map.addLayer({
@@ -154,8 +160,8 @@ export default function MapboxMap({
           source: "trip-route",
           paint: {
             "line-color": "#10b981",
-            "line-width": 4,
-            "line-opacity": 0.95,
+            "line-width": routeLineWidth,
+            "line-opacity": 0.98,
           },
         });
       } catch (err) {
@@ -297,6 +303,26 @@ export default function MapboxMap({
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
   }, [polyline]);
+
+  // Live-update line widths when caller bumps them (e.g. TV mode).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      try {
+        if (map.getLayer("trip-route-line")) {
+          map.setPaintProperty("trip-route-line", "line-width", routeLineWidth);
+        }
+        if (map.getLayer("trip-route-glow")) {
+          map.setPaintProperty("trip-route-glow", "line-width", routeGlowWidth);
+        }
+      } catch {
+        /* layers not ready yet */
+      }
+    };
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);
+  }, [routeLineWidth, routeGlowWidth]);
 
   // Auto-fit bounds (only in "auto" mode)
   const allPoints = useMemo<[number, number][]>(() => {
