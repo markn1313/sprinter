@@ -70,6 +70,62 @@ export async function POST(
   const newStatus = NEXT_STATUS[action];
   logTripEvent({ trip_id: id, kind: "status:" + newStatus, actor_token: ctx.token });
 
+  // Cabin pre-set: when a trip transitions to `onboard`, look up the
+  // passenger's saved climate prefs (warmer/cooler/fan delta accumulator)
+  // and fire matching cabin requests so Dio sees their banner immediately.
+  // No-op if no prefs saved yet — the prefs build up automatically as the
+  // passenger taps cabin buttons over time.
+  if (newStatus === "onboard") {
+    void (async () => {
+      try {
+        const sb = supabaseAdmin();
+        const { data: trip } = await sb
+          .from("trips")
+          .select("passenger_link_token")
+          .eq("id", id)
+          .maybeSingle();
+        const pToken = trip?.passenger_link_token as string | null | undefined;
+        if (!pToken) return;
+        const { data: prefs } = await sb
+          .from("passenger_prefs")
+          .select("preferred_temp_f,preferred_fan,music_pref")
+          .eq("token", pToken)
+          .maybeSingle();
+        if (!prefs) return;
+        // Translate accumulated prefs into kind hints. We use a baseline of
+        // 70°F / fan=2; deltas above/below trigger warmer/cooler/fan
+        // suggestions. Single fire per onboard event so we don't spam.
+        const requests: Array<{ kind: string; value?: string }> = [];
+        const temp = (prefs.preferred_temp_f as number | null) ?? 70;
+        const fan = (prefs.preferred_fan as number | null) ?? 2;
+        if (temp >= 73) requests.push({ kind: "warmer", value: `target ${temp}°F` });
+        else if (temp <= 67) requests.push({ kind: "cooler", value: `target ${temp}°F` });
+        if (fan >= 4) requests.push({ kind: "fan_up", value: `target fan ${fan}` });
+        else if (fan <= 1) requests.push({ kind: "fan_down", value: `target fan ${fan}` });
+        if ((prefs.music_pref as string | null) === "music") requests.push({ kind: "music" });
+        if ((prefs.music_pref as string | null) === "quiet") requests.push({ kind: "quiet" });
+        for (const r of requests) {
+          await sb.from("cabin_requests").insert({
+            kind: r.kind,
+            value: r.value ?? null,
+            trip_id: id,
+            requested_by: pToken,
+          });
+        }
+        if (requests.length > 0) {
+          logTripEvent({
+            trip_id: id,
+            kind: "cabin_preset",
+            actor_token: ctx.token,
+            payload: { auto_fired: requests.map((r) => r.kind) },
+          });
+        }
+      } catch {
+        // pre-set is best-effort; never block the action
+      }
+    })();
+  }
+
   // Fire-and-forget push notifications based on the new status. Mark
   // initiated `dispatched` himself so we skip pushing him on that one.
   void (async () => {

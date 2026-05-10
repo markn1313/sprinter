@@ -14,6 +14,8 @@ import InsightsCard from "@/components/InsightsCard";
 import QuickDispatchChips from "@/components/QuickDispatchChips";
 import ShareTripButton from "@/components/ShareTripButton";
 import WelcomeCard from "@/components/WelcomeCard";
+import TripRecapCard from "@/components/TripRecapCard";
+import VoiceCabin from "@/components/VoiceCabin";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
@@ -467,12 +469,10 @@ function MapTab({
         </div>
       )}
 
-      {/* No active trip — show smart welcome + quick-dispatch chips for top
-          frequent destinations. WelcomeCard surfaces a big "Take me home"
-          button when far from home base; chips below give other one-tap
-          options. */}
+      {/* No active trip — recent trip recap + welcome + quick-dispatch */}
       {!live && (
         <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
+          <TripRecapCard token={token} />
           <WelcomeCard
             token={token}
             vanLat={pos?.lat ?? null}
@@ -482,6 +482,13 @@ function MapTab({
             onDispatched={refresh}
           />
           <QuickDispatchChips token={token} onDispatched={refresh} />
+        </div>
+      )}
+
+      {/* Floating voice cabin button — hold to speak. Live trip only. */}
+      {live && (
+        <div className="absolute right-3 bottom-24 z-30">
+          <VoiceCabin token={token} tripId={live.id} />
         </div>
       )}
       {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar branch
