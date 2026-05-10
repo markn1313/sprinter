@@ -258,24 +258,36 @@ export default function MapboxMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !position) return;
+    // Top-down (overhead) Sprinter — viewBox 36 wide × 64 tall. The front of
+    // the van faces UP at rotation 0, so we rotate by the bearing directly
+    // (no offset). Width = vanIconSize, height keeps aspect ratio.
     const w = vanIconSize;
-    const h = Math.round(vanIconSize * (20 / 36));
+    const h = Math.round((vanIconSize * 64) / 36);
+    const overheadSvg = `
+      <svg width="${w}" height="${h}" viewBox="0 0 36 64" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 5px rgba(0,0,0,.75));overflow:visible;">
+        <!-- Side mirrors -->
+        <ellipse cx="3" cy="13" rx="2.6" ry="1.4" fill="#0a0a0a" stroke="#fff" stroke-width="0.6"/>
+        <ellipse cx="33" cy="13" rx="2.6" ry="1.4" fill="#0a0a0a" stroke="#fff" stroke-width="0.6"/>
+        <!-- Body -->
+        <rect x="5" y="4" width="26" height="56" rx="5" fill="#0a0a0a" stroke="#ffffff" stroke-width="1.3"/>
+        <!-- Hood line -->
+        <line x1="6.5" y1="11" x2="29.5" y2="11" stroke="#ffffff" stroke-width="0.5" opacity="0.45"/>
+        <!-- Windshield (front, near top) -->
+        <path d="M 8 12 L 28 12 L 30 19 L 6 19 Z" fill="#60a5fa" opacity="0.65"/>
+        <!-- Roof centerline -->
+        <line x1="18" y1="22" x2="18" y2="55" stroke="#3b3b3b" stroke-width="0.6" opacity="0.55"/>
+        <!-- Rear door split -->
+        <line x1="6" y1="55" x2="30" y2="55" stroke="#ffffff" stroke-width="0.5" opacity="0.45"/>
+        <!-- Direction arrow at the front -->
+        <path d="M 14 5 L 18 1.5 L 22 5 Z" fill="#10b981" stroke="#ffffff" stroke-width="0.6"/>
+      </svg>`;
     if (!vanMarkerRef.current) {
-      // Outer wrapper: Mapbox controls its translate. Inner div: we control
-      // rotation. Keeps Mapbox's positioning untouched.
       const outer = document.createElement("div");
-      outer.style.cssText = `width:${w}px;height:${w}px;display:flex;align-items:center;justify-content:center;`;
+      outer.style.cssText = `width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;`;
       const inner = document.createElement("div");
       inner.className = "sprinter-van-rotor";
       inner.style.cssText = `width:${w}px;height:${h}px;transform-origin:center center;will-change:transform;transition:transform 250ms linear;display:flex;align-items:center;justify-content:center;`;
-      inner.innerHTML = `
-        <svg width="${w}" height="${h}" viewBox="0 0 64 36" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));overflow:visible;">
-          <path d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.4"/>
-          <path d="M40 8 L48 10 L56 16 L40 16 Z" fill="#3b3b3b"/>
-          <rect x="14" y="10" width="22" height="6" rx="1" fill="#3b3b3b"/>
-          <circle cx="16" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
-          <circle cx="48" cy="26" r="3.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.8"/>
-        </svg>`;
+      inner.innerHTML = overheadSvg;
       outer.appendChild(inner);
       vanMarkerRef.current = new mapboxgl.Marker({ element: outer, anchor: "center" })
         .setLngLat([position.lng, position.lat])
@@ -283,18 +295,14 @@ export default function MapboxMap({
     } else {
       vanMarkerRef.current.setLngLat([position.lng, position.lat]);
       const outer = vanMarkerRef.current.getElement();
-      if (outer && outer.style.width !== `${w}px`) {
+      if (outer && (outer.style.width !== `${w}px` || outer.style.height !== `${h}px`)) {
         outer.style.width = `${w}px`;
-        outer.style.height = `${w}px`;
+        outer.style.height = `${h}px`;
         const inner = outer.querySelector(".sprinter-van-rotor") as HTMLElement | null;
         if (inner) {
           inner.style.width = `${w}px`;
           inner.style.height = `${h}px`;
-          const svg = inner.querySelector("svg");
-          if (svg) {
-            svg.setAttribute("width", String(w));
-            svg.setAttribute("height", String(h));
-          }
+          inner.innerHTML = overheadSvg;
         }
       }
     }
@@ -326,12 +334,12 @@ export default function MapboxMap({
       }
     }
     lastVanLngLatRef.current = { lng: position.lng, lat: position.lat, bearing };
-    // Apply rotation to the inner div (SVG natively faces RIGHT, so subtract
-    // 90° so bearing 0/north points up).
+    // Overhead SVG natively faces UP (north) at rotation 0, so we rotate by
+    // the bearing directly with no offset.
     const outer = vanMarkerRef.current.getElement();
     const inner = outer?.querySelector(".sprinter-van-rotor") as HTMLElement | null;
     if (inner) {
-      inner.style.transform = `rotate(${bearing - 90}deg)`;
+      inner.style.transform = `rotate(${bearing}deg)`;
     }
   }, [position, vanIconSize]);
 
