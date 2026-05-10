@@ -119,28 +119,36 @@ export async function GET(req: Request) {
   ).length;
   const completedWeek = tripRows.filter((t) => t.completed_at).length;
 
-  // Top destinations from trip history (last ~30 days for stability) — return
-  // address + count + last-used. Uses dropoff_address. Skipping null/unknown.
+  // Top destinations from trip history. Combine PICKUP + DROPOFF addresses
+  // because a frequent pickup is usually "home" — and we want it to be one
+  // tap away when Mark is OUT and wants to go back. Filter "current
+  // location" / "my location" sentinel pickups (those carry no info).
   const month = new Date(now - 30 * 86400_000).toISOString();
-  const { data: destTrips } = await sb
+  const { data: allTrips } = await sb
     .from("trips")
-    .select("dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
+    .select("pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
     .gte("scheduled_at", month)
-    .not("dropoff_address", "is", null)
     .order("scheduled_at", { ascending: false })
-    .limit(200);
+    .limit(300);
 
   const destBuckets = new Map<string, { address: string; lat: number | null; lng: number | null; count: number; last: string }>();
-  for (const t of (destTrips ?? []) as Array<{ dropoff_address: string; dropoff_lat: number | null; dropoff_lng: number | null; scheduled_at: string }>) {
-    const addr = t.dropoff_address.trim();
-    if (!addr) continue;
-    const key = addr.toLowerCase();
-    const existing = destBuckets.get(key);
-    if (existing) {
-      existing.count += 1;
-      if (t.scheduled_at > existing.last) existing.last = t.scheduled_at;
-    } else {
-      destBuckets.set(key, { address: addr, lat: t.dropoff_lat, lng: t.dropoff_lng, count: 1, last: t.scheduled_at });
+  const skipRe = /current\s+location|my\s+location|^pickup$/i;
+  for (const t of (allTrips ?? []) as Array<{ pickup_address: string | null; pickup_lat: number | null; pickup_lng: number | null; dropoff_address: string | null; dropoff_lat: number | null; dropoff_lng: number | null; scheduled_at: string }>) {
+    for (const [addr, lat, lng] of [
+      [t.dropoff_address, t.dropoff_lat, t.dropoff_lng] as const,
+      [t.pickup_address, t.pickup_lat, t.pickup_lng] as const,
+    ]) {
+      if (!addr || skipRe.test(addr)) continue;
+      const trimmed = addr.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      const existing = destBuckets.get(key);
+      if (existing) {
+        existing.count += 1;
+        if (t.scheduled_at > existing.last) existing.last = t.scheduled_at;
+      } else {
+        destBuckets.set(key, { address: trimmed, lat, lng, count: 1, last: t.scheduled_at });
+      }
     }
   }
   const topDestinations = Array.from(destBuckets.values())
