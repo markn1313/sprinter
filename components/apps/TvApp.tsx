@@ -25,7 +25,22 @@ export default function TvApp({ token }: { token: string }) {
 
   const stopsArr = ((focus as unknown as { stops?: Array<{ lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
 
+  // The TV map should always reflect the REMAINING route: van → next stop →
+  // ... → final destination. Once Mark is onboard, the pickup leg is in the
+  // past and shouldn't be drawn or padded into the auto-fit bounds.
+  // /api/eta already computes the remaining waypoints based on trip status
+  // (it strips pickup once dispatched onboard, etc), so we mirror that.
+  const upcoming = (eta as unknown as { upcoming?: Array<{ kind: "pickup" | "stop" | "dropoff"; lat: number; lng: number; label: string }> })?.upcoming;
+
   const pins = useMemo<MapPin[]>(() => {
+    if (upcoming && upcoming.length > 0) {
+      let stopIdx = 0;
+      return upcoming.map((w) => {
+        const idx = w.kind === "stop" ? ++stopIdx : undefined;
+        return { kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}) };
+      });
+    }
+    // Fallback while ETA hasn't loaded yet — show whatever the trip declares.
     const out: MapPin[] = [];
     if (focus?.pickup_lat != null && focus.pickup_lng != null)
       out.push({ kind: "pickup", lat: focus.pickup_lat, lng: focus.pickup_lng, label: focus.pickup_address ?? undefined });
@@ -35,9 +50,12 @@ export default function TvApp({ token }: { token: string }) {
       if (s.lat != null && s.lng != null) out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
     });
     return out;
-  }, [focus, stopsArr]);
+  }, [upcoming, focus, stopsArr]);
 
-  const polyline = (focus as unknown as { route_polyline?: string })?.route_polyline ?? eta?.polyline ?? null;
+  // Live ETA polyline traces the REMAINING route from the van's current
+  // position through what's left. Only fall back to the saved
+  // route_polyline (computed at dispatch) before ETA arrives.
+  const polyline = eta?.polyline ?? (focus as unknown as { route_polyline?: string })?.route_polyline ?? null;
 
   // Live wall clock (PT) — small touch
   const [now, setNow] = useState(() => new Date());
