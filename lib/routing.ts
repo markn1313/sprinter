@@ -11,6 +11,12 @@ export interface RouteStep {
   street_name?: string; // road being entered after this maneuver
 }
 
+// Per-segment congestion. Length = coordinates.length - 1, one entry per
+// LineString segment between consecutive points. Mapbox returns
+// "low" | "moderate" | "heavy" | "severe" | "unknown". OSRM doesn't
+// provide congestion so this is undefined for the fallback path.
+export type CongestionLevel = "low" | "moderate" | "heavy" | "severe" | "unknown";
+
 export interface RouteResult {
   polyline: string; // encoded polyline (precision 5)
   distance_m: number;
@@ -18,6 +24,7 @@ export interface RouteResult {
   duration_in_traffic_s: number | null;
   geometry: { type: "LineString"; coordinates: [number, number][] };
   steps: RouteStep[]; // empty array if not requested or unavailable
+  congestion?: CongestionLevel[];
   source: "mapbox-traffic" | "osrm";
 }
 
@@ -44,7 +51,9 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
   const coords = waypoints.map((p) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
   // Request steps so we can render turn-by-turn maneuvers on the TV / Mark
   // home cards. `language=en` keeps instructions in English.
-  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&language=en`;
+  // `annotations=congestion` adds a per-segment congestion level so the route
+  // polyline can be rendered green/amber/red instead of one solid color.
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&annotations=congestion&language=en`;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
@@ -64,6 +73,7 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
     }
     interface MapboxLeg {
       steps: MapboxStep[];
+      annotation?: { congestion?: string[] };
     }
     const data = (await res.json()) as {
       code: string;
@@ -78,6 +88,11 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
     if (data.code !== "Ok" || !data.routes[0]) return null;
     const r = data.routes[0];
     const steps: RouteStep[] = [];
+    // Concatenate per-leg congestion arrays. Mapbox returns one entry per
+    // segment (between consecutive geometry points), so the total length
+    // equals coordinates.length - 1 across all legs.
+    const congestion: CongestionLevel[] = [];
+    const ALLOWED: CongestionLevel[] = ["low", "moderate", "heavy", "severe", "unknown"];
     for (const leg of r.legs ?? []) {
       for (const s of leg.steps ?? []) {
         steps.push({
@@ -90,6 +105,13 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
           street_name: s.name,
         });
       }
+      if (leg.annotation?.congestion) {
+        for (const c of leg.annotation.congestion) {
+          congestion.push(
+            (ALLOWED.includes(c as CongestionLevel) ? c : "unknown") as CongestionLevel,
+          );
+        }
+      }
     }
     return {
       polyline: encodePolyline(r.geometry.coordinates),
@@ -98,6 +120,7 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
       duration_in_traffic_s: Math.round(r.duration),
       geometry: r.geometry,
       steps,
+      congestion: congestion.length > 0 ? congestion : undefined,
       source: "mapbox-traffic",
     };
   } catch (err) {

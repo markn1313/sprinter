@@ -56,6 +56,7 @@ export default function TvApp({ token }: { token: string }) {
   // position through what's left. Only fall back to the saved
   // route_polyline (computed at dispatch) before ETA arrives.
   const polyline = eta?.polyline ?? (focus as unknown as { route_polyline?: string })?.route_polyline ?? null;
+  const congestion = eta?.congestion ?? null;
 
   // Live wall clock (PT) — small touch
   const [now, setNow] = useState(() => new Date());
@@ -74,6 +75,7 @@ export default function TvApp({ token }: { token: string }) {
           position={pos}
           pins={pins}
           polyline={polyline}
+          congestion={congestion}
           className="h-full w-full"
           fitBounds={true}
           fitPadding={{

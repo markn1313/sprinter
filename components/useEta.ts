@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 import { useRealtime } from "@/components/useRealtime";
 
+export type CongestionLevel = "low" | "moderate" | "heavy" | "severe" | "unknown";
+
 export interface EtaLeg {
   kind: "pickup" | "stop" | "dropoff";
   label: string;
@@ -11,6 +13,7 @@ export interface EtaLeg {
   eta_minutes: number;
   distance_miles: number;
   polyline: string;
+  congestion?: CongestionLevel[] | null;
   traffic_aware: boolean;
 }
 
@@ -32,6 +35,7 @@ export interface EtaData {
   eta_minutes: number | null;
   distance_miles: number | null;
   polyline: string | null;
+  congestion?: CongestionLevel[] | null;
   van: {
     lat: number;
     lng: number;

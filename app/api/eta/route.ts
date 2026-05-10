@@ -86,6 +86,7 @@ export async function POST(req: Request) {
           eta_minutes: Math.round(rNext.duration_s / 60),
           distance_miles: +(rNext.distance_m / 1609.34).toFixed(1),
           polyline: rNext.polyline,
+          congestion: rNext.congestion ?? null,
           traffic_aware: rNext.source === "mapbox-traffic",
         }
       : null,
@@ -97,6 +98,7 @@ export async function POST(req: Request) {
           eta_minutes: Math.round(rFinal.duration_s / 60),
           distance_miles: +(rFinal.distance_m / 1609.34).toFixed(1),
           polyline: rFinal.polyline,
+          congestion: rFinal.congestion ?? null,
           traffic_aware: rFinal.source === "mapbox-traffic",
         }
       : null,
@@ -104,6 +106,7 @@ export async function POST(req: Request) {
     eta_seconds: rNext ? rNext.duration_s : null,
     distance_miles: rNext ? +(rNext.distance_m / 1609.34).toFixed(1) : null,
     polyline: rFinal?.polyline ?? rNext?.polyline ?? null,
+    congestion: rFinal?.congestion ?? rNext?.congestion ?? null,
     next_maneuver: rFinal?.steps ? nextManeuver(origin.lng, origin.lat, rFinal.steps) : null,
     traffic_aware: (rNext?.source === "mapbox-traffic") || (rFinal?.source === "mapbox-traffic"),
   });
@@ -236,6 +239,7 @@ export async function GET(req: Request) {
           distance_meters: rNext.distance_m,
           distance_miles: +(rNext.distance_m / 1609.34).toFixed(1),
           polyline: rNext.polyline,
+          congestion: rNext.congestion ?? null,
           traffic_aware: rNext.source === "mapbox-traffic",
         }
       : null,
@@ -248,6 +252,7 @@ export async function GET(req: Request) {
           distance_meters: rFinal.distance_m,
           distance_miles: +(rFinal.distance_m / 1609.34).toFixed(1),
           polyline: rFinal.polyline,
+          congestion: rFinal.congestion ?? null,
           traffic_aware: rFinal.source === "mapbox-traffic",
         }
       : null,
@@ -256,6 +261,7 @@ export async function GET(req: Request) {
     eta_seconds: rNext ? rNext.duration_s : null,
     distance_miles: rNext ? +(rNext.distance_m / 1609.34).toFixed(1) : null,
     polyline: rFinal?.polyline ?? rNext?.polyline ?? null,
+    congestion: rFinal?.congestion ?? rNext?.congestion ?? null,
     next_maneuver: rFinal?.steps ? nextManeuver(origin.lng, origin.lat, rFinal.steps) : null,
     traffic_aware: (rNext?.source === "mapbox-traffic") || (rFinal?.source === "mapbox-traffic"),
   });

@@ -25,6 +25,11 @@ interface Props {
   position: (VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" }) | null;
   pins?: MapPin[];
   polyline?: string | null;
+  // Per-segment congestion levels matching `polyline`. Length must equal
+  // (decoded coords).length - 1. When provided, the route line is colored
+  // green / amber / orange / red instead of solid emerald. When absent the
+  // route falls back to a single-color emerald line.
+  congestion?: ("low" | "moderate" | "heavy" | "severe" | "unknown")[] | null;
   className?: string;
   fitBounds?: boolean;
   fitPadding?: number | { top: number; bottom: number; left: number; right: number };
@@ -77,6 +82,7 @@ export default function MapboxMap({
   position,
   pins = [],
   polyline,
+  congestion,
   className,
   fitBounds = true,
   fitPadding = 60,
@@ -176,17 +182,35 @@ export default function MapboxMap({
       }
 
       // Trip-route polyline — must always be added even if traffic above failed.
+      // The source is a FeatureCollection so the polyline can be sliced into
+      // per-segment features each carrying a `congestion` property; the line
+      // layer's `line-color` then picks green / amber / orange / red per
+      // segment. When no congestion data is available it falls through to
+      // emerald.
       try {
         map.addSource("trip-route", {
           type: "geojson",
-          data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [] } },
+          data: { type: "FeatureCollection", features: [] },
         });
+        const congestionColor: mapboxgl.ExpressionSpecification = [
+          "match",
+          ["coalesce", ["get", "congestion"], "low"],
+          "low",
+          "#10b981",
+          "moderate",
+          "#f59e0b",
+          "heavy",
+          "#ef4444",
+          "severe",
+          "#7f1d1d",
+          "#10b981",
+        ];
         map.addLayer({
           id: "trip-route-glow",
           type: "line",
           source: "trip-route",
           paint: {
-            "line-color": "#10b981",
+            "line-color": congestionColor,
             "line-width": routeGlowWidth,
             "line-opacity": 0.25,
             "line-blur": 6,
@@ -197,7 +221,7 @@ export default function MapboxMap({
           type: "line",
           source: "trip-route",
           paint: {
-            "line-color": "#10b981",
+            "line-color": congestionColor,
             "line-width": routeLineWidth,
             "line-opacity": 0.98,
           },
@@ -481,6 +505,12 @@ export default function MapboxMap({
   // and retry. Previous logic silently bailed and never re-tried — meaning
   // the route line could disappear if polyline arrived before load, or if
   // isStyleLoaded() returned false after a style mutation.
+  //
+  // When `congestion` is provided and matches the expected length, the line
+  // is split into per-segment features each tagged with its congestion level,
+  // so the layer's data-driven `line-color` paints green / amber / red along
+  // the route. No congestion = single-feature line that falls through to the
+  // expression's default green.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -497,17 +527,34 @@ export default function MapboxMap({
         return;
       }
       const coords = polyline ? decodePolyline(polyline) : [];
-      src.setData({
-        type: "Feature",
-        properties: {},
-        geometry: { type: "LineString", coordinates: coords },
-      });
+      const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+      if (coords.length >= 2) {
+        if (congestion && congestion.length === coords.length - 1) {
+          for (let i = 0; i < coords.length - 1; i++) {
+            features.push({
+              type: "Feature",
+              properties: { congestion: congestion[i] },
+              geometry: {
+                type: "LineString",
+                coordinates: [coords[i], coords[i + 1]],
+              },
+            });
+          }
+        } else {
+          features.push({
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: coords },
+          });
+        }
+      }
+      src.setData({ type: "FeatureCollection", features });
     };
     apply();
     return () => {
       cancelled = true;
     };
-  }, [polyline]);
+  }, [polyline, congestion]);
 
   // Live-update line widths when caller bumps them (e.g. TV mode).
   useEffect(() => {
