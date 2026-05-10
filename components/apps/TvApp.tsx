@@ -85,7 +85,7 @@ export default function TvApp({ token }: { token: string }) {
           fitMaxZoom={15}
           routeLineWidth={12}
           routeGlowWidth={28}
-          vanIconSize={144}
+          vanIconSize={72}
           pinScale={2.8}
           followCam={false}
         />
@@ -141,10 +141,17 @@ export default function TvApp({ token }: { token: string }) {
           full width. */}
       {(() => {
         if (!eta || (!eta.to_next && !eta.to_final)) return null;
+        // Collapse next-stop card when it's redundant with final destination:
+        //   (a) labels match — single-leg trip
+        //   (b) next stop is essentially where the van is now (< 0.1 mi).
+        //       This catches the "pickup == current location" case where
+        //       Mark dispatched a 'take me home' from the van, so the
+        //       pickup leg has zero meaningful distance and showing it as
+        //       'Next stop' is confusing.
         const sameTarget =
           !!eta.to_next &&
           !!eta.to_final &&
-          eta.to_next.label === eta.to_final.label;
+          (eta.to_next.label === eta.to_final.label || eta.to_next.distance_miles < 0.1);
         return (
           <div
             className={`absolute bottom-8 left-8 right-8 z-30 grid gap-4 ${
