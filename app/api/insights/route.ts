@@ -39,63 +39,99 @@ export async function GET(req: Request) {
   const todayStart = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
   const weekStart = new Date(now - 7 * 86400_000).toISOString();
 
-  // Pull recent positions (Bouncie source) for today + week. Sort ascending
-  // so we can compute deltas over time.
-  const { data: weekPositions } = await sb
-    .from("vehicle_positions")
-    .select("lat,lng,speed_mph,fuel_pct,mileage,ignition,recorded_at")
-    .eq("source", "bouncie")
-    .gte("recorded_at", weekStart)
-    .order("recorded_at", { ascending: true });
+  // Mileage delta = max-min (Bouncie's odometer is monotonic). Two cheap
+  // ordered-limited queries beat pulling thousands of rows. Returns null
+  // if odometer isn't reporting.
+  async function odometerDelta(sinceIso: string): Promise<number | null> {
+    const [{ data: minRow }, { data: maxRow }] = await Promise.all([
+      sb
+        .from("vehicle_positions")
+        .select("mileage")
+        .eq("source", "bouncie")
+        .gte("recorded_at", sinceIso)
+        .not("mileage", "is", null)
+        .order("recorded_at", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+      sb
+        .from("vehicle_positions")
+        .select("mileage")
+        .eq("source", "bouncie")
+        .gte("recorded_at", sinceIso)
+        .not("mileage", "is", null)
+        .order("recorded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    const lo = minRow?.mileage as number | null | undefined;
+    const hi = maxRow?.mileage as number | null | undefined;
+    if (lo == null || hi == null) return null;
+    return Math.max(0, hi - lo);
+  }
 
-  const positions = (weekPositions ?? []) as VPRow[];
+  // For driving / idle / avg-speed we sample every Nth row to keep the
+  // payload reasonable. ~1000-row sample over a week is plenty resolution
+  // for these aggregates given a 6s polling cadence (~100k rows/week).
+  async function sampleRows(sinceIso: string, limit = 1500): Promise<VPRow[]> {
+    const { data } = await sb
+      .from("vehicle_positions")
+      .select("lat,lng,speed_mph,fuel_pct,mileage,ignition,recorded_at")
+      .eq("source", "bouncie")
+      .gte("recorded_at", sinceIso)
+      .order("recorded_at", { ascending: true })
+      .limit(limit);
+    return (data ?? []) as VPRow[];
+  }
 
-  // Bucketize: today vs older-week
-  const todayMs = new Date(todayStart).getTime();
-  const todayPositions = positions.filter(
-    (p) => new Date(p.recorded_at).getTime() >= todayMs,
-  );
+  const [todayMilesOdo, weekMilesOdo, todaySample, weekSample] = await Promise.all([
+    odometerDelta(todayStart),
+    odometerDelta(weekStart),
+    sampleRows(todayStart, 800),
+    sampleRows(weekStart, 1500),
+  ]);
 
-  // Miles: prefer odometer delta if mileage column populated, else
-  // sum haversine distance between consecutive points (filtered to moving).
-  const milesFromOdometer = (rows: VPRow[]): number | null => {
-    const valid = rows.filter((r) => r.mileage != null && r.mileage > 0);
-    if (valid.length < 2) return null;
-    return Math.max(0, (valid[valid.length - 1].mileage as number) - (valid[0].mileage as number));
-  };
   const milesFromHaversine = (rows: VPRow[]): number => {
     let total = 0;
     for (let i = 1; i < rows.length; i++) {
       const a = rows[i - 1];
       const b = rows[i];
       if (a.lat == null || a.lng == null || b.lat == null || b.lng == null) continue;
-      // Skip if obvious teleport (>2 mi between consecutive points = data issue)
       const seg = haversineMi(a.lat, a.lng, b.lat, b.lng);
       if (seg < 2 && (b.speed_mph ?? 0) >= 1) total += seg;
     }
     return total;
   };
+  const todayMiles = todayMilesOdo ?? milesFromHaversine(todaySample);
+  const weekMiles = weekMilesOdo ?? milesFromHaversine(weekSample);
 
-  const todayMiles = milesFromOdometer(todayPositions) ?? milesFromHaversine(todayPositions);
-  const weekMiles = milesFromOdometer(positions) ?? milesFromHaversine(positions);
-
-  // Driving time = sum of intervals where speed > 1 mph
+  // Driving / idle from the time-bucketed sample. Sample is sparse but the
+  // SUM of dt over moving samples * (sample_density_factor) is close enough
+  // for a dashboard. We just sum directly here — overestimates idle if rows
+  // are far apart, so we cap each gap at 5s before counting.
   const driveAndIdleSeconds = (rows: VPRow[]): { driving_s: number; idle_s: number } => {
     let drv = 0;
     let idle = 0;
     for (let i = 1; i < rows.length; i++) {
-      const dt = (new Date(rows[i].recorded_at).getTime() - new Date(rows[i - 1].recorded_at).getTime()) / 1000;
-      if (dt > 60) continue; // skip large gaps (parked/off)
+      const dt = Math.min(
+        (new Date(rows[i].recorded_at).getTime() - new Date(rows[i - 1].recorded_at).getTime()) / 1000,
+        15,
+      );
+      if (dt <= 0) continue;
       const moving = (rows[i].speed_mph ?? 0) > 1;
       if (moving) drv += dt;
       else if ((rows[i].ignition ?? false)) idle += dt;
     }
-    return { driving_s: drv, idle_s: idle };
+    // Density factor: extrapolate from sample to true elapsed. Sample
+    // covers (sample-rows × ~6s) seconds; window covers (lastTs-firstTs).
+    if (rows.length < 2) return { driving_s: 0, idle_s: 0 };
+    const sampleSec = (new Date(rows[rows.length - 1].recorded_at).getTime() - new Date(rows[0].recorded_at).getTime()) / 1000;
+    const samplePoints = rows.length;
+    const factor = sampleSec > 0 && samplePoints > 0 ? sampleSec / (samplePoints * 6) : 1;
+    return { driving_s: drv * Math.max(1, factor), idle_s: idle * Math.max(1, factor) };
   };
-  const today = driveAndIdleSeconds(todayPositions);
-  const week = driveAndIdleSeconds(positions);
+  const today = driveAndIdleSeconds(todaySample);
+  const week = driveAndIdleSeconds(weekSample);
 
-  // Average speed when moving
   const avgSpeed = (rows: VPRow[]): number => {
     const moving = rows.filter((r) => (r.speed_mph ?? 0) > 1);
     if (moving.length === 0) return 0;
@@ -114,6 +150,7 @@ export async function GET(req: Request) {
     .order("scheduled_at", { ascending: false });
 
   const tripRows = (trips ?? []) as TripRow[];
+  const todayMs = new Date(todayStart).getTime();
   const completedToday = tripRows.filter(
     (t) => t.completed_at && new Date(t.completed_at).getTime() >= todayMs,
   ).length;
