@@ -9,7 +9,7 @@ import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import { rangeMiles } from "@/lib/range";
 import VanIcon from "@/components/VanIcon";
-import { Fuel, Gauge, Flag, MapPin as PinIcon, Navigation } from "lucide-react";
+import { Gauge, Flag, MapPin as PinIcon, Navigation } from "lucide-react";
 
 // 4K-friendly TV display. Optimized for big screens — large type, no interactive
 // controls. Same data sources as the rider/owner apps so it stays in sync.
@@ -77,11 +77,8 @@ export default function TvApp({ token }: { token: string }) {
           className="h-full w-full"
           fitBounds={true}
           fitPadding={{
-            // Tight padding so the remaining route fills the screen — but
-            // still clear of the branding strip, vitals, and ETA cards that
-            // float over the map.
             top: 110,
-            bottom: eta && (eta.to_next || eta.to_final) ? 220 : 60,
+            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
             left: 50,
             right: 50,
           }}
@@ -94,7 +91,7 @@ export default function TvApp({ token }: { token: string }) {
       </div>
 
       {/* Branding strip — top-left */}
-      <div className="absolute left-8 top-8 z-30 flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/80 px-5 py-3 backdrop-blur shadow-2xl">
+      <div className="absolute left-8 top-8 z-30 flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-950 px-5 py-3 shadow-2xl">
         <VanIcon size={36} />
         <div>
           <div className="text-xs uppercase tracking-widest text-zinc-500">Sprinter</div>
@@ -103,26 +100,21 @@ export default function TvApp({ token }: { token: string }) {
         </div>
       </div>
 
-      {/* Vitals — top-right, BIG */}
+      {/* Vitals — top-right. Range stacked over Speed (no separate fuel %
+          chip — Mark only cares about how far it can go and how fast). */}
       {pos && (
-        <div className="absolute right-8 top-8 z-30 grid grid-cols-3 gap-3">
-          <BigStat
-            icon={<Gauge size={24} className="text-emerald-400" />}
-            value={pos.speed_mph != null ? Math.round(pos.speed_mph).toString() : "—"}
-            unit="MPH"
-            label="Speed"
-          />
-          <BigStat
-            icon={<Fuel size={24} className="text-emerald-400" />}
-            value={pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}
-            unit=""
-            label="Fuel"
-          />
+        <div className="absolute right-8 top-8 z-30 flex flex-col gap-3">
           <BigStat
             icon={<span className="text-emerald-400 text-2xl">↗</span>}
             value={rangeMiles(pos.fuel_pct ?? null)?.toString() ?? "—"}
             unit="MI"
             label="Range"
+          />
+          <BigStat
+            icon={<Gauge size={24} className="text-emerald-400" />}
+            value={pos.speed_mph != null ? Math.round(pos.speed_mph).toString() : "—"}
+            unit="MPH"
+            label="Speed"
           />
         </div>
       )}
@@ -178,8 +170,8 @@ export default function TvApp({ token }: { token: string }) {
 
 function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: string; unit: string; label: string }) {
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/85 px-5 py-3 backdrop-blur shadow-xl">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-zinc-500">
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950 px-5 py-3 shadow-xl">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-zinc-400">
         {icon}
         {label}
       </div>
@@ -202,40 +194,41 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
   // big numbers row underneath. Roughly 40% shorter than the prior card.
   return (
     <div
-      className={`rounded-2xl border px-5 py-3 backdrop-blur shadow-2xl ${
+      className={`rounded-2xl border px-5 py-2.5 shadow-2xl ${
         primary
-          ? "border-emerald-700/60 bg-gradient-to-br from-emerald-900/60 to-zinc-950/95"
-          : "border-blue-700/60 bg-gradient-to-br from-blue-900/40 to-zinc-950/95"
+          ? "border-emerald-700/60 bg-zinc-950"
+          : "border-blue-700/60 bg-zinc-950"
       }`}
     >
-      {/* Top row: label (big, prominent) */}
-      <div className="flex items-center gap-2">
-        <Icon size={20} className={primary ? "text-emerald-400" : "text-blue-400"} />
-        <span className={`text-sm uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
-          {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
-        </span>
-        <span className="ml-2 truncate text-2xl font-semibold text-zinc-100">{label}</span>
-      </div>
-      {/* Bottom row: 3 columns each with label-on-top, value-below. Labels
-          are big enough to read; values are huge. */}
-      <div className="mt-2 grid grid-cols-3 gap-4 items-end">
+      {/* Compact 4-column row: label/destination + 3 stat cells.
+          Single row so the card is half its previous height. */}
+      <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr] gap-4 items-center">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
+            <span className={`text-xs uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
+              {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
+            </span>
+          </div>
+          <div className="mt-0.5 truncate text-2xl font-semibold text-zinc-100 leading-tight">{label}</div>
+        </div>
         <div>
-          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Time</div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className={`font-mono text-5xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
-            <span className="text-xl text-zinc-400">min</span>
+          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Time</div>
+          <div className="mt-0.5 flex items-baseline gap-1">
+            <span className={`font-mono text-4xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
+            <span className="text-base text-zinc-400">min</span>
           </div>
         </div>
         <div>
-          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Distance</div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="font-mono text-5xl font-bold tabular-nums leading-none text-zinc-100">{miles}</span>
-            <span className="text-xl text-zinc-400">mi</span>
+          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Distance</div>
+          <div className="mt-0.5 flex items-baseline gap-1">
+            <span className="font-mono text-4xl font-bold tabular-nums leading-none text-zinc-100">{miles}</span>
+            <span className="text-base text-zinc-400">mi</span>
           </div>
         </div>
         <div className="text-right">
-          <div className="text-base uppercase tracking-widest text-zinc-500 leading-none">Arrival</div>
-          <div className="mt-1 font-mono text-5xl font-bold tabular-nums leading-none text-zinc-100">{arrival}</div>
+          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Arrival</div>
+          <div className="mt-0.5 font-mono text-4xl font-bold tabular-nums leading-none text-zinc-100">{arrival}</div>
         </div>
       </div>
     </div>
