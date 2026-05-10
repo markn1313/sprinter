@@ -15,6 +15,7 @@ import QuickDispatchChips from "@/components/QuickDispatchChips";
 import ShareTripButton from "@/components/ShareTripButton";
 import WelcomeCard from "@/components/WelcomeCard";
 import TripRecapCard from "@/components/TripRecapCard";
+import LeaveByCard from "@/components/LeaveByCard";
 import VoiceCabin from "@/components/VoiceCabin";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
@@ -473,6 +474,7 @@ function MapTab({
       {!live && (
         <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
           <TripRecapCard token={token} />
+          <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
           <WelcomeCard
             token={token}
             vanLat={pos?.lat ?? null}
