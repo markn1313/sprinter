@@ -389,37 +389,52 @@ export default function MapboxMap({
     }
   }, [position, vanIconSize, followCam]);
 
-  // Follow-cam: each frame, snap the map's center to the animated van
-  // position so the camera tracks the smooth movement instead of teleporting
-  // every poll. Bearing comes from the marker effect's ref (= last computed
-  // direction of travel). Style + try/catch so any single bad frame can't
-  // take the map down.
+  // Follow-cam: track the animated van position. Throttled to ~5 Hz so we
+  // don't starve Mapbox's tile loader by re-invalidating the camera every
+  // frame. Initial setup applies pitch + zoom once; subsequent updates
+  // just slide the center.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !followCam) return;
-    let raf: number | null = null;
-    const tick = () => {
+    let cancelled = false;
+    let initialApplied = false;
+    const apply = () => {
       try {
-        if (map.isStyleLoaded()) {
-          const a = animatedVanRef.current;
-          if (a) {
-            const bearing = lastVanLngLatRef.current?.bearing ?? 0;
-            map.jumpTo({
-              center: [a.lng, a.lat],
-              bearing,
-              pitch: followCamPitch,
-              zoom: followCamZoom,
-            });
-          }
+        if (!map.isStyleLoaded()) return;
+        const a = animatedVanRef.current;
+        if (!a) return;
+        const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+        if (!initialApplied) {
+          map.easeTo({
+            center: [a.lng, a.lat],
+            bearing,
+            pitch: followCamPitch,
+            zoom: followCamZoom,
+            duration: 800,
+            essential: true,
+          });
+          initialApplied = true;
+        } else {
+          // Slide center + bearing, keep zoom + pitch where they are so the
+          // tile loader has time to fetch and avoid camera-thrash.
+          map.easeTo({
+            center: [a.lng, a.lat],
+            bearing,
+            duration: 200,
+            essential: true,
+          });
         }
       } catch (err) {
-        console.warn("[MapboxMap] follow-cam tick failed", err);
+        console.warn("[MapboxMap] follow-cam apply failed", err);
       }
-      raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
+    const id = setInterval(() => {
+      if (!cancelled) apply();
+    }, 220);
+    apply();
     return () => {
-      if (raf != null) cancelAnimationFrame(raf);
+      cancelled = true;
+      clearInterval(id);
     };
   }, [followCam, followCamPitch, followCamZoom]);
 
