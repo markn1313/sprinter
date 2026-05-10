@@ -79,6 +79,16 @@ export async function POST(
     void (async () => {
       try {
         const sb = supabaseAdmin();
+        // Idempotency: skip if cabin_preset already fired for this trip
+        // (handles the case where Dio bumps back to at_pickup then re-taps
+        // onboard — we don't want to double-fire warmer/cooler/etc.)
+        const { data: prior } = await sb
+          .from("trip_events")
+          .select("id")
+          .eq("trip_id", id)
+          .eq("kind", "cabin_preset")
+          .limit(1);
+        if (prior && prior.length > 0) return;
         const { data: trip } = await sb
           .from("trips")
           .select("passenger_link_token")

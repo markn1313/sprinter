@@ -9,6 +9,7 @@ import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
+import TripReplay from "@/components/TripReplay";
 import { dollars, shortTime, shortDate } from "@/lib/format";
 import { toPTInput, fromPTInput } from "@/lib/pt-time";
 import { googleMapsMultiStop } from "@/lib/maps-link";
@@ -413,11 +414,13 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
       </div>
 
       <main className={`mx-auto w-full max-w-3xl space-y-2 px-3 pt-2 ${hideMap ? "flex-1 overflow-y-auto pb-6" : ""}`}>
-        {!hideMap && (
+        {!hideMap && trip.status === "complete" ? (
+          <TripReplay token={token} tripId={tripId} />
+        ) : !hideMap ? (
           <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl border border-zinc-800">
             <ClientMap position={pos} pins={pins} polyline={polyline} className="h-full w-full" />
           </div>
-        )}
+        ) : null}
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
           <ul className="flex flex-col gap-1.5">
