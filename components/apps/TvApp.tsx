@@ -193,34 +193,41 @@ function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: s
 
 function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind: string; label: string; minutes: number; miles: number; primary?: boolean; titleOverride?: string }) {
   const Icon = kind === "dropoff" ? Flag : kind === "pickup" ? PinIcon : PinIcon;
-  // Estimated arrival time = now + ETA minutes, in PT.
   const arrival = new Date(Date.now() + minutes * 60_000).toLocaleTimeString("en-US", {
     timeZone: "America/Los_Angeles",
     hour: "numeric",
     minute: "2-digit",
   });
+  // Compact two-row layout: title strip on top (label left, header right),
+  // big numbers row underneath. Roughly 40% shorter than the prior card.
   return (
     <div
-      className={`rounded-3xl border px-8 py-6 backdrop-blur shadow-2xl ${
+      className={`rounded-3xl border px-6 py-4 backdrop-blur shadow-2xl ${
         primary
           ? "border-emerald-700/60 bg-gradient-to-br from-emerald-900/60 to-zinc-950/95"
           : "border-blue-700/60 bg-gradient-to-br from-blue-900/40 to-zinc-950/95"
       }`}
     >
-      <div className="flex items-center gap-2 text-sm uppercase tracking-widest">
-        <Icon size={18} className={primary ? "text-emerald-400" : "text-blue-400"} />
-        <span className={primary ? "text-emerald-300" : "text-blue-300"}>
-          {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
-        </span>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-widest">
+          <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
+          <span className={primary ? "text-emerald-300" : "text-blue-300"}>
+            {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
+          </span>
+        </div>
+        <div className="truncate text-xl font-medium text-zinc-100 max-w-[55%]">{label}</div>
       </div>
-      <div className="mt-2 truncate text-3xl font-medium text-zinc-100">{label}</div>
-      <div className="mt-3 flex items-baseline gap-3">
-        <span className={`font-mono text-7xl font-bold tabular-nums ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
-        <span className="text-2xl font-semibold text-zinc-500">min</span>
-        <span className="ml-auto font-mono text-4xl font-semibold tabular-nums text-zinc-200">{miles} mi</span>
-      </div>
-      <div className="mt-2 text-2xl text-zinc-400">
-        Arrive <span className="font-mono font-semibold tabular-nums text-zinc-100">{arrival}</span>
+      <div className="mt-2 flex items-baseline justify-between gap-4">
+        <div className="flex items-baseline gap-2">
+          <span className={`font-mono text-6xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
+          <span className="text-xl font-semibold text-zinc-500">min</span>
+          <span className="ml-3 font-mono text-3xl font-semibold tabular-nums text-zinc-200">{miles}</span>
+          <span className="text-xl text-zinc-500">mi</span>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 leading-none">Arrive</div>
+          <div className="font-mono text-4xl font-bold tabular-nums text-zinc-100 leading-tight">{arrival}</div>
+        </div>
       </div>
     </div>
   );
