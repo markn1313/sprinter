@@ -6,7 +6,19 @@ import { Share2, Loader2 } from "lucide-react";
 // One-tap "share live ride" — mints (or reuses) a per-trip passenger link
 // then opens iMessage with the URL prefilled. Recipient sees the live van
 // position + ETA on /p/<token>.
-export default function ShareTripButton({ token, tripId, label = "Share ride" }: { token: string; tripId: string; label?: string }) {
+export default function ShareTripButton({
+  token,
+  tripId,
+  label = "Share ride",
+  compact = false,
+}: {
+  token: string;
+  tripId: string;
+  label?: string;
+  // Compact = icon-only chip styled to match the vital-strip column on
+  // Mark home. Default keeps the wider pill used elsewhere.
+  compact?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
 
   const share = async () => {
@@ -26,6 +38,20 @@ export default function ShareTripButton({ token, tripId, label = "Share ride" }:
       setBusy(false);
     }
   };
+
+  if (compact) {
+    return (
+      <button
+        onClick={share}
+        disabled={busy}
+        title="Share live tracking link"
+        aria-label="Share"
+        className="flex items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 px-2.5 py-1.5 text-emerald-300 backdrop-blur hover:bg-zinc-900 disabled:opacity-50"
+      >
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
+      </button>
+    );
+  }
 
   return (
     <button

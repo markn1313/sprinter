@@ -1175,6 +1175,27 @@ function MapTab({
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
         )}
+        {/* Share + Maps — icon-only chips matching the vital-strip width.
+            Previously these sat in the bottom strip alongside the EtaCard,
+            forcing the destination card to shrink + clip. Pinning them to
+            the top column keeps the bottom strip full-width and the buttons
+            still one tap away. Only render when a trip is live + has a
+            usable nav URL. */}
+        {live && (
+          <ShareTripButton token={token} tripId={live.id} compact />
+        )}
+        {live && navUrl && (
+          <a
+            href={navUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open in Google Maps"
+            aria-label="Maps"
+            className="flex items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 px-2.5 py-1.5 text-emerald-300 backdrop-blur hover:bg-zinc-900"
+          >
+            <Navigation size={14} />
+          </a>
+        )}
       </div>
 
       {/* Cabin climate quick-strip — bottom-center, only when a trip is active */}
@@ -1216,30 +1237,17 @@ function MapTab({
               </button>
             )}
             {eta.to_final && (
-              <div className="flex items-stretch gap-2">
-                <button onClick={() => setSheet("trip")} className="flex-1 text-left">
-                  <EtaCard
-                    compact
-                    kind="dropoff"
-                    label={eta.to_final.label}
-                    minutes={eta.to_final.eta_minutes}
-                    miles={eta.to_final.distance_miles}
-                    primary={!showNext}
-                    titleOverride="Final destination"
-                  />
-                </button>
-                <ShareTripButton token={token} tripId={live.id} label="Share" />
-                {navUrl && (
-                  <a
-                    href={navUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
-                  >
-                    <Navigation size={14} /> Maps
-                  </a>
-                )}
-              </div>
+              <button onClick={() => setSheet("trip")} className="block w-full text-left">
+                <EtaCard
+                  compact
+                  kind="dropoff"
+                  label={eta.to_final.label}
+                  minutes={eta.to_final.eta_minutes}
+                  miles={eta.to_final.distance_miles}
+                  primary={!showNext}
+                  titleOverride="Final destination"
+                />
+              </button>
             )}
           </div>
         );
