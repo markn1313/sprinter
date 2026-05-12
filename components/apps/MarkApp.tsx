@@ -549,7 +549,9 @@ function MapTab({
         </div>
       )}
 
-      {/* Top header — overlaid on map */}
+      {/* Top header — share-GPS toggle only. Pickup button moved to the
+          top-right column above the vitals so it sits where Mark's thumb
+          naturally lands on the right side of the screen. */}
       <header className="absolute inset-x-0 top-0 z-30 px-3 pt-[max(env(safe-area-inset-top),12px)]">
         <div className="mx-auto flex max-w-3xl items-center gap-2">
           <button
@@ -558,12 +560,6 @@ function MapTab({
             title="Share live GPS"
           >
             📍 {shareGps ? "" : "off"}
-          </button>
-          <button
-            onClick={() => setSheet("pickup")}
-            className="rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-1.5 text-xs font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
-          >
-            Pickup
           </button>
         </div>
       </header>
@@ -588,20 +584,30 @@ function MapTab({
         )}
       </div>
 
-      {/* Vitals strip — top-right, no zoom controls in the way */}
-      {pos && (
-        <div className="absolute right-3 top-3 z-30 flex w-fit flex-col gap-1.5">
-          <VitalChip>
-            <Fuel size={11} className="text-emerald-400" />
-            <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
-          </VitalChip>
-          <VitalChip>
-            <span className="text-emerald-400">↗</span>
-            <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
-          </VitalChip>
-          <SpeedChip mph={pos.speed_mph ?? null} />
-        </div>
-      )}
+      {/* Vitals strip — top-right column. Pickup button sits at the top
+          of the column (above fuel%) so it's always reachable without
+          competing with the map controls on the left. */}
+      <div className="absolute right-3 top-3 z-30 flex w-fit flex-col items-stretch gap-1.5">
+        <button
+          onClick={() => setSheet("pickup")}
+          className="rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-2 text-xs font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
+        >
+          Pickup
+        </button>
+        {pos && (
+          <>
+            <VitalChip>
+              <Fuel size={11} className="text-emerald-400" />
+              <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
+            </VitalChip>
+            <VitalChip>
+              <span className="text-emerald-400">↗</span>
+              <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
+            </VitalChip>
+            <SpeedChip mph={pos.speed_mph ?? null} />
+          </>
+        )}
+      </div>
 
       {/* Cabin climate quick-strip — bottom-center, only when a trip is active */}
       {live && (
