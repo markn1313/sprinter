@@ -31,14 +31,37 @@ export default function CabinQuickStrip({ token, tripId, vertical = false }: Pro
     }
   };
 
-  // Buttons sized to match the Mark-home right-column vital chips
-  // (h-10 w-10). The wrapping bubble background is dropped in vertical
-  // mode — each button has its own bg-zinc-800 so they read fine on
-  // their own, and Mark asked for no shared backdrop behind the icons.
-  // Horizontal mode keeps the bubble for the passenger app + TV where
-  // the strip floats over the map and needs the contrast.
+  // Vertical (Mark-home column): two rows of two buttons each — warmer
+  // alongside cooler, fan-up alongside fan-down. Each row spans the
+  // full column width (same as the speed chip above) and each button
+  // is flex-1 so the pair splits the row in half.
+  //
+  // Horizontal (passenger / TV): single floating row of 4 — keeps the
+  // wrapping bubble for contrast against the map.
+  if (vertical) {
+    return (
+      <div className="flex w-full flex-col items-stretch gap-1.5">
+        <div className="flex w-full gap-1.5">
+          <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer" stretch>
+            <TriangleUp />
+          </Btn>
+          <Btn kind="cooler" onClick={send} busy={busy} just={recent === "cooler"} title="Cooler" stretch>
+            <TriangleDown />
+          </Btn>
+        </div>
+        <div className="flex w-full gap-1.5">
+          <Btn kind="fan_up" onClick={send} busy={busy} just={recent === "fan_up"} title="More fan" stretch>
+            <FanIcon size={30} />
+          </Btn>
+          <Btn kind="fan_down" onClick={send} busy={busy} just={recent === "fan_down"} title="Less fan" stretch>
+            <FanIcon size={22} />
+          </Btn>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className={`flex ${vertical ? "flex-col items-center gap-1.5" : "flex-row items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl"}`}>
+    <div className="flex flex-row items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl">
       <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer">
         <TriangleUp />
       </Btn>
@@ -62,6 +85,7 @@ function Btn({
   just,
   title,
   children,
+  stretch = false,
 }: {
   kind: string;
   onClick: (kind: string) => void;
@@ -69,6 +93,9 @@ function Btn({
   just: boolean;
   title: string;
   children: React.ReactNode;
+  // When true the button grows to fill its parent row (used by the
+  // 2x2 vertical layout so each pair spans the column width).
+  stretch?: boolean;
 }) {
   return (
     <button
@@ -76,9 +103,9 @@ function Btn({
       disabled={busy}
       title={title}
       aria-label={title}
-      className={`flex h-10 w-10 items-center justify-center rounded-xl transition active:scale-95 disabled:opacity-50 ${
-        just ? "bg-emerald-600" : "bg-zinc-800 hover:bg-zinc-700"
-      }`}
+      className={`flex h-10 items-center justify-center rounded-xl transition active:scale-95 disabled:opacity-50 ${
+        stretch ? "flex-1 min-w-0" : "w-10"
+      } ${just ? "bg-emerald-600" : "bg-zinc-800 hover:bg-zinc-700"}`}
     >
       {just ? <Check size={16} className="text-white" /> : children}
     </button>
