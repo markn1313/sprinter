@@ -954,16 +954,18 @@ function MapTab({
                 </span>
               </div>
             )}
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-violet-300">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-violet-300">
               <span aria-hidden>📍</span>
-              {pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}
+              <span>{pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}</span>
+              <span className="text-zinc-500">·</span>
+              <span className="text-zinc-400">Drag purple icon</span>
             </div>
             <div className="mt-1 truncate text-base font-semibold text-zinc-100 leading-tight">
               {pickupAddress ?? (pickupPin ? `${pickupPin.lat.toFixed(5)}, ${pickupPin.lng.toFixed(5)}` : "Locating…")}
             </div>
             {pickupRoute.eta_minutes != null && pickupRoute.distance_miles != null && (
-              <div className="mt-1 text-[11px] text-zinc-500">
-                Van: {pickupRoute.eta_minutes} min · {pickupRoute.distance_miles} mi away
+              <div className="mt-1.5 text-sm text-zinc-300">
+                Van: <span className="font-mono font-semibold tabular-nums text-emerald-300">{pickupRoute.eta_minutes}</span> min · <span className="font-mono font-semibold tabular-nums text-zinc-100">{pickupRoute.distance_miles}</span> mi away
               </div>
             )}
             <div className="mt-3 grid grid-cols-4 gap-2">
