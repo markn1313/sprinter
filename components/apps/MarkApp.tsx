@@ -942,33 +942,38 @@ function MapTab({
           trip and exits pickup mode. */}
       {pickupMode && (
         <div className="absolute inset-x-3 bottom-3 z-30">
-          <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-3 shadow-2xl">
-            {/* Edit mode: show the currently-locked-in pickup time at the
-                top so Mark can see what Dio's already planning before he
-                changes it. Times formatted in PT. */}
-            {pickupModeKind === "edit" && editTrip?.scheduled_at && (
-              <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-zinc-500">
-                <span>Currently</span>
-                <span className="font-mono text-base font-bold tabular-nums text-emerald-300 normal-case tracking-normal">
-                  {shortTime(editTrip.scheduled_at)}
-                </span>
-              </div>
-            )}
+          <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-2 shadow-2xl">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-violet-300">
               <span aria-hidden>📍</span>
               <span>{pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}</span>
               <span className="text-zinc-500">·</span>
               <span className="text-zinc-400">Drag purple icon</span>
             </div>
-            <div className="mt-1 truncate text-base font-semibold text-zinc-100 leading-tight">
+            <div className="mt-0.5 truncate text-base font-semibold text-zinc-100 leading-tight">
               {pickupAddress ?? (pickupPin ? `${pickupPin.lat.toFixed(5)}, ${pickupPin.lng.toFixed(5)}` : "Locating…")}
             </div>
-            {pickupRoute.eta_minutes != null && pickupRoute.distance_miles != null && (
-              <div className="mt-1.5 text-sm text-zinc-300">
-                Van: <span className="font-mono font-semibold tabular-nums text-emerald-300">{pickupRoute.eta_minutes}</span> min · <span className="font-mono font-semibold tabular-nums text-zinc-100">{pickupRoute.distance_miles}</span> mi away
+            {/* Van ETA on the left, currently-locked-in pickup time pinned to
+                the right (edit mode only). One compact row instead of two. */}
+            {(pickupRoute.eta_minutes != null || (pickupModeKind === "edit" && editTrip?.scheduled_at)) && (
+              <div className="mt-1 flex items-baseline justify-between gap-3 text-sm text-zinc-300">
+                <div>
+                  {pickupRoute.eta_minutes != null && pickupRoute.distance_miles != null && (
+                    <>
+                      Van: <span className="font-mono font-semibold tabular-nums text-emerald-300">{pickupRoute.eta_minutes}</span> min · <span className="font-mono font-semibold tabular-nums text-zinc-100">{pickupRoute.distance_miles}</span> mi away
+                    </>
+                  )}
+                </div>
+                {pickupModeKind === "edit" && editTrip?.scheduled_at && (
+                  <div className="flex items-baseline gap-1.5 text-[10px] uppercase tracking-widest text-zinc-500">
+                    <span>Currently</span>
+                    <span className="font-mono text-sm font-bold tabular-nums text-emerald-300 normal-case tracking-normal">
+                      {shortTime(editTrip.scheduled_at)}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
-            <div className="mt-3 grid grid-cols-4 gap-2">
+            <div className="mt-2 grid grid-cols-4 gap-2">
               {[0, 10, 15, 20].map((m) => {
                 const targetAt = new Date(Date.now() + m * 60_000);
                 const targetLabel = targetAt.toLocaleTimeString("en-US", {
@@ -981,7 +986,7 @@ function MapTab({
                     key={m}
                     onClick={() => dispatchPickup(m)}
                     disabled={pickupBusy || !pickupPin}
-                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-2.5 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
+                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-1.5 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
                   >
                     <span>{m === 0 ? "Now" : `${m} min`}</span>
                     <span className="mt-0.5 font-mono text-[11px] font-normal text-violet-100/85 tabular-nums">
