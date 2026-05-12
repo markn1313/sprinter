@@ -35,9 +35,9 @@ export default function EtaCard({
   });
   const sizes = compact
     ? {
-        pad: "px-3 py-2",
+        pad: "px-3 py-1.5",
         gap: "gap-4",
-        labelText: "text-[10px]",
+        labelText: "text-[9px]",
         addr: "text-base",
         statLabel: "text-[10px]",
         statNum: "text-lg",
@@ -64,13 +64,20 @@ export default function EtaCard({
     >
       <div className={`grid grid-cols-[1fr_auto_auto_auto] ${sizes.gap} items-center`}>
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <Icon size={sizes.iconSize} className={primary ? "text-emerald-400" : "text-blue-400"} />
-            <span className={`${sizes.labelText} uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
-              {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
-            </span>
-          </div>
-          <div className={`mt-0.5 truncate ${sizes.addr} font-semibold text-zinc-100 leading-tight`}>
+          {/* Label row: hidden in compact mode to save vertical real-estate
+              on the Mark home bottom banner (Mark explicitly asked: drop
+              the flag icon + the word "Final" so the strip can be shorter).
+              TV's large variant still shows the icon + label since it has
+              headroom and benefits from the visual anchor. */}
+          {!compact && (
+            <div className="flex items-center gap-1.5">
+              <Icon size={sizes.iconSize} className={primary ? "text-emerald-400" : "text-blue-400"} />
+              <span className={`${sizes.labelText} uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
+                {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
+              </span>
+            </div>
+          )}
+          <div className={`${compact ? "" : "mt-0.5"} truncate ${sizes.addr} font-semibold text-zinc-100 leading-tight`}>
             {stripZip(label)}
           </div>
         </div>
