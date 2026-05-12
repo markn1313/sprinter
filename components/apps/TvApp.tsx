@@ -41,9 +41,14 @@ export default function TvApp({ token }: { token: string }) {
         return { kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}) };
       });
     }
-    // Fallback while ETA hasn't loaded yet — show whatever the trip declares.
+    // Fallback while ETA hasn't loaded yet — mirror the eta endpoint's
+    // includePickup logic so the right-map fitBounds doesn't briefly pull
+    // the camera way out to include a stale pickup pin (e.g. when the
+    // trip is at_pickup / onboard / at_dropoff and pickup is miles back).
+    const includePickup =
+      focus?.status === "scheduled" || focus?.status === "dispatched";
     const out: MapPin[] = [];
-    if (focus?.pickup_lat != null && focus.pickup_lng != null)
+    if (includePickup && focus?.pickup_lat != null && focus.pickup_lng != null)
       out.push({ kind: "pickup", lat: focus.pickup_lat, lng: focus.pickup_lng, label: focus.pickup_address ?? undefined });
     if (focus?.dropoff_lat != null && focus.dropoff_lng != null)
       out.push({ kind: "dropoff", lat: focus.dropoff_lat, lng: focus.dropoff_lng, label: focus.dropoff_address ?? undefined });
@@ -100,7 +105,7 @@ export default function TvApp({ token }: { token: string }) {
           pins={pins}
           polyline={polyline}
           congestion={congestion}
-          mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+          mapStyle="mapbox://styles/mapbox/navigation-night-v1"
           className="h-full flex-1"
           fitBounds={true}
           fitPadding={{
