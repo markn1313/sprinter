@@ -967,11 +967,11 @@ function MapTab({
                 </button>
               ))}
             </div>
-            <div className="mt-2 text-[10px] text-zinc-500">
-              {pickupModeKind === "edit"
-                ? "Drag the pin to move the spot · tap a time to update Dio's plan"
-                : "Drag the pin to move the pickup spot."}
-            </div>
+            {pickupModeKind !== "edit" && (
+              <div className="mt-2 text-[10px] text-zinc-500">
+                Drag the pin to move the pickup spot.
+              </div>
+            )}
           </div>
         </div>
       )}
