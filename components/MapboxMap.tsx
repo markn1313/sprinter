@@ -68,11 +68,16 @@ const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => s
   const stopBadgeLeft = Math.round(14 * scale);
   const stopBadgeSize = Math.round(16 * scale);
   const stopBadgeFont = Math.max(10, Math.round(10 * scale));
+  // White-and-light-gray checkered flag drawn as an inline SVG so it reads
+  // crisply against the satellite imagery (the system 🏁 emoji is dark and
+  // disappears into vegetation/asphalt). Pole stays dark for grounding.
+  const flagSize = Math.round(28 * scale);
+  const flagWhiteSvg = `<svg width="${flagSize}" height="${flagSize}" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.85))"><rect x="3" y="3" width="2" height="22" fill="#1c1917"/><g transform="translate(5,3)"><rect width="20" height="11" fill="#ffffff"/><g fill="#1c1917"><rect x="0" y="0" width="4" height="3"/><rect x="8" y="0" width="4" height="3"/><rect x="16" y="0" width="4" height="3"/><rect x="4" y="3" width="4" height="3"/><rect x="12" y="3" width="4" height="3"/><rect x="0" y="6" width="4" height="3"/><rect x="8" y="6" width="4" height="3"/><rect x="16" y="6" width="4" height="3"/></g><rect width="20" height="11" fill="none" stroke="#1c1917" stroke-width="0.6"/></g></svg>`;
   return {
     pickup: () =>
       `<div style="font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩</div>`,
     dropoff: () =>
-      `<div style="font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🏁</div>`,
+      `<div style="line-height:1;">${flagWhiteSvg}</div>`,
     stop: (idx) =>
       `<div style="position:relative;font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩<span style="position:absolute;top:${stopBadgeOffset}px;left:${stopBadgeLeft}px;background:#dc2626;color:white;border-radius:9999px;width:${stopBadgeSize}px;height:${stopBadgeSize}px;display:inline-flex;align-items:center;justify-content:center;font-size:${stopBadgeFont}px;font-weight:700;font-family:-apple-system,system-ui,sans-serif;">${idx ?? ""}</span></div>`,
     mark: () =>
@@ -191,6 +196,12 @@ export default function MapboxMap({
       // layer's `line-color` then picks green / amber / orange / red per
       // segment. When no congestion data is available it falls through to
       // emerald.
+      //
+      // Layer order (bottom → top):
+      //   1. trip-route-glow   — wide soft halo for ambient highlight
+      //   2. trip-route-border — solid dark stroke around the colored line so
+      //                          it reads crisply against the satellite imagery
+      //   3. trip-route-line   — the colored route itself
       try {
         map.addSource("trip-route", {
           type: "geojson",
@@ -221,6 +232,17 @@ export default function MapboxMap({
           },
         });
         map.addLayer({
+          id: "trip-route-border",
+          type: "line",
+          source: "trip-route",
+          paint: {
+            "line-color": "#0b0f14",
+            "line-width": routeLineWidth + 6,
+            "line-opacity": 0.95,
+          },
+          layout: { "line-cap": "round", "line-join": "round" },
+        });
+        map.addLayer({
           id: "trip-route-line",
           type: "line",
           source: "trip-route",
@@ -229,6 +251,7 @@ export default function MapboxMap({
             "line-width": routeLineWidth,
             "line-opacity": 0.98,
           },
+          layout: { "line-cap": "round", "line-join": "round" },
         });
       } catch (err) {
         console.warn("[MapboxMap] trip-route layer failed:", err);
@@ -568,6 +591,9 @@ export default function MapboxMap({
       try {
         if (map.getLayer("trip-route-line")) {
           map.setPaintProperty("trip-route-line", "line-width", routeLineWidth);
+        }
+        if (map.getLayer("trip-route-border")) {
+          map.setPaintProperty("trip-route-border", "line-width", routeLineWidth + 6);
         }
         if (map.getLayer("trip-route-glow")) {
           map.setPaintProperty("trip-route-glow", "line-width", routeGlowWidth);
