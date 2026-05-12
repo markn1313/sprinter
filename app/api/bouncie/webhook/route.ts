@@ -112,17 +112,38 @@ function verifySignature(rawBody: string, header: string | null, secret: string)
 export async function POST(req: Request) {
   const raw = await req.text();
   const secret = process.env.BOUNCIE_WEBHOOK_SECRET;
+  // Signature verification — Bouncie's actual header name + format isn't
+  // documented publicly and the strict reject path was failing every real
+  // delivery (Bouncie sent 401s back as "excessive failures" and disabled
+  // our webhook). Now we LOG the incoming auth-shaped headers + the
+  // computed-vs-provided diff and continue regardless. Once we know which
+  // header / hash format Bouncie actually uses we can flip back to strict.
   if (secret) {
+    const sigHeaders: Record<string, string | null> = {
+      "x-hub-signature-256": req.headers.get("x-hub-signature-256"),
+      "x-bouncie-signature": req.headers.get("x-bouncie-signature"),
+      "x-signature": req.headers.get("x-signature"),
+      "x-bouncie-token": req.headers.get("x-bouncie-token"),
+      "authorization": req.headers.get("authorization"),
+    };
+    const present = Object.entries(sigHeaders).filter(([, v]) => v != null);
     const ok =
-      verifySignature(raw, req.headers.get("x-hub-signature-256"), secret) ||
-      verifySignature(raw, req.headers.get("x-bouncie-signature"), secret);
+      verifySignature(raw, sigHeaders["x-hub-signature-256"], secret) ||
+      verifySignature(raw, sigHeaders["x-bouncie-signature"], secret) ||
+      verifySignature(raw, sigHeaders["x-signature"], secret);
     if (!ok) {
-      console.warn("[bouncie/webhook] signature mismatch");
-      return NextResponse.json({ error: "bad signature" }, { status: 401 });
+      // Log enough to figure out the right header / format. The raw body
+      // is left untouched so we can replay it once we know how to verify.
+      console.warn(
+        "[bouncie/webhook] sig mismatch — present headers:",
+        present.map(([k]) => k).join(",") || "<none>",
+        "raw size:",
+        raw.length,
+      );
     }
+    // Accept either way for now. Endpoint URL has decent obscurity; we'll
+    // re-enable strict checking once Bouncie's signature scheme is known.
   }
-  // If no secret is configured, accept (dev/setup). Recommend setting one in
-  // prod so randos can't spoof position data.
 
   let payload: unknown = null;
   try {
@@ -137,37 +158,42 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, samples: 0 });
   }
 
-  const sb = supabaseAdmin();
-  // Bulk INSERT to vehicle_positions
-  const rows = samples.map((s) => ({
-    source: "bouncie" as const,
-    lat: s.lat,
-    lng: s.lng,
-    heading: s.heading,
-    speed_mph: s.speed_mph,
-    fuel_pct: s.fuel_pct,
-    mileage: s.mileage,
-    ignition: s.ignition,
-    recorded_at: s.recorded_at,
-  }));
-  await sb.from("vehicle_positions").insert(rows);
+  // Wrap DB writes — a transient Supabase blip shouldn't 500 Bouncie and
+  // count toward their "excessive failures" deactivation threshold. If
+  // we can't write, log it and still return 200 so Bouncie keeps sending.
+  try {
+    const sb = supabaseAdmin();
+    const rows = samples.map((s) => ({
+      source: "bouncie" as const,
+      lat: s.lat,
+      lng: s.lng,
+      heading: s.heading,
+      speed_mph: s.speed_mph,
+      fuel_pct: s.fuel_pct,
+      mileage: s.mileage,
+      ignition: s.ignition,
+      recorded_at: s.recorded_at,
+    }));
+    await sb.from("vehicle_positions").insert(rows);
 
-  // UPSERT van_position with the most-recent sample (highest recorded_at)
-  const latest = samples.reduce((a, b) => (a.recorded_at > b.recorded_at ? a : b));
-  await sb
-    .from("van_position")
-    .update({
-      lat: latest.lat,
-      lng: latest.lng,
-      heading: latest.heading,
-      speed_mph: latest.speed_mph,
-      fuel_pct: latest.fuel_pct,
-      mileage: latest.mileage,
-      ignition: latest.ignition,
-      source: "bouncie",
-      updated_at: latest.recorded_at,
-    })
-    .eq("id", 1);
+    const latest = samples.reduce((a, b) => (a.recorded_at > b.recorded_at ? a : b));
+    await sb
+      .from("van_position")
+      .update({
+        lat: latest.lat,
+        lng: latest.lng,
+        heading: latest.heading,
+        speed_mph: latest.speed_mph,
+        fuel_pct: latest.fuel_pct,
+        mileage: latest.mileage,
+        ignition: latest.ignition,
+        source: "bouncie",
+        updated_at: latest.recorded_at,
+      })
+      .eq("id", 1);
+  } catch (err) {
+    console.warn("[bouncie/webhook] db write failed:", (err as Error).message);
+  }
 
   return NextResponse.json({ ok: true, samples: samples.length });
 }
