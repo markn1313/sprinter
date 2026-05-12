@@ -293,12 +293,12 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
           : "border-blue-700/60 bg-zinc-950"
       }`}
     >
-      {/* Compact 4-column row: label/destination + 3 stat cells.
-          Single row so the card is half its previous height. Destination
-          column gets extra right-padding so long addresses don't crowd
-          the Time number next to it. */}
-      <div className="grid grid-cols-[1.8fr_1fr_1fr_1fr] gap-10 items-center">
-        <div className="min-w-0 pr-4">
+      {/* Address takes all available space on the LEFT; distance / time /
+          arrival shrink to their content and hug the RIGHT edge. Gives the
+          (truncatable) address as much room as possible while keeping the
+          stat numbers chunky and readable. */}
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-8 items-center">
+        <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
             <span className={`text-xs uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
