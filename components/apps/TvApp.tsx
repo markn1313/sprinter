@@ -118,7 +118,7 @@ export default function TvApp({ token }: { token: string }) {
             pinScale={2.8}
             followCam={true}
             followCamPitch={0}
-            followCamZoom={17}
+            followCamZoom={17.6}
             followCamRotate={false}
           />
         </div>
