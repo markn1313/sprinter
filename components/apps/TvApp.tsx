@@ -77,6 +77,7 @@ export default function TvApp({ token }: { token: string }) {
           pins={pins}
           polyline={polyline}
           congestion={congestion}
+          mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
           className="h-full w-full"
           fitBounds={true}
           fitPadding={{

@@ -25,6 +25,10 @@ interface Props {
   position: (VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" }) | null;
   pins?: MapPin[];
   polyline?: string | null;
+  // Mapbox style URL. Default is the proven navigation-night-v1 dark theme.
+  // TV passes satellite-streets-v12 for a hybrid satellite-imagery + roads
+  // look — verified token has access. Pass undefined to fall back to default.
+  mapStyle?: string;
   // Per-segment congestion levels matching `polyline`. Length must equal
   // (decoded coords).length - 1. When provided, the route line is colored
   // green / amber / orange / red instead of solid emerald. When absent the
@@ -83,6 +87,7 @@ export default function MapboxMap({
   pins = [],
   polyline,
   congestion,
+  mapStyle,
   className,
   fitBounds = true,
   fitPadding = 60,
@@ -128,11 +133,10 @@ export default function MapboxMap({
         : [-117.9298, 33.6189];
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      // Navigation-style dark theme. Satellite hybrid was attempted but the
-      // public token's scope doesn't include the mapbox.satellite raster
-      // tileset, so only labels rendered (no imagery). Nav-night looks great
-      // and is proven to work with this token.
-      style: "mapbox://styles/mapbox/navigation-night-v1",
+      // Default = navigation-night-v1 (dark vector roads/labels, proven on
+      // this token). Caller can override — TV uses satellite-streets-v12
+      // for hybrid satellite imagery beneath road network.
+      style: mapStyle ?? "mapbox://styles/mapbox/navigation-night-v1",
       center,
       zoom: 13,
       attributionControl: false,
