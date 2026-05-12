@@ -291,13 +291,14 @@ function MapTab({
         const j = (await r.json()) as { location?: { lat: number; lng: number; reported_at: string } | null };
         if (cancel || localGeoOk.current) return;
         if (j.location) {
-          // 10-minute staleness threshold — iOS PWA gets backgrounded
+          // 30-minute staleness threshold — iOS PWA gets backgrounded
           // and stops reporting; the last known position is still useful
-          // as long as Mark hasn't been on the move recently. A live trip
-          // (driver picking him up) is the only case where stale-by-minutes
-          // matters, and that path is handled by the live ETA hook anyway.
+          // as long as Mark hasn't been on the move recently. The live
+          // ETA hook handles "driver picking him up" scenarios where
+          // stale-by-minutes would matter; the no-trip view just wants
+          // a recent-ish dot to anchor the "Van to you" card on.
           const ageS = (Date.now() - new Date(j.location.reported_at).getTime()) / 1000;
-          if (ageS < 600) setMyGps({ lat: j.location.lat, lng: j.location.lng });
+          if (ageS < 1800) setMyGps({ lat: j.location.lat, lng: j.location.lng });
         }
       } catch {}
     };
