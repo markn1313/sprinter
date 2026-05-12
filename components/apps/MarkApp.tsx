@@ -986,10 +986,10 @@ function MapTab({
                     key={m}
                     onClick={() => dispatchPickup(m)}
                     disabled={pickupBusy || !pickupPin}
-                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-1.5 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
+                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-1 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
                   >
-                    <span>{m === 0 ? "Now" : `${m} min`}</span>
-                    <span className="mt-0.5 font-mono text-[11px] font-normal text-violet-100/85 tabular-nums">
+                    <span className="leading-tight">{m === 0 ? "Now" : `${m} min`}</span>
+                    <span className="font-mono text-[13px] font-normal text-violet-100/90 tabular-nums leading-tight">
                       {targetLabel}
                     </span>
                   </button>

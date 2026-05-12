@@ -149,6 +149,14 @@ export default function MapboxMap({
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const dropPinMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const fittedRef = useRef<string>("");
+  // Ref-stored onPinDragEnd so the pin-creation useEffect doesn't re-fire
+  // every time the parent re-renders (which would tear down and rebuild
+  // all markers — including the one Mark is in the middle of dragging,
+  // snapping it back to its stale React-state position).
+  const onPinDragEndRef = useRef(onPinDragEnd);
+  useEffect(() => {
+    onPinDragEndRef.current = onPinDragEnd;
+  }, [onPinDragEnd]);
   // Ref-stored fitBounds applier — populated by the fitBounds useEffect so
   // the ResizeObserver (in the init effect) can re-run the fit when the
   // container's flex layout settles AFTER initial mount. Otherwise a tight
@@ -569,7 +577,11 @@ export default function MapboxMap({
           // is wired — lets Mark hold-and-drag the flag/pin slightly on the
           // map to tweak the location without opening the editor. Van /
           // mark / passenger markers stay fixed.
-          const editable = !!onPinDragEnd && (p.kind === "pickup" || p.kind === "dropoff" || p.kind === "stop" || p.kind === "pickup-target");
+          // Dragability is decided ONCE at marker creation off the ref's
+          // current value, then the dragend handler dereferences the ref
+          // again so the latest callback always fires without forcing the
+          // effect to re-run on every parent render.
+          const editable = !!onPinDragEndRef.current && (p.kind === "pickup" || p.kind === "dropoff" || p.kind === "stop" || p.kind === "pickup-target");
           const marker = new mapboxgl.Marker({ element: el, anchor, draggable: editable }).setLngLat([p.lng, p.lat]);
           if (editable) {
             el.style.cursor = "grab";
@@ -583,7 +595,7 @@ export default function MapboxMap({
               el.style.opacity = "";
               const ll = marker.getLngLat();
               try {
-                onPinDragEnd?.(p, ll.lat, ll.lng);
+                onPinDragEndRef.current?.(p, ll.lat, ll.lng);
               } catch (err) {
                 console.warn("[MapboxMap] onPinDragEnd handler threw", err);
               }
@@ -598,7 +610,11 @@ export default function MapboxMap({
         }
       })
       .filter((m): m is mapboxgl.Marker => m !== null);
-  }, [pins, pinScale, onPinDragEnd]);
+    // onPinDragEnd intentionally excluded — read via ref inside the
+    // marker handler so a new parent-render closure doesn't tear down
+    // and rebuild every marker (which was snapping the dragged pin back
+    // to its pre-drag position).
+  }, [pins, pinScale]);
 
   // Update polyline. Guard against the race where this effect fires BEFORE
   // the load handler creates the trip-route source. If the source isn't
