@@ -7,12 +7,16 @@ import { Check } from "lucide-react";
 interface Props {
   token: string;
   tripId?: string | null;
+  // Stack vertically when this strip is placed in a column (e.g. the
+  // Mark home right-side vital column). Default = horizontal row used
+  // by the passenger app + TV.
+  vertical?: boolean;
 }
 
 // Compact cabin-control row overlaying the main map. Inline SVG icons so colors
 // and sizes render reliably on iOS (Unicode triangles are sometimes drawn with
 // the system emoji font and ignore CSS color).
-export default function CabinQuickStrip({ token, tripId }: Props) {
+export default function CabinQuickStrip({ token, tripId, vertical = false }: Props) {
   const [recent, setRecent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -31,7 +35,7 @@ export default function CabinQuickStrip({ token, tripId }: Props) {
   // (h-10 w-10) — Mark asked for visual consistency. Previously this
   // strip used h-12 w-12 which dominated the bottom of the map.
   return (
-    <div className="flex items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl">
+    <div className={`flex ${vertical ? "flex-col" : "flex-row"} items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl`}>
       <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer">
         <TriangleUp />
       </Btn>

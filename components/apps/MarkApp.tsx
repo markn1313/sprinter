@@ -996,7 +996,7 @@ function MapTab({
         onPinPassengerSave={mapTrip && !inEditMode ? savePinPassenger : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
-        vanIconSize={56}
+        vanIconSize={45}
         pinScale={1.4}
         fitMaxZoom={17}
       />
@@ -1194,16 +1194,20 @@ function MapTab({
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
         )}
+        {/* Cabin climate buttons — vertical stack under the vital chips
+            (warmer / cooler / fan up / fan down). Moved here from the
+            bottom-center horizontal strip so the climate controls live
+            with the rest of the trip-context column. Only when a trip
+            is active and Dio is the one driving (Mark wouldn't ping
+            himself for cabin changes). */}
+        {live && (
+          <CabinQuickStrip token={token} tripId={live.id} vertical />
+        )}
       </div>
 
-      {/* Cabin climate quick-strip — bottom-center, only when a trip is active */}
-      {live && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center">
-          <div className="pointer-events-auto">
-            <CabinQuickStrip token={token} tripId={live.id} />
-          </div>
-        </div>
-      )}
+      {/* Cabin climate strip moved into the top-right vital column above
+          (see CabinQuickStrip vertical=true). Bottom-center placement
+          retired so the destination card has the full bottom strip. */}
 
       {/* TV-style bottom strip — mirrors the layout on the in-van TV.
           When there's a meaningful Next Stop in addition to Final
