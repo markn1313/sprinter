@@ -32,10 +32,13 @@ export default function CabinQuickStrip({ token, tripId, vertical = false }: Pro
   };
 
   // Buttons sized to match the Mark-home right-column vital chips
-  // (h-10 w-10) — Mark asked for visual consistency. Previously this
-  // strip used h-12 w-12 which dominated the bottom of the map.
+  // (h-10 w-10). The wrapping bubble background is dropped in vertical
+  // mode — each button has its own bg-zinc-800 so they read fine on
+  // their own, and Mark asked for no shared backdrop behind the icons.
+  // Horizontal mode keeps the bubble for the passenger app + TV where
+  // the strip floats over the map and needs the contrast.
   return (
-    <div className={`flex ${vertical ? "flex-col" : "flex-row"} items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl`}>
+    <div className={`flex ${vertical ? "flex-col items-center gap-1.5" : "flex-row items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl"}`}>
       <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer">
         <TriangleUp />
       </Btn>
