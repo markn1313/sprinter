@@ -306,7 +306,7 @@ export function haversine(lat1: number, lng1: number, lat2: number, lng2: number
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function encodePolyline(coords: [number, number][]): string {
+export function encodePolyline(coords: [number, number][]): string {
   let output = "";
   let prevLat = 0;
   let prevLng = 0;

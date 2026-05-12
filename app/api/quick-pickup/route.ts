@@ -85,17 +85,13 @@ export async function POST(req: Request) {
     },
   });
 
-  // Update Mark's live location too
-  if (typeof body.lat === "number" && typeof body.lng === "number") {
-    await sb
-      .from("mark_location")
-      .update({
-        lat: body.lat,
-        lng: body.lng,
-        reported_at: new Date().toISOString(),
-      })
-      .eq("id", 1);
-  }
+  // Intentionally do NOT update mark_location here. The lat/lng on the
+  // body is the PICKUP POINT, which is often distinct from where Mark is
+  // physically standing (e.g. he drops the pin 10 min walk away as a
+  // meeting spot). Overwriting mark_location with the pickup makes his
+  // "You" pin teleport to the pickup, hides the walk line, and breaks
+  // the van→me ETA card. Mark's actual GPS is reported by the browser
+  // geolocation watcher via POST /api/mark-location on its own cadence.
 
   return NextResponse.json({ trip });
 }

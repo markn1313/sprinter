@@ -17,6 +17,12 @@ export interface MapPin {
   // record to update. Trip stops use their UUID; pickup/dropoff use the
   // sentinel "pickup" / "dropoff" since there's exactly one per trip.
   id?: string;
+  // Stop-only metadata threaded through to the popup (MapboxMap consumer).
+  passenger?: string | null;
+  passenger_link_token?: string | null;
+  // Pickup-only — render the violet teardrop (pending-pickup visual)
+  // instead of the checkered flag. See MapboxMap PIN_HTML for the swap.
+  pending?: boolean;
 }
 
 interface Props {

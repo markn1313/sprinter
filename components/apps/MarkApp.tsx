@@ -24,6 +24,7 @@ import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
+import { encodePolyline } from "@/lib/routing";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
@@ -216,7 +217,11 @@ function MapTab({
   setShareGps: (v: boolean | ((p: boolean) => boolean)) => void;
   name: string;
 }) {
-  const { eta } = useEta(token, live?.id ?? null, 25_000);
+  // Fire ETA for the focused trip — `live` while in motion, else the next
+  // scheduled trip. Scheduled trips still need a route polyline + upcoming
+  // waypoints so the pending pickup pin can render with the van's route to
+  // reach it, not just float on the map alone.
+  const { eta } = useEta(token, mapTrip?.id ?? null, 25_000);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
 
@@ -334,6 +339,45 @@ function MapTab({
     // trip's pickup/dropoff here — that pulls the camera way out and is
     // not what Mark wants to look at while idle.
     if (!live) {
+      // Scheduled trip waiting for dispatch — surface the pending pickup
+      // pin (violet teardrop) so Mark sees WHERE the van is coming to
+      // fetch him, plus his own "You" mark and any dropoff/stops already
+      // staged. Suppressing the pickup pin (as the original branch did)
+      // hid useful state once a pickup was set 10 min away from him.
+      if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null) {
+        out.push({
+          kind: "pickup",
+          id: "pickup",
+          lat: mapTrip.pickup_lat,
+          lng: mapTrip.pickup_lng,
+          label: mapTrip.pickup_address ?? undefined,
+          pending: true,
+        });
+      }
+      if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null) {
+        out.push({
+          kind: "dropoff",
+          id: "dropoff",
+          lat: mapTrip.dropoff_lat,
+          lng: mapTrip.dropoff_lng,
+          label: mapTrip.dropoff_address ?? undefined,
+        });
+      }
+      stopsArr.forEach((s, i) => {
+        if (s.lat != null && s.lng != null) {
+          const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
+          out.push({
+            kind: "stop",
+            id: s.id,
+            lat: s.lat,
+            lng: s.lng,
+            label: s.address,
+            index: i + 1,
+            ...(sx.passenger ? { passenger: sx.passenger } : {}),
+            ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
+          });
+        }
+      });
       if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
       return out;
     }
@@ -436,7 +480,10 @@ function MapTab({
     { polyline: null, congestion: null, eta_minutes: null, distance_miles: null },
   );
   useEffect(() => {
-    if (live) {
+    // Skip van→me when ANY trip is in play (active or scheduled). The eta
+    // hook will return van→pickup (scheduled) or van→next-waypoint (live);
+    // both override the idle-state van→me line.
+    if (mapTrip) {
       setVanToMe({ polyline: null, congestion: null, eta_minutes: null, distance_miles: null });
       return;
     }
@@ -467,7 +514,7 @@ function MapTab({
       cancel = true;
     };
     // Re-run roughly every time the van moves > ~50m or myGps changes.
-  }, [live, token, pos?.lat?.toFixed(3), pos?.lng?.toFixed(3), myGps?.lat?.toFixed(3), myGps?.lng?.toFixed(3)]);
+  }, [mapTrip, token, pos?.lat?.toFixed(3), pos?.lng?.toFixed(3), myGps?.lat?.toFixed(3), myGps?.lng?.toFixed(3)]);
 
   // Any edit mode → preview the van→pin route. Otherwise: live ETA
   // polyline first, then van→me route, then saved trip route_polyline.
@@ -477,6 +524,35 @@ function MapTab({
   const congestion = inEditMode
     ? editRoute.congestion
     : eta?.congestion ?? vanToMe.congestion ?? null;
+
+  // Dashed walk line: Mark → pending pickup. Renders only when there's a
+  // scheduled trip with a pickup distinct from where Mark is standing —
+  // i.e. Mark dropped a pickup pin some distance away from himself and
+  // intends to walk to that meeting spot. Once the trip is dispatched
+  // (driver actively coming), the van comes to Mark and the walk line is
+  // no longer useful, so suppress it. Drawn as a 2-point great-circle
+  // line; not snapped to streets because OSRM's walking profile isn't
+  // wired and a straight guide is honest about "this is approximate."
+  const walkPolyline = useMemo<string | null>(() => {
+    if (inEditMode) return null;
+    if (!myGps || !mapTrip) return null;
+    if (mapTrip.status !== "scheduled") return null;
+    if (mapTrip.pickup_lat == null || mapTrip.pickup_lng == null) return null;
+    // Skip if Mark is essentially at the pickup (< ~30m) — no walk line needed.
+    const dLat = (mapTrip.pickup_lat - myGps.lat) * Math.PI / 180;
+    const dLng = (mapTrip.pickup_lng - myGps.lng) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(myGps.lat * Math.PI / 180) *
+        Math.cos(mapTrip.pickup_lat * Math.PI / 180) *
+        Math.sin(dLng / 2) ** 2;
+    const distM = 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    if (distM < 30) return null;
+    return encodePolyline([
+      [myGps.lng, myGps.lat],
+      [mapTrip.pickup_lng, mapTrip.pickup_lat],
+    ]);
+  }, [inEditMode, myGps, mapTrip]);
 
   // "Van is X min / Y mi from me" — prefer the Mapbox-computed route ETA
   // (vanToMe) when we have it; fall back to a straight-line haversine +
@@ -903,6 +979,7 @@ function MapTab({
         position={pos}
         pins={pins}
         polyline={polyline}
+        walkPolyline={walkPolyline}
         congestion={congestion}
         className="h-full w-full"
         focusMode={focusMode}

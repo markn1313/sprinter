@@ -20,6 +20,12 @@ export interface MapPin {
   // tags an intermediate stop with whoever's getting in there.
   passenger?: string | null;
   passenger_link_token?: string | null;
+  // Pickup-only: signal that this is a still-pending pickup (scheduled
+  // trip, no driver dispatched yet). Renders as the violet teardrop pin
+  // — same visual as pickup-mode — so Mark sees "the place where the
+  // van is coming to fetch me" rather than the checkered flag, which we
+  // reserve for finalized waypoints.
+  pending?: boolean;
 }
 
 type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
@@ -33,6 +39,12 @@ interface Props {
   position: (VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" }) | null;
   pins?: MapPin[];
   polyline?: string | null;
+  // Secondary dashed polyline — used for "you-walk-to-pickup" guidance.
+  // Rendered in a distinct violet color with a dasharray pattern so it
+  // visually reads as a guide line rather than the actual drivable route.
+  // Independent of the main `polyline` so a trip can show BOTH the van's
+  // driving route AND Mark's walking line at the same time.
+  walkPolyline?: string | null;
   // Mapbox style URL. Default is the proven navigation-night-v1 dark theme.
   // TV passes satellite-streets-v12 for a hybrid satellite-imagery + roads
   // look — verified token has access. Pass undefined to fall back to default.
@@ -136,6 +148,7 @@ export default function MapboxMap({
   position,
   pins = [],
   polyline,
+  walkPolyline,
   congestion,
   mapStyle,
   className,
@@ -330,6 +343,37 @@ export default function MapboxMap({
         });
       } catch (err) {
         console.warn("[MapboxMap] trip-route layer failed:", err);
+      }
+
+      // Walk-route line — a dashed violet line for "Mark → pickup" guidance.
+      // Separate source from trip-route so it stays distinct visually and
+      // can be updated independently. Sits BELOW the trip-route layers so a
+      // route polyline crossing it stays the dominant element.
+      try {
+        map.addSource("walk-route", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+        // Insert below the trip-route glow so the dashed line doesn't
+        // visually crowd the colored route line.
+        const beforeId = map.getLayer("trip-route-glow") ? "trip-route-glow" : undefined;
+        map.addLayer(
+          {
+            id: "walk-route-line",
+            type: "line",
+            source: "walk-route",
+            paint: {
+              "line-color": "#a78bfa",
+              "line-width": 3,
+              "line-opacity": 0.95,
+              "line-dasharray": [1.5, 2],
+            },
+            layout: { "line-cap": "round", "line-join": "round" },
+          },
+          beforeId,
+        );
+      } catch (err) {
+        console.warn("[MapboxMap] walk-route layer failed:", err);
       }
     });
 
@@ -593,7 +637,12 @@ export default function MapboxMap({
     pinMarkersRef.current = pins
       .map((p) => {
         try {
-          const html = pinHtml[p.kind]?.(p.index);
+          // pending pickup gets the violet teardrop, same SVG used in
+          // pickup-mode — "this pickup isn't dispatched yet, the van is
+          // still on its way to fetch you here." Switches back to the
+          // checkered flag once the trip moves to dispatched/at_pickup.
+          const visualKind: MapPin["kind"] = p.kind === "pickup" && p.pending ? "pickup-target" : p.kind;
+          const html = pinHtml[visualKind]?.(p.index);
           if (!html) return null;
           const el = document.createElement("div");
           el.innerHTML = html;
@@ -802,6 +851,39 @@ export default function MapboxMap({
       cancelled = true;
     };
   }, [polyline, congestion]);
+
+  // Walk-route polyline update. Same race-guard pattern as trip-route.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    let cancelled = false;
+    const apply = () => {
+      if (cancelled) return;
+      const src = map.getSource("walk-route") as mapboxgl.GeoJSONSource | undefined;
+      if (!src) {
+        const onStyle = () => {
+          map.off("styledata", onStyle);
+          apply();
+        };
+        map.on("styledata", onStyle);
+        return;
+      }
+      const coords = walkPolyline ? decodePolyline(walkPolyline) : [];
+      const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+      if (coords.length >= 2) {
+        features.push({
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: coords },
+        });
+      }
+      src.setData({ type: "FeatureCollection", features });
+    };
+    apply();
+    return () => {
+      cancelled = true;
+    };
+  }, [walkPolyline]);
 
   // Live-update line widths when caller bumps them (e.g. TV mode).
   useEffect(() => {
