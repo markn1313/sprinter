@@ -291,8 +291,13 @@ function MapTab({
         const j = (await r.json()) as { location?: { lat: number; lng: number; reported_at: string } | null };
         if (cancel || localGeoOk.current) return;
         if (j.location) {
+          // 10-minute staleness threshold — iOS PWA gets backgrounded
+          // and stops reporting; the last known position is still useful
+          // as long as Mark hasn't been on the move recently. A live trip
+          // (driver picking him up) is the only case where stale-by-minutes
+          // matters, and that path is handled by the live ETA hook anyway.
           const ageS = (Date.now() - new Date(j.location.reported_at).getTime()) / 1000;
-          if (ageS < 300) setMyGps({ lat: j.location.lat, lng: j.location.lng });
+          if (ageS < 600) setMyGps({ lat: j.location.lat, lng: j.location.lng });
         }
       } catch {}
     };
