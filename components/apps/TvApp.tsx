@@ -304,17 +304,17 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
           <div className="mt-0.5 truncate text-2xl font-semibold text-zinc-100 leading-tight">{label}</div>
         </div>
         <div>
-          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Time</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            <span className={`font-mono text-4xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
-            <span className="text-base text-zinc-400">min</span>
-          </div>
-        </div>
-        <div>
           <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Distance</div>
           <div className="mt-0.5 flex items-baseline gap-1">
             <span className="font-mono text-4xl font-bold tabular-nums leading-none text-zinc-100">{miles}</span>
             <span className="text-base text-zinc-400">mi</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Time</div>
+          <div className="mt-0.5 flex items-baseline gap-1">
+            <span className={`font-mono text-4xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
+            <span className="text-base text-zinc-400">min</span>
           </div>
         </div>
         <div className="text-right">
