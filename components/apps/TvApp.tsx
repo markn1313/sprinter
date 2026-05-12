@@ -75,13 +75,35 @@ export default function TvApp({ token }: { token: string }) {
 
   return (
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
-      {/* Split-screen map. LEFT = close-up around the van (follow-cam, top-
-          down, high zoom) so Mark sees street-level detail of where he is
-          right now. RIGHT = full remaining route fit-to-bounds so he sees
-          the whole path to the destination. Both share the same position,
+      {/* Split-screen map. LEFT = full remaining route fit-to-bounds
+          (navigation-night vector style) so Mark sees the whole path to
+          the destination. RIGHT = close-up around the van (satellite,
+          follow-cam, top-down, high zoom) so he sees street-level detail
+          of where he is right now. Both share the same position,
           polyline, congestion, and pins — only the framing differs. */}
       <div className="absolute inset-0 flex">
-        <div className="relative flex-1 border-r border-zinc-700">
+        <ClientMap
+          position={pos}
+          pins={pins}
+          polyline={polyline}
+          congestion={congestion}
+          mapStyle="mapbox://styles/mapbox/navigation-night-v1"
+          className="h-full flex-1 border-r border-zinc-700"
+          fitBounds={true}
+          fitPadding={{
+            top: 110,
+            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
+            left: 50,
+            right: 50,
+          }}
+          fitMaxZoom={17}
+          routeLineWidth={8}
+          routeGlowWidth={20}
+          vanIconSize={36}
+          pinScale={2.8}
+          followCam={false}
+        />
+        <div className="relative flex-1">
           <ClientMap
             position={pos}
             pins={pins}
@@ -100,27 +122,6 @@ export default function TvApp({ token }: { token: string }) {
             followCamRotate={false}
           />
         </div>
-        <ClientMap
-          position={pos}
-          pins={pins}
-          polyline={polyline}
-          congestion={congestion}
-          mapStyle="mapbox://styles/mapbox/navigation-night-v1"
-          className="h-full flex-1"
-          fitBounds={true}
-          fitPadding={{
-            top: 110,
-            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
-            left: 50,
-            right: 50,
-          }}
-          fitMaxZoom={17}
-          routeLineWidth={8}
-          routeGlowWidth={20}
-          vanIconSize={36}
-          pinScale={2.8}
-          followCam={false}
-        />
       </div>
 
       {/* Branding strip — top-left */}
