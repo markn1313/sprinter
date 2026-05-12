@@ -541,15 +541,59 @@ function MapTab({
     }
   };
 
-  // Enter pickup mode: drop the violet pin at Mark's GPS, zoom in, swap
-  // the bottom strip for the time chips.
+  // Pickup mode operates in two flavors. "edit" applies when a trip is
+  // already in motion toward Mark (scheduled / dispatched / at_pickup):
+  // tapping a time chip PATCHes that existing trip's pickup location +
+  // scheduled_at, instead of cancelling and creating a fresh one. The
+  // map pin pre-populates at the existing pickup so Mark can drag from
+  // there. "new" applies otherwise — fresh trip from Mark's current GPS.
+  const editTrip = useMemo<Trip | null>(() => {
+    // live = dispatched / at_pickup / onboard / at_dropoff; we only
+    // edit-mode for dispatched and at_pickup. Fall back to mapTrip
+    // (which may be the next scheduled trip when no live trip exists).
+    if (live && (live.status === "dispatched" || live.status === "at_pickup")) return live;
+    if (!live && mapTrip && mapTrip.status === "scheduled") return mapTrip;
+    return null;
+  }, [live, mapTrip]);
+  const pickupModeKind: "edit" | "new" = editTrip ? "edit" : "new";
+
+  // Is Mark physically in the van? Hide the Pickup button in that case —
+  // summoning a van you're already inside is meaningless. Two signals:
+  // (a) the trip's status says he's onboard / at_dropoff (he must be
+  // in the van for those), or (b) his GPS is within ~50 m of the van's
+  // position. If we don't have GPS, fall back to the trip-status signal.
+  const inVan = useMemo(() => {
+    if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
+    if (!myGps || !pos) return false;
+    const R = 6_371_000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(pos.lat - myGps.lat);
+    const dLng = toRad(pos.lng - myGps.lng);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
+    const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return m < 50;
+  }, [live, myGps, pos]);
+
+  // Enter pickup mode. In NEW mode the pin starts at Mark's GPS. In EDIT
+  // mode the pin starts at the existing trip's recorded pickup so Mark
+  // sees what Dio is already heading to, then can drag from there.
   const enterPickup = () => {
-    if (!myGps) return; // No "me" to anchor on — silently no-op
-    setPickupPin({ lat: myGps.lat, lng: myGps.lng });
-    setPickupAddress(meAddress ?? null);
+    let start: { lat: number; lng: number } | null = null;
+    if (pickupModeKind === "edit" && editTrip?.pickup_lat != null && editTrip.pickup_lng != null) {
+      start = { lat: editTrip.pickup_lat, lng: editTrip.pickup_lng };
+      setPickupAddress(editTrip.pickup_address ?? null);
+    } else if (myGps) {
+      start = { lat: myGps.lat, lng: myGps.lng };
+      setPickupAddress(meAddress ?? null);
+    }
+    if (!start) return; // Nothing to anchor on
+    setPickupPin(start);
     setPickupMode(true);
-    // Hard zoom into Mark's spot at street level. We do it via focusKey
-    // bump so the existing focus-mode pipeline handles the smooth fly.
+    // Hard zoom into the pin at street level via the existing focus-mode
+    // pipeline — bumping focusKey replays the fly even if focusMode was
+    // already "me".
     setFocusMode("me");
     setFocusKey((k) => k + 1);
   };
@@ -609,10 +653,10 @@ function MapTab({
     };
   }, [pickupMode, pickupPin?.lat?.toFixed(4), pickupPin?.lng?.toFixed(4), token]);
 
-  // Dispatch handler — fires when Mark taps a time chip. Sends the
-  // (possibly dragged) pin coords to /api/quick-pickup with the chosen
-  // offset, then exits pickup mode. Server cancels any open trip and
-  // reverse-geocodes the sentinel pickup label.
+  // Commit a pickup change. Two paths depending on mode:
+  // - NEW: /api/quick-pickup (cancels open trips, creates a fresh one)
+  // - EDIT: PATCH the existing trip's pickup_lat/lng + scheduled_at.
+  //   Dio's app sees the change via realtime CDC and re-routes.
   const dispatchPickup = async (offsetMin: number) => {
     if (!pickupPin || pickupBusy) return;
     setPickupBusy(true);
@@ -620,13 +664,26 @@ function MapTab({
       const when = offsetMin > 0
         ? new Date(Date.now() + offsetMin * 60_000).toISOString()
         : new Date().toISOString();
-      await postJson(token, "/api/quick-pickup", {
-        lat: pickupPin.lat,
-        lng: pickupPin.lng,
-        address: "My current location",
-        scheduled_at: when,
-        notes: offsetMin === 0 ? "Pick me up now" : `Pick me up in ${offsetMin} min`,
-      });
+      if (pickupModeKind === "edit" && editTrip) {
+        await fetch(`/api/trips/${editTrip.id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pickup_lat: pickupPin.lat,
+            pickup_lng: pickupPin.lng,
+            pickup_address: pickupAddress ?? `${pickupPin.lat.toFixed(5)}, ${pickupPin.lng.toFixed(5)}`,
+            scheduled_at: when,
+          }),
+        });
+      } else {
+        await postJson(token, "/api/quick-pickup", {
+          lat: pickupPin.lat,
+          lng: pickupPin.lng,
+          address: "My current location",
+          scheduled_at: when,
+          notes: offsetMin === 0 ? "Pick me up now" : `Pick me up in ${offsetMin} min`,
+        });
+      }
       exitPickup();
       refresh();
     } catch (err) {
@@ -775,17 +832,21 @@ function MapTab({
           of the column (above fuel%) so it's always reachable without
           competing with the map controls on the left. */}
       <div className="absolute right-3 top-3 z-30 flex w-fit flex-col items-stretch gap-1.5">
-        <button
-          onClick={() => (pickupMode ? exitPickup() : enterPickup())}
-          disabled={!pickupMode && !myGps}
-          className={`rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow ${
-            pickupMode
-              ? "bg-zinc-800 hover:bg-zinc-700"
-              : "bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
-          }`}
-        >
-          {pickupMode ? "✕ Cancel" : "Pickup"}
-        </button>
+        {/* Pickup is meaningless when Mark is physically in the van — hide
+            the button entirely (no fat-finger cancel of his current ride). */}
+        {(!inVan || pickupMode) && (
+          <button
+            onClick={() => (pickupMode ? exitPickup() : enterPickup())}
+            disabled={!pickupMode && !myGps && pickupModeKind !== "edit"}
+            className={`rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow ${
+              pickupMode
+                ? "bg-zinc-800 hover:bg-zinc-700"
+                : "bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            }`}
+          >
+            {pickupMode ? "✕ Cancel" : pickupModeKind === "edit" ? "Modify" : "Pickup"}
+          </button>
+        )}
         <button
           onClick={() => setShareGps((v) => !v)}
           className={`rounded-2xl border border-zinc-800 px-2.5 py-2 text-[11px] backdrop-blur ${shareGps ? "bg-violet-900/50 text-violet-200" : "bg-zinc-950/85 text-zinc-400"}`}
@@ -883,7 +944,8 @@ function MapTab({
         <div className="absolute inset-x-3 bottom-3 z-30">
           <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-3 shadow-2xl">
             <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-violet-300">
-              <span aria-hidden>📍</span> Pick me up
+              <span aria-hidden>📍</span>
+              {pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}
             </div>
             <div className="mt-1 truncate text-base font-semibold text-zinc-100 leading-tight">
               {pickupAddress ?? (pickupPin ? `${pickupPin.lat.toFixed(5)}, ${pickupPin.lng.toFixed(5)}` : "Locating…")}
@@ -906,7 +968,9 @@ function MapTab({
               ))}
             </div>
             <div className="mt-2 text-[10px] text-zinc-500">
-              Drag the pin to move the pickup spot.
+              {pickupModeKind === "edit"
+                ? "Drag the pin to move the spot · tap a time to update Dio's plan"
+                : "Drag the pin to move the pickup spot."}
             </div>
           </div>
         </div>
