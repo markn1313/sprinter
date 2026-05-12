@@ -612,7 +612,31 @@ function MapTab({
             title="Fit van + me"
           />
         )}
-        <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
+        <FocusBtn
+          label={
+            // Full-size SVG version of the ⤢ "fit-to-window" glyph —
+            // arrows reach into opposite corners so the icon visually
+            // fills the button at the same scale as icons 1-3.
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 22 22"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="8,2 2,2 2,8" />
+              <line x1="2" y1="2" x2="9" y2="9" />
+              <polyline points="14,20 20,20 20,14" />
+              <line x1="20" y1="20" x2="13" y2="13" />
+            </svg>
+          }
+          onClick={() => focus("auto")}
+          title="Auto-fit"
+        />
         {droppedPin && (
           <FocusBtn
             label={<span className="text-2xl leading-none">✕</span>}
