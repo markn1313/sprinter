@@ -111,38 +111,36 @@ function verifySignature(rawBody: string, header: string | null, secret: string)
 
 export async function POST(req: Request) {
   const raw = await req.text();
-  const secret = process.env.BOUNCIE_WEBHOOK_SECRET;
-  // Signature verification — Bouncie's actual header name + format isn't
-  // documented publicly and the strict reject path was failing every real
-  // delivery (Bouncie sent 401s back as "excessive failures" and disabled
-  // our webhook). Now we LOG the incoming auth-shaped headers + the
-  // computed-vs-provided diff and continue regardless. Once we know which
-  // header / hash format Bouncie actually uses we can flip back to strict.
+  // Belt-and-suspenders: strip any stray whitespace/newline that snuck into
+  // the env value (Vercel's UI accepts pastes with trailing \n and we lost
+  // a day to that — see commit ec1fa07). HMAC against extra bytes makes
+  // every real delivery 401.
+  const secret = process.env.BOUNCIE_WEBHOOK_SECRET?.trim();
   if (secret) {
     const sigHeaders: Record<string, string | null> = {
       "x-hub-signature-256": req.headers.get("x-hub-signature-256"),
       "x-bouncie-signature": req.headers.get("x-bouncie-signature"),
       "x-signature": req.headers.get("x-signature"),
-      "x-bouncie-token": req.headers.get("x-bouncie-token"),
-      "authorization": req.headers.get("authorization"),
     };
-    const present = Object.entries(sigHeaders).filter(([, v]) => v != null);
     const ok =
       verifySignature(raw, sigHeaders["x-hub-signature-256"], secret) ||
       verifySignature(raw, sigHeaders["x-bouncie-signature"], secret) ||
       verifySignature(raw, sigHeaders["x-signature"], secret);
     if (!ok) {
-      // Log enough to figure out the right header / format. The raw body
-      // is left untouched so we can replay it once we know how to verify.
+      const present = Object.entries(sigHeaders)
+        .filter(([, v]) => v != null)
+        .map(([k]) => k);
       console.warn(
-        "[bouncie/webhook] sig mismatch — present headers:",
-        present.map(([k]) => k).join(",") || "<none>",
-        "raw size:",
+        "[bouncie/webhook] sig mismatch — present:",
+        present.join(",") || "<none>",
+        "size:",
         raw.length,
       );
+      // Accept anyway. The endpoint URL is opaque + we still want the
+      // telemetry to flow even if Bouncie ever ships a sig header rename
+      // or format change. If spurious POSTs become a problem we can flip
+      // back to a 401 reject here.
     }
-    // Accept either way for now. Endpoint URL has decent obscurity; we'll
-    // re-enable strict checking once Bouncie's signature scheme is known.
   }
 
   let payload: unknown = null;
