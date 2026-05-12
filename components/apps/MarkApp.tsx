@@ -11,17 +11,15 @@ import { MapPin } from "@/components/LiveMap";
 import LinkGenerator from "@/components/LinkGenerator";
 import PushToggle from "@/components/PushToggle";
 import InsightsCard from "@/components/InsightsCard";
-import QuickDispatchChips from "@/components/QuickDispatchChips";
 import ShareTripButton from "@/components/ShareTripButton";
-import WelcomeCard from "@/components/WelcomeCard";
 import TripRecapCard from "@/components/TripRecapCard";
 import LeaveByCard from "@/components/LeaveByCard";
 import FuelAlertCard from "@/components/FuelAlertCard";
+import EtaCard from "@/components/EtaCard";
 import VoiceCabin from "@/components/VoiceCabin";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
-import EtaBottomBar from "@/components/EtaBottomBar";
 import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { statusLabel } from "@/lib/format";
@@ -280,21 +278,33 @@ function MapTab({
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
+    // Resolve stop UUIDs by matching label against the server-side stops
+    // array — `upcoming` (from eta) doesn't include the id directly.
+    const stopByLabel = new Map<string, string>();
+    stopsArr.forEach((s) => {
+      if (s.id) stopByLabel.set(s.address, s.id);
+    });
     if (upcoming && upcoming.length > 0) {
       let stopIdx = 0;
       upcoming.forEach((w) => {
         const idx = w.kind === "stop" ? ++stopIdx : undefined;
-        out.push({ kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}) });
+        const id =
+          w.kind === "pickup"
+            ? "pickup"
+            : w.kind === "dropoff"
+              ? "dropoff"
+              : stopByLabel.get(w.label) ?? undefined;
+        out.push({ kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}), ...(id ? { id } : {}) });
       });
     } else {
       // Fallback while ETA hasn't loaded yet
       if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
-        out.push({ kind: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
+        out.push({ kind: "pickup", id: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
       if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
-        out.push({ kind: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
+        out.push({ kind: "dropoff", id: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
       stopsArr.forEach((s, i) => {
         if (s.lat != null && s.lng != null)
-          out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+          out.push({ kind: "stop", id: s.id, lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
       });
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
@@ -323,6 +333,56 @@ function MapTab({
     return { miles: +miles.toFixed(miles < 10 ? 1 : 0), minutes };
   }, [pos, myGps]);
 
+  // Drag a pin to update its location. Reverse-geocode the new coords for
+  // a friendly address, then PATCH the trip (pickup/dropoff) or replace
+  // the stops array (intermediate stop). Trips refresh via realtime on
+  // success so the map snaps to the persisted coordinates.
+  const handlePinDrag = async (pin: MapPin, newLat: number, newLng: number) => {
+    if (!mapTrip) return;
+    let address: string | undefined;
+    try {
+      const r = await fetch(`/api/places/reverse-geocode?lat=${newLat}&lng=${newLng}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = (await r.json()) as { display?: string };
+      address = j.display;
+    } catch {
+      address = `${newLat.toFixed(5)}, ${newLng.toFixed(5)}`;
+    }
+    try {
+      if (pin.kind === "pickup") {
+        await fetch(`/api/trips/${mapTrip.id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ pickup_lat: newLat, pickup_lng: newLng, pickup_address: address }),
+        });
+      } else if (pin.kind === "dropoff") {
+        await fetch(`/api/trips/${mapTrip.id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ dropoff_lat: newLat, dropoff_lng: newLng, dropoff_address: address }),
+        });
+      } else if (pin.kind === "stop") {
+        // Build the next stops array — match by id (preferred) or fall back
+        // to lat/lng + label proximity if no id was wired.
+        const next = stopsArr.map((s) => {
+          const matches =
+            (pin.id && s.id === pin.id) ||
+            (!pin.id && Math.abs((s.lat ?? 0) - pin.lat) < 1e-6 && Math.abs((s.lng ?? 0) - pin.lng) < 1e-6);
+          return matches ? { ...s, lat: newLat, lng: newLng, address: address ?? s.address } : s;
+        });
+        await fetch(`/api/trips/${mapTrip.id}/stops`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ stops: next }),
+        });
+      }
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] pin drag PATCH failed", err);
+    }
+  };
+
   const navUrl = useMemo(() => {
     if (!mapTrip) return null;
     const wp: Array<{ lat: number; lng: number; label?: string }> = [];
@@ -349,6 +409,7 @@ function MapTab({
         droppedPin={droppedPin}
         onMapClick={onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
+        onPinDragEnd={mapTrip ? handlePinDrag : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={56}
@@ -449,29 +510,69 @@ function MapTab({
         </div>
       )}
 
-      {/* ETA bottom bar — full-width, two rows (next stop + final destination) */}
-      {live && eta && (
-        <div className="absolute inset-x-3 bottom-3 z-30 flex flex-col gap-2 sm:flex-row sm:items-stretch">
-          <button onClick={() => setSheet("trip")} className="flex-1 text-left">
-            <EtaBottomBar eta={eta} />
-          </button>
-          <div className="flex items-stretch gap-2">
-            <ShareTripButton token={token} tripId={live.id} label="Share" />
-            {navUrl && (
-              <a
-                href={navUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
-              >
-                <Navigation size={14} /> Maps
-              </a>
+      {/* TV-style bottom strip — mirrors the layout on the in-van TV.
+          When there's a meaningful Next Stop in addition to Final
+          Destination, both cards stack. Tap either to open the trip
+          editor. Maps + Share buttons sit to the right. */}
+      {live && eta && (() => {
+        const sameTarget =
+          !!eta.to_next &&
+          !!eta.to_final &&
+          (
+            eta.to_next.label === eta.to_final.label ||
+            /current\s+location|my\s+location/i.test(eta.to_next.label) ||
+            eta.to_next.distance_miles < 0.3
+          );
+        const showNext = !sameTarget && !!eta.to_next;
+        return (
+          <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
+            {showNext && eta.to_next && (
+              <button onClick={() => setSheet("trip")} className="block w-full text-left">
+                <EtaCard
+                  compact
+                  kind="stop"
+                  label={eta.to_next.label}
+                  minutes={eta.to_next.eta_minutes}
+                  miles={eta.to_next.distance_miles}
+                  primary
+                  titleOverride="Next destination"
+                />
+              </button>
+            )}
+            {eta.to_final && (
+              <div className="flex items-stretch gap-2">
+                <button onClick={() => setSheet("trip")} className="flex-1 text-left">
+                  <EtaCard
+                    compact
+                    kind="dropoff"
+                    label={eta.to_final.label}
+                    minutes={eta.to_final.eta_minutes}
+                    miles={eta.to_final.distance_miles}
+                    primary={!showNext}
+                    titleOverride="Final destination"
+                  />
+                </button>
+                <ShareTripButton token={token} tripId={live.id} label="Share" />
+                {navUrl && (
+                  <a
+                    href={navUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
+                  >
+                    <Navigation size={14} /> Maps
+                  </a>
+                )}
+              </div>
             )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {/* No active trip — recent trip recap + welcome + quick-dispatch */}
+      {/* No active trip — just the operational cards (recap, fuel alert,
+          upcoming-trip leave-by). The home-CTA chip strip and welcome
+          banner were removed — they cluttered the screen with rarely-
+          useful info. */}
       {!live && (
         <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
           <TripRecapCard token={token} />
@@ -481,15 +582,6 @@ function MapTab({
             vanLng={pos?.lng ?? null}
           />
           <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
-          <WelcomeCard
-            token={token}
-            vanLat={pos?.lat ?? null}
-            vanLng={pos?.lng ?? null}
-            myLat={myGps?.lat ?? null}
-            myLng={myGps?.lng ?? null}
-            onDispatched={refresh}
-          />
-          <QuickDispatchChips token={token} onDispatched={refresh} />
         </div>
       )}
 

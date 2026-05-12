@@ -65,6 +65,10 @@ interface Props {
   droppedPin?: DroppedPin | null;
   onMapClick?: (lat: number, lng: number) => void;
   onDroppedPinClick?: () => void;
+  // When provided, pickup / stop / dropoff markers become draggable. The
+  // callback fires with the moved pin and its new lat/lng so the caller can
+  // PATCH the underlying record. Mark / passenger / van markers stay fixed.
+  onPinDragEnd?: (pin: MapPin, lat: number, lng: number) => void;
 }
 
 const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => string> => {
@@ -119,6 +123,7 @@ export default function MapboxMap({
   droppedPin = null,
   onMapClick,
   onDroppedPinClick,
+  onPinDragEnd,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -539,7 +544,30 @@ export default function MapboxMap({
           const el = document.createElement("div");
           el.innerHTML = html;
           const anchor = p.kind === "mark" || p.kind === "passenger" ? "center" : "bottom";
-          const marker = new mapboxgl.Marker({ element: el, anchor }).setLngLat([p.lng, p.lat]);
+          // Pickup / stop / dropoff become draggable when a drag-end handler
+          // is wired — lets Mark hold-and-drag the flag/pin slightly on the
+          // map to tweak the location without opening the editor. Van /
+          // mark / passenger markers stay fixed.
+          const editable = !!onPinDragEnd && (p.kind === "pickup" || p.kind === "dropoff" || p.kind === "stop");
+          const marker = new mapboxgl.Marker({ element: el, anchor, draggable: editable }).setLngLat([p.lng, p.lat]);
+          if (editable) {
+            el.style.cursor = "grab";
+            el.title = "Drag to update";
+            marker.on("dragstart", () => {
+              el.style.cursor = "grabbing";
+              el.style.opacity = "0.85";
+            });
+            marker.on("dragend", () => {
+              el.style.cursor = "grab";
+              el.style.opacity = "";
+              const ll = marker.getLngLat();
+              try {
+                onPinDragEnd?.(p, ll.lat, ll.lng);
+              } catch (err) {
+                console.warn("[MapboxMap] onPinDragEnd handler threw", err);
+              }
+            });
+          }
           if (p.label) marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
           marker.addTo(map);
           return marker;
@@ -549,7 +577,7 @@ export default function MapboxMap({
         }
       })
       .filter((m): m is mapboxgl.Marker => m !== null);
-  }, [pins, pinScale]);
+  }, [pins, pinScale, onPinDragEnd]);
 
   // Update polyline. Guard against the race where this effect fires BEFORE
   // the load handler creates the trip-route source. If the source isn't

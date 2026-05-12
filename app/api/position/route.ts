@@ -101,7 +101,22 @@ export async function GET(req: Request) {
 
   // Fire-and-forget: append to vehicle_positions timeseries when we got a real
   // Bouncie sample. Also auto-advance trip status if the van crossed a
-  // geofence (100m around pickup or dropoff).
+  // geofence (100m around pickup or dropoff) OR clearly DEPARTED a geofenced
+  // point (>400m away, speed > 5 mph). Departure detection lets us walk a
+  // trip through its whole state machine — dispatch → at_pickup → onboard →
+  // at_stop_N → onboard → at_dropoff → complete — purely from location
+  // changes, without any input from Mark, Dio, or the passenger.
+  interface TripStop {
+    id: string;
+    kind: "pickup" | "dropoff" | "stop";
+    address: string;
+    lat: number | null;
+    lng: number | null;
+    arrived_at?: string | null;
+  }
+  const DEPART_M = 400;
+  const DEPART_MPH = 5;
+
   if (pos.source === "bouncie") {
     let activeTrip: {
       id: string;
@@ -111,14 +126,15 @@ export async function GET(req: Request) {
       pickup_lng: number | null;
       dropoff_lat: number | null;
       dropoff_lng: number | null;
+      stops: TripStop[] | null;
     } | null = null;
     try {
       // Includes `scheduled` so "Take me home" / Quick-Dispatch trips that
       // never explicitly transitioned through dispatch can still get
-      // auto-advanced by movement (see below).
+      // auto-advanced by movement.
       const { data } = await supabaseAdmin()
         .from("trips")
-        .select("id,status,pickup_address,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
+        .select("id,status,pickup_address,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,stops")
         .in("status", ["scheduled", "dispatched", "at_pickup", "onboard", "at_dropoff"])
         .order("scheduled_at", { ascending: false })
         .limit(1)
@@ -141,10 +157,24 @@ export async function GET(req: Request) {
 
     // Auto-advance based on geofence (best-effort, don't block response)
     if (activeTrip) {
+      const speed = pos.speed_mph ?? 0;
       void (async () => {
         try {
           const sb = supabaseAdmin();
           const t = activeTrip!;
+          const now = new Date().toISOString();
+
+          // scheduled → dispatched when the van is moving. Driver took the
+          // wheel and started toward pickup without tapping anything.
+          if (t.status === "scheduled" && speed > DEPART_MPH) {
+            await sb
+              .from("trips")
+              .update({ status: "dispatched", dispatched_at: now })
+              .eq("id", t.id)
+              .eq("status", "scheduled");
+            logTripEvent({ trip_id: t.id, kind: "auto_dispatched", payload: { reason: "speed>" + DEPART_MPH } });
+          }
+
           // dispatched → at_pickup when within 100m of pickup
           if (
             t.status === "dispatched" &&
@@ -154,11 +184,55 @@ export async function GET(req: Request) {
           ) {
             await sb
               .from("trips")
-              .update({ status: "at_pickup", arrived_at_pickup_at: new Date().toISOString() })
+              .update({ status: "at_pickup", arrived_at_pickup_at: now })
               .eq("id", t.id)
               .eq("status", "dispatched");
             logTripEvent({ trip_id: t.id, kind: "auto_at_pickup", payload: { reason: "geofence" } });
           }
+
+          // at_pickup → onboard once the van moves away from pickup with
+          // speed (departure detection — passenger is in the van, driver
+          // pulled out).
+          if (
+            t.status === "at_pickup" &&
+            t.pickup_lat != null &&
+            t.pickup_lng != null &&
+            speed > DEPART_MPH &&
+            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) > DEPART_M
+          ) {
+            await sb
+              .from("trips")
+              .update({ status: "onboard", onboard_at: now })
+              .eq("id", t.id)
+              .eq("status", "at_pickup");
+            logTripEvent({ trip_id: t.id, kind: "auto_onboard", payload: { reason: "departed pickup" } });
+          }
+
+          // Multi-stop: while onboard, mark intermediate stops as arrived
+          // when the van enters the 100m geofence. Stops are stored as a
+          // JSON array on the trip row; we mutate in place and PATCH the
+          // whole array back.
+          if (t.status === "onboard" && Array.isArray(t.stops) && t.stops.length > 0) {
+            const stops = t.stops;
+            let dirty = false;
+            for (const s of stops) {
+              if (
+                s.kind === "stop" &&
+                !s.arrived_at &&
+                s.lat != null &&
+                s.lng != null &&
+                haversineM(pos.lat, pos.lng, s.lat, s.lng) < GEOFENCE_M
+              ) {
+                s.arrived_at = now;
+                dirty = true;
+                logTripEvent({ trip_id: t.id, kind: "auto_at_stop", payload: { stop_id: s.id, address: s.address } });
+              }
+            }
+            if (dirty) {
+              await sb.from("trips").update({ stops }).eq("id", t.id);
+            }
+          }
+
           // onboard → at_dropoff when within 100m of dropoff
           if (
             t.status === "onboard" &&
@@ -168,11 +242,32 @@ export async function GET(req: Request) {
           ) {
             await sb
               .from("trips")
-              .update({ status: "at_dropoff", arrived_at_dropoff_at: new Date().toISOString() })
+              .update({ status: "at_dropoff", arrived_at_dropoff_at: now })
               .eq("id", t.id)
               .eq("status", "onboard");
             logTripEvent({ trip_id: t.id, kind: "auto_at_dropoff", payload: { reason: "geofence" } });
           }
+
+          // at_dropoff → complete once the van moves away from dropoff
+          // with speed (departure detection — passenger off-loaded, van
+          // is heading somewhere else). Skipping the explicit "complete"
+          // tap means the trip-history view and recap card update on
+          // their own.
+          if (
+            t.status === "at_dropoff" &&
+            t.dropoff_lat != null &&
+            t.dropoff_lng != null &&
+            speed > DEPART_MPH &&
+            haversineM(pos.lat, pos.lng, t.dropoff_lat, t.dropoff_lng) > DEPART_M
+          ) {
+            await sb
+              .from("trips")
+              .update({ status: "complete", completed_at: now })
+              .eq("id", t.id)
+              .eq("status", "at_dropoff");
+            logTripEvent({ trip_id: t.id, kind: "auto_complete", payload: { reason: "departed dropoff" } });
+          }
+
           // scheduled → onboard for "current-location" pickups where the van
           // has clearly left pickup behind (>400m, moving). These are
           // "Take me home" / Quick-Dispatch trips that never go through the
@@ -185,16 +280,16 @@ export async function GET(req: Request) {
             /current\s+location|my\s+location|mark.?s\s+location/i.test(t.pickup_address) &&
             t.pickup_lat != null &&
             t.pickup_lng != null &&
-            (pos.speed_mph ?? 0) > 5 &&
-            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) > 400
+            speed > DEPART_MPH &&
+            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) > DEPART_M
           ) {
             await sb
               .from("trips")
               .update({
                 status: "onboard",
-                dispatched_at: new Date().toISOString(),
-                arrived_at_pickup_at: new Date().toISOString(),
-                onboard_at: new Date().toISOString(),
+                dispatched_at: now,
+                arrived_at_pickup_at: now,
+                onboard_at: now,
               })
               .eq("id", t.id)
               .in("status", ["scheduled", "dispatched"]);

@@ -122,7 +122,7 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
     <div className={`rounded-2xl border ${palette.ring} bg-zinc-950/95 p-4 backdrop-blur shadow-xl`}>
       <div className={`flex items-center gap-1.5 text-xs uppercase tracking-wider ${palette.text}`}>
         {tone === "red" ? <AlertTriangle size={12} className={palette.icon} /> : <Calendar size={12} className={palette.icon} />}
-        Next trip
+        Next destination
       </div>
       <div className="mt-2 flex items-baseline justify-between">
         <div className="font-mono text-lg font-bold tabular-nums text-zinc-100">

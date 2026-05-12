@@ -10,7 +10,8 @@ import { MapPin } from "@/components/LiveMap";
 import { rangeMiles } from "@/lib/range";
 import { stripZip } from "@/lib/format";
 import VanIcon from "@/components/VanIcon";
-import { Gauge, Flag, MapPin as PinIcon, Navigation } from "lucide-react";
+import EtaCard from "@/components/EtaCard";
+import { Gauge, Navigation } from "lucide-react";
 
 // 4K-friendly TV display. Optimized for big screens — large type, no interactive
 // controls. Same data sources as the rider/owner apps so it stays in sync.
@@ -301,60 +302,6 @@ function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: s
       <div className="mt-1 flex items-baseline gap-1">
         <span className="font-mono text-5xl font-bold tabular-nums text-zinc-100">{value}</span>
         {unit && <span className="text-base font-semibold text-zinc-500">{unit}</span>}
-      </div>
-    </div>
-  );
-}
-
-function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind: string; label: string; minutes: number; miles: number; primary?: boolean; titleOverride?: string }) {
-  const Icon = kind === "dropoff" ? Flag : kind === "pickup" ? PinIcon : PinIcon;
-  const arrival = new Date(Date.now() + minutes * 60_000).toLocaleTimeString("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  // Compact two-row layout: title strip on top (label left, header right),
-  // big numbers row underneath. Roughly 40% shorter than the prior card.
-  return (
-    <div
-      className={`rounded-2xl border px-5 py-2.5 shadow-2xl ${
-        primary
-          ? "border-emerald-700/60 bg-zinc-950"
-          : "border-blue-700/60 bg-zinc-950"
-      }`}
-    >
-      {/* Address takes all available space on the LEFT; distance / time /
-          arrival shrink to their content and hug the RIGHT edge. Gives the
-          (truncatable) address as much room as possible while keeping the
-          stat numbers chunky and readable. */}
-      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-8 items-center">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
-            <span className={`text-xs uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
-              {titleOverride ?? (kind === "pickup" ? "Pickup" : kind === "stop" ? "Next stop" : "Final destination")}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate text-2xl font-semibold text-zinc-100 leading-tight">{label}</div>
-        </div>
-        <div>
-          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Distance</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            <span className="font-mono text-4xl font-bold tabular-nums leading-none text-zinc-100">{miles}</span>
-            <span className="text-base text-zinc-400">mi</span>
-          </div>
-        </div>
-        <div>
-          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Time</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            <span className={`font-mono text-4xl font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
-            <span className="text-base text-zinc-400">min</span>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-sm uppercase tracking-widest text-zinc-400 leading-none">Arrival</div>
-          <div className="mt-0.5 font-mono text-4xl font-bold tabular-nums leading-none text-zinc-100">{arrival}</div>
-        </div>
       </div>
     </div>
   );

@@ -13,6 +13,10 @@ export interface MapPin {
   lng: number;
   label?: string;
   index?: number;
+  // Stable identifier so a drag-end callback can resolve which underlying
+  // record to update. Trip stops use their UUID; pickup/dropoff use the
+  // sentinel "pickup" / "dropoff" since there's exactly one per trip.
+  id?: string;
 }
 
 interface Props {
