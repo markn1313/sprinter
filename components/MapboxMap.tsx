@@ -257,9 +257,12 @@ export default function MapboxMap({
           type: "line",
           source: "trip-route",
           paint: {
-            "line-color": "#0b0f14",
-            "line-width": routeLineWidth + 6,
-            "line-opacity": 0.95,
+            // White outline reads against both satellite imagery AND the
+            // dark nav-night style. Dark borders were getting lost on
+            // night-style maps where the base color is already near-black.
+            "line-color": "#ffffff",
+            "line-width": routeLineWidth + 10,
+            "line-opacity": 0.92,
           },
           layout: { "line-cap": "round", "line-join": "round" },
         });
@@ -646,7 +649,7 @@ export default function MapboxMap({
           map.setPaintProperty("trip-route-line", "line-width", routeLineWidth);
         }
         if (map.getLayer("trip-route-border")) {
-          map.setPaintProperty("trip-route-border", "line-width", routeLineWidth + 6);
+          map.setPaintProperty("trip-route-border", "line-width", routeLineWidth + 10);
         }
         if (map.getLayer("trip-route-glow")) {
           map.setPaintProperty("trip-route-glow", "line-width", routeGlowWidth);
