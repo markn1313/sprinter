@@ -588,7 +588,24 @@ function MapTab({
             label={
               <span className="flex flex-col items-center leading-none">
                 <VanIcon size={22} />
-                <span className="mt-0.5 text-xs">↔</span>
+                {/* Full-width double-headed arrow spans the van glyph so
+                    the "fit both" intent reads at a glance. */}
+                <svg
+                  width="22"
+                  height="6"
+                  viewBox="0 0 22 6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="mt-0.5"
+                  aria-hidden
+                >
+                  <line x1="1.5" y1="3" x2="20.5" y2="3" />
+                  <polyline points="4.5,1 1.5,3 4.5,5" />
+                  <polyline points="17.5,1 20.5,3 17.5,5" />
+                </svg>
               </span>
             }
             onClick={() => focus("van-me")}
