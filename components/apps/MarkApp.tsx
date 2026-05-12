@@ -278,6 +278,14 @@ function MapTab({
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
+    // No active trip → show ONLY the "you" pin so the map fits to van + me
+    // and renders the van→me route polyline. Don't surface a scheduled
+    // trip's pickup/dropoff here — that pulls the camera way out and is
+    // not what Mark wants to look at while idle.
+    if (!live) {
+      if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
+      return out;
+    }
     // Resolve stop UUIDs by matching label against the server-side stops
     // array — `upcoming` (from eta) doesn't include the id directly.
     const stopByLabel = new Map<string, string>();
@@ -309,17 +317,68 @@ function MapTab({
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
     return out;
-  }, [upcoming, mapTrip, stopsArr, myGps]);
+  }, [live, upcoming, mapTrip, stopsArr, myGps]);
+
+  // When NO trip is active, fetch a "van → me" route so Mark sees how the
+  // van would get to where he's standing right now. Refreshes whenever the
+  // van or his GPS moves meaningfully. The same /api/eta POST endpoint the
+  // trip detail editor uses — passes a single waypoint (Mark's position)
+  // and reads back the polyline + congestion + eta_minutes against the
+  // van's current location.
+  const [vanToMe, setVanToMe] = useState<{ polyline: string | null; congestion: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes: number | null; distance_miles: number | null }>(
+    { polyline: null, congestion: null, eta_minutes: null, distance_miles: null },
+  );
+  useEffect(() => {
+    if (live) {
+      setVanToMe({ polyline: null, congestion: null, eta_minutes: null, distance_miles: null });
+      return;
+    }
+    if (!myGps || !pos) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/eta", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ waypoints: [{ lat: myGps.lat, lng: myGps.lng, kind: "stop", label: "You" }] }),
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { polyline?: string | null; congestion?: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes?: number | null; distance_miles?: number | null };
+        if (!cancel) {
+          setVanToMe({
+            polyline: j.polyline ?? null,
+            congestion: j.congestion ?? null,
+            eta_minutes: j.eta_minutes ?? null,
+            distance_miles: j.distance_miles ?? null,
+          });
+        }
+      } catch {
+        // ignore — keep the previous polyline
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+    // Re-run roughly every time the van moves > ~50m or myGps changes.
+  }, [live, token, pos?.lat?.toFixed(3), pos?.lng?.toFixed(3), myGps?.lat?.toFixed(3), myGps?.lng?.toFixed(3)]);
 
   // Live ETA polyline first (reflects van's current position through what's
-  // remaining); fall back to the saved route_polyline only if ETA hasn't
-  // computed yet.
-  const polyline = eta?.polyline ?? (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? null;
+  // remaining); when no live trip, prefer the van→me route so Mark sees how
+  // the van would reach him. Final fallback: saved trip route_polyline.
+  const polyline = eta?.polyline ?? vanToMe.polyline ?? (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? null;
+  const congestion = eta?.congestion ?? vanToMe.congestion ?? null;
 
-  // "Van is X min / Y mi from me" — quick haversine distance and naive ETA
-  // (van speed if moving, else assume 25 mph). Updates every position poll.
+  // "Van is X min / Y mi from me" — prefer the Mapbox-computed route ETA
+  // (vanToMe) when we have it; fall back to a straight-line haversine +
+  // naive 25-mph estimate while the route is loading.
   const vanFromMe = useMemo(() => {
     if (!pos || !myGps) return null;
+    if (vanToMe.eta_minutes != null && vanToMe.distance_miles != null) {
+      return {
+        miles: vanToMe.distance_miles,
+        minutes: vanToMe.eta_minutes,
+      };
+    }
     const R = 3959; // miles
     const toRad = (d: number) => (d * Math.PI) / 180;
     const dLat = toRad(myGps.lat - pos.lat);
@@ -331,7 +390,7 @@ function MapTab({
     const speed = (pos.speed_mph ?? 0) > 5 ? (pos.speed_mph as number) : 25;
     const minutes = Math.max(1, Math.round((miles / speed) * 60));
     return { miles: +miles.toFixed(miles < 10 ? 1 : 0), minutes };
-  }, [pos, myGps]);
+  }, [pos, myGps, vanToMe]);
 
   // Drag a pin to update its location. Reverse-geocode the new coords for
   // a friendly address, then PATCH the trip (pickup/dropoff) or replace
@@ -403,6 +462,7 @@ function MapTab({
         position={pos}
         pins={pins}
         polyline={polyline}
+        congestion={congestion}
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
@@ -414,6 +474,7 @@ function MapTab({
         routeGlowWidth={14}
         vanIconSize={56}
         pinScale={1.4}
+        fitMaxZoom={17}
       />
 
       {/* "Van is N min / X mi from me" — always visible when both GPS sources
