@@ -775,6 +775,34 @@ function MapTab({
     }
   };
 
+  // Remove a single intermediate stop. Used when Mark taps a stop pin on
+  // the map and chooses "Remove this stop". Matches by id when possible
+  // (preferred), falls back to lat/lng proximity if no id was wired on
+  // the upstream pin.
+  const removeStopPin = async (pin: MapPin) => {
+    if (pin.kind !== "stop" || editBusy) return;
+    setEditBusy(true);
+    try {
+      const trip = live ?? mapTrip;
+      if (!trip) return;
+      const next = stopsArr.filter((s) => {
+        if (pin.id && s.id === pin.id) return false;
+        if (!pin.id && Math.abs((s.lat ?? 0) - pin.lat) < 1e-6 && Math.abs((s.lng ?? 0) - pin.lng) < 1e-6) return false;
+        return true;
+      });
+      await fetch(`/api/trips/${trip.id}/stops`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: next }),
+      });
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] removeStopPin failed", err);
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   // Clear ALL pending stops at once. Used when Mark long-presses the Stop
   // button (or as a fallback when the list grows unwieldy). Arrived stops
   // stay in place because their history matters.
@@ -827,6 +855,7 @@ function MapTab({
         onMapClick={inEditMode ? undefined : onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
         onPinDragEnd={mapTrip || inEditMode ? handlePinDrag : undefined}
+        onPinRemove={mapTrip && !inEditMode ? removeStopPin : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={56}

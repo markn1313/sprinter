@@ -72,6 +72,11 @@ interface Props {
   // callback fires with the moved pin and its new lat/lng so the caller can
   // PATCH the underlying record. Mark / passenger / van markers stay fixed.
   onPinDragEnd?: (pin: MapPin, lat: number, lng: number) => void;
+  // When provided, tapping a stop pin opens a popup with a Remove button;
+  // tapping Remove fires this with the pin so the caller can delete the
+  // underlying record. Currently wired for `stop` kind only — pickup /
+  // dropoff are not removable from the map (they're the trip endpoints).
+  onPinRemove?: (pin: MapPin) => void;
 }
 
 const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => string> => {
@@ -142,6 +147,7 @@ export default function MapboxMap({
   onMapClick,
   onDroppedPinClick,
   onPinDragEnd,
+  onPinRemove,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -157,6 +163,10 @@ export default function MapboxMap({
   useEffect(() => {
     onPinDragEndRef.current = onPinDragEnd;
   }, [onPinDragEnd]);
+  const onPinRemoveRef = useRef(onPinRemove);
+  useEffect(() => {
+    onPinRemoveRef.current = onPinRemove;
+  }, [onPinRemove]);
   // Ref-stored fitBounds applier — populated by the fitBounds useEffect so
   // the ResizeObserver (in the init effect) can re-run the fit when the
   // container's flex layout settles AFTER initial mount. Otherwise a tight
@@ -601,7 +611,36 @@ export default function MapboxMap({
               }
             });
           }
-          if (p.label) marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
+          // Popup behavior:
+          //  - Stop pins get a "Remove this stop" button (single-tap → delete).
+          //  - Other pin kinds (pickup / dropoff / mark / passenger /
+          //    pickup-target) just show their address label, if any.
+          if (p.kind === "stop") {
+            const escapeHtml = (s: string) =>
+              s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+            const popup = new mapboxgl.Popup({ offset: 22, closeButton: false, className: "sprinter-stop-popup" });
+            popup.setHTML(
+              `<div style="min-width:180px;padding:8px 4px;display:flex;flex-direction:column;gap:8px;">
+                <div style="font-size:12px;color:#52525b;line-height:1.3;">${p.label ? escapeHtml(p.label) : "Intermediate stop"}</div>
+                <button class="sprinter-stop-remove" style="background:#7f1d1d;color:#fee2e2;border:0;padding:8px 10px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;letter-spacing:.02em;">Remove this stop</button>
+              </div>`,
+            );
+            marker.setPopup(popup);
+            popup.on("open", () => {
+              const btn = popup.getElement()?.querySelector(".sprinter-stop-remove") as HTMLElement | null;
+              if (!btn) return;
+              btn.onclick = () => {
+                try {
+                  onPinRemoveRef.current?.(p);
+                } catch (err) {
+                  console.warn("[MapboxMap] onPinRemove handler threw", err);
+                }
+                popup.remove();
+              };
+            });
+          } else if (p.label) {
+            marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
+          }
           marker.addTo(map);
           return marker;
         } catch (err) {
