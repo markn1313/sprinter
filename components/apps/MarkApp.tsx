@@ -587,7 +587,7 @@ function MapTab({
             label={
               <span className="flex flex-col items-center leading-none">
                 <VanIcon size={22} />
-                <span className="mt-0.5 text-xs">↕</span>
+                <span className="mt-0.5 text-xs">↔</span>
               </span>
             }
             onClick={() => focus("van-me")}
