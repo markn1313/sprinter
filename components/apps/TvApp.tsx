@@ -290,9 +290,11 @@ function EtaCard({ kind, label, minutes, miles, primary, titleOverride }: { kind
       }`}
     >
       {/* Compact 4-column row: label/destination + 3 stat cells.
-          Single row so the card is half its previous height. */}
-      <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr] gap-4 items-center">
-        <div className="min-w-0">
+          Single row so the card is half its previous height. Destination
+          column gets extra right-padding so long addresses don't crowd
+          the Time number next to it. */}
+      <div className="grid grid-cols-[1.8fr_1fr_1fr_1fr] gap-10 items-center">
+        <div className="min-w-0 pr-4">
           <div className="flex items-center gap-1.5">
             <Icon size={16} className={primary ? "text-emerald-400" : "text-blue-400"} />
             <span className={`text-xs uppercase tracking-widest ${primary ? "text-emerald-300" : "text-blue-300"}`}>
