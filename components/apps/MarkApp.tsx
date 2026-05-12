@@ -685,15 +685,29 @@ function MapTab({
           />
           <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
           {vanFromMe && vanFromMe.miles >= 0.1 && (
-            <EtaCard
-              compact
-              kind="stop"
-              label="You"
-              minutes={vanFromMe.minutes}
-              miles={vanFromMe.miles}
-              primary
-              titleOverride="Van to you"
-            />
+            <div className="flex items-stretch gap-2">
+              <div className="flex-1">
+                <EtaCard
+                  compact
+                  kind="stop"
+                  label="You"
+                  minutes={vanFromMe.minutes}
+                  miles={vanFromMe.miles}
+                  primary
+                  titleOverride="Van to you"
+                />
+              </div>
+              {navUrl && (
+                <a
+                  href={navUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
+                >
+                  <Navigation size={14} /> Maps
+                </a>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -704,10 +718,12 @@ function MapTab({
           <VoiceCabin token={token} tripId={live.id} />
         </div>
       )}
-      {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar branch
-          isn't rendering (no live trip OR eta hasn't loaded yet). Previously this
-          only fired when !live, so a live trip with no ETA briefly hid the button. */}
-      {(!live || !eta) && navUrl && (
+      {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar
+          branch isn't rendering (no live trip OR eta hasn't loaded yet)
+          AND the Van-to-you row above isn't already showing its own Maps
+          button. Otherwise we'd stack two Maps buttons on top of each
+          other. */}
+      {(!live || !eta) && navUrl && !(!live && vanFromMe && vanFromMe.miles >= 0.1) && (
         <a
           href={navUrl}
           target="_blank"
