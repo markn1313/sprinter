@@ -521,7 +521,11 @@ function MapTab({
       {/* "Van is N min / X mi from me" — always visible when both GPS sources
           are reporting. Useful when waiting for pickup or knowing how close
           the van is on a walk-back. */}
-      {vanFromMe && live?.status !== "onboard" && (
+      {/* Hide the chip when Mark is essentially IN the van (his GPS is
+          within ~0.1 mi of the van's position) — the "VAN 0 min · 0 mi
+          from you" reading would be meaningless. The same threshold the
+          eta endpoint uses to collapse pickup/dropoff redundancy. */}
+      {vanFromMe && live?.status !== "onboard" && vanFromMe.miles >= 0.1 && (
         <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-1.5 shadow-xl">
           <div className="flex items-baseline gap-2 text-xs">
             <span className="text-zinc-500 uppercase tracking-wider">Van</span>
@@ -549,20 +553,9 @@ function MapTab({
         </div>
       )}
 
-      {/* Top header — share-GPS toggle only. Pickup button moved to the
-          top-right column above the vitals so it sits where Mark's thumb
-          naturally lands on the right side of the screen. */}
-      <header className="absolute inset-x-0 top-0 z-30 px-3 pt-[max(env(safe-area-inset-top),12px)]">
-        <div className="mx-auto flex max-w-3xl items-center gap-2">
-          <button
-            onClick={() => setShareGps((v) => !v)}
-            className={`rounded-2xl border border-zinc-800 px-2.5 py-2 text-[11px] backdrop-blur ${shareGps ? "bg-violet-900/50 text-violet-200" : "bg-zinc-950/85 text-zinc-400"}`}
-            title="Share live GPS"
-          >
-            📍 {shareGps ? "" : "off"}
-          </button>
-        </div>
-      </header>
+      {/* Top header — empty now. Both top buttons (Pickup, GPS share)
+          live in the right-side column below to keep map controls on
+          one rail. */}
 
       {/* Map focus controls — left edge. (Drop-pin via long-press; no rail button.) */}
       <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
@@ -593,6 +586,13 @@ function MapTab({
           className="rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-2 text-xs font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
         >
           Pickup
+        </button>
+        <button
+          onClick={() => setShareGps((v) => !v)}
+          className={`rounded-2xl border border-zinc-800 px-2.5 py-2 text-[11px] backdrop-blur ${shareGps ? "bg-violet-900/50 text-violet-200" : "bg-zinc-950/85 text-zinc-400"}`}
+          title="Share live GPS"
+        >
+          📍 {shareGps ? "on" : "off"}
         </button>
         {pos && (
           <>
