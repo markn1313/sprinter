@@ -27,13 +27,14 @@ interface BouncieCreds {
   refresh_token: string | null;
   expires_at: string | null;
   vehicle_vin: string | null;
+  imei: string | null;
 }
 
 async function loadCreds(): Promise<BouncieCreds | null> {
   try {
     const { data } = await supabaseAdmin()
       .from("bouncie_credentials")
-      .select("access_token,refresh_token,expires_at,vehicle_vin")
+      .select("access_token,refresh_token,expires_at,vehicle_vin,imei")
       .eq("id", 1)
       .maybeSingle();
     return (data as BouncieCreds) ?? null;
@@ -428,11 +429,10 @@ export async function fetchBouncieTrips(opts: {
   const token = await ensureFreshToken();
   if (!token) return null;
   const creds = await loadCreds();
-  // Bouncie's trips endpoint takes imei, not vin. We don't store imei
-  // separately so we derive it from the live vehicles call when we don't
-  // have it cached. (The vehicles credential row could cache imei too,
-  // saving a round-trip on every MPG refresh.)
-  let imei: string | null = (creds as unknown as { imei?: string | null })?.imei ?? null;
+  // Bouncie's trips endpoint takes imei, not vin. We cache it on the
+  // credentials row so the MPG refresh path doesn't waste a /vehicles
+  // call on every hit; if it's missing we derive it once and persist.
+  let imei: string | null = creds?.imei ?? null;
   if (!imei) {
     try {
       const res = await fetch(`${BOUNCIE_API}/vehicles`, {
