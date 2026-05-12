@@ -1099,6 +1099,25 @@ function MapTab({
             title="Clear dropped pin"
           />
         )}
+        {/* Share + Maps — moved here from the right column so the vital
+            chips (fuel/range/speed) stand alone, and so these trip-action
+            chips sit alongside the map-focus buttons (also trip-context).
+            Same h-10 w-10 dimensions as FocusBtn for visual rhythm. */}
+        {live && (
+          <ShareTripButton token={token} tripId={live.id} compact />
+        )}
+        {live && navUrl && (
+          <a
+            href={navUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open in Google Maps"
+            aria-label="Maps"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 text-emerald-300 backdrop-blur hover:bg-zinc-900 active:scale-95"
+          >
+            <Navigation size={16} />
+          </a>
+        )}
       </div>
 
       {/* Vitals strip — top-right column. Pickup button sits at the top
@@ -1174,27 +1193,6 @@ function MapTab({
             </VitalChip>
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
-        )}
-        {/* Share + Maps — icon-only chips matching the vital-strip width.
-            Previously these sat in the bottom strip alongside the EtaCard,
-            forcing the destination card to shrink + clip. Pinning them to
-            the top column keeps the bottom strip full-width and the buttons
-            still one tap away. Only render when a trip is live + has a
-            usable nav URL. */}
-        {live && (
-          <ShareTripButton token={token} tripId={live.id} compact />
-        )}
-        {live && navUrl && (
-          <a
-            href={navUrl}
-            target="_blank"
-            rel="noreferrer"
-            title="Open in Google Maps"
-            aria-label="Maps"
-            className="flex items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 px-2.5 py-1.5 text-emerald-300 backdrop-blur hover:bg-zinc-900"
-          >
-            <Navigation size={14} />
-          </a>
         )}
       </div>
 

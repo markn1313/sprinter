@@ -27,8 +27,11 @@ export default function CabinQuickStrip({ token, tripId }: Props) {
     }
   };
 
+  // Buttons sized to match the Mark-home right-column vital chips
+  // (h-10 w-10) — Mark asked for visual consistency. Previously this
+  // strip used h-12 w-12 which dominated the bottom of the map.
   return (
-    <div className="flex items-center gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1.5 backdrop-blur shadow-2xl">
+    <div className="flex items-center gap-1 rounded-2xl border border-zinc-800 bg-zinc-950/85 p-1 backdrop-blur shadow-2xl">
       <Btn kind="warmer" onClick={send} busy={busy} just={recent === "warmer"} title="Warmer">
         <TriangleUp />
       </Btn>
@@ -36,10 +39,10 @@ export default function CabinQuickStrip({ token, tripId }: Props) {
         <TriangleDown />
       </Btn>
       <Btn kind="fan_up" onClick={send} busy={busy} just={recent === "fan_up"} title="More fan">
-        <FanIcon size={28} />
+        <FanIcon size={20} />
       </Btn>
       <Btn kind="fan_down" onClick={send} busy={busy} just={recent === "fan_down"} title="Less fan">
-        <FanIcon size={14} />
+        <FanIcon size={12} />
       </Btn>
     </div>
   );
@@ -66,18 +69,18 @@ function Btn({
       disabled={busy}
       title={title}
       aria-label={title}
-      className={`flex h-12 w-12 items-center justify-center rounded-xl transition active:scale-95 disabled:opacity-50 ${
+      className={`flex h-10 w-10 items-center justify-center rounded-xl transition active:scale-95 disabled:opacity-50 ${
         just ? "bg-emerald-600" : "bg-zinc-800 hover:bg-zinc-700"
       }`}
     >
-      {just ? <Check size={18} className="text-white" /> : children}
+      {just ? <Check size={16} className="text-white" /> : children}
     </button>
   );
 }
 
 function TriangleUp() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
       <polygon points="12,3 22,21 2,21" fill="#ef4444" />
     </svg>
   );
@@ -85,7 +88,7 @@ function TriangleUp() {
 
 function TriangleDown() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
       <polygon points="12,21 22,3 2,3" fill="#3b82f6" />
     </svg>
   );

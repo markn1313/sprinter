@@ -46,9 +46,9 @@ export default function ShareTripButton({
         disabled={busy}
         title="Share live tracking link"
         aria-label="Share"
-        className="flex items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 px-2.5 py-1.5 text-emerald-300 backdrop-blur hover:bg-zinc-900 disabled:opacity-50"
+        className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 text-emerald-300 backdrop-blur hover:bg-zinc-900 active:scale-95 disabled:opacity-50"
       >
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
+        {busy ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
       </button>
     );
   }
