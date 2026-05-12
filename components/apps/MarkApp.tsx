@@ -575,8 +575,9 @@ function MapTab({
           live in the right-side column below to keep map controls on
           one rail. */}
 
-      {/* Map focus controls — left edge. (Drop-pin via long-press; no rail button.) */}
-      <div className="absolute left-3 top-[max(env(safe-area-inset-top),12px)] z-30 mt-14 flex flex-col gap-1.5">
+      {/* Map focus controls — left edge, aligned with the right-side
+          rail (Pickup / GPS / vitals) at the top of the screen. */}
+      <div className="absolute left-3 top-3 z-30 flex flex-col gap-1.5">
         <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Center on van" />
         {(mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
           <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
