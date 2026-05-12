@@ -581,9 +581,17 @@ function MapTab({
         {(mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
           <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
         )}
-        {myGps && pos && <FocusBtn label={<span className="flex items-center gap-0.5"><VanIcon size={20} /><span className="text-base">↔</span><span className="text-base">📍</span></span>} onClick={() => focus("van-me")} title="Van + me" />}
-        {myGps && (mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
-          <FocusBtn label={<span className="text-base">📍↔🏁</span>} onClick={() => focus("me-dest")} title="Me + destination" />
+        {myGps && pos && (
+          <FocusBtn
+            label={
+              <span className="flex flex-col items-center leading-none">
+                <VanIcon size={22} />
+                <span className="mt-0.5 text-xs">↕</span>
+              </span>
+            }
+            onClick={() => focus("van-me")}
+            title="Fit van + me"
+          />
         )}
         <FocusBtn label={<span className="text-2xl leading-none">⤢</span>} onClick={() => focus("auto")} title="Auto-fit" />
         {droppedPin && (
