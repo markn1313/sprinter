@@ -138,6 +138,66 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
   }
 }
 
+// Solve the optimal visit order between a fixed start (pickup) and fixed
+// end (dropoff) given N intermediate waypoints, using Mapbox's Optimized
+// Trips API. Returns the input waypoints[] reordered so the total drive
+// time is minimized. Useful when Mark drops several stops on the map and
+// trusts the system to sequence them sanely without making him think
+// about it.
+//
+// Inputs:
+//   start    — pickup / starting point of the trip
+//   end      — dropoff / final destination
+//   waypoints — array of intermediate stops (no need for any particular order)
+//
+// Returns `null` if the API call fails or no permutation could be found,
+// in which case the caller should fall back to the user-provided order.
+export async function optimizeStops(
+  start: Waypoint,
+  end: Waypoint,
+  waypoints: Waypoint[],
+): Promise<Waypoint[] | null> {
+  // Mapbox Optimized Trips accepts 2-12 coordinates total. With 0 or 1
+  // intermediate stop there's nothing to optimize.
+  if (waypoints.length === 0) return [];
+  if (waypoints.length === 1) return [...waypoints];
+  const token = process.env.MAPBOX_TOKEN;
+  if (!token) return null;
+  const coords = [start, ...waypoints, end]
+    .map((p) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)
+    .join(";");
+  // source=first + destination=last locks the pickup and dropoff in place
+  // so only the intermediate stops get permuted. roundtrip=false because
+  // the trip isn't a loop.
+  const url = `https://api.mapbox.com/optimized-trips/v1/mapbox/driving-traffic/${coords}?access_token=${token}&source=first&destination=last&roundtrip=false&geometries=geojson`;
+  try {
+    const referer = process.env.MAPBOX_REFERER ?? "https://sprinter-tau.vercel.app/";
+    const res = await fetch(url, { headers: { Referer: referer }, cache: "no-store" });
+    if (!res.ok) {
+      console.warn("[routing] Optimized-Trips failed", res.status, (await res.text()).slice(0, 200));
+      return null;
+    }
+    const data = (await res.json()) as {
+      code: string;
+      waypoints?: Array<{ waypoint_index: number; trips_index: number; location: [number, number] }>;
+    };
+    if (data.code !== "Ok" || !Array.isArray(data.waypoints)) return null;
+    // data.waypoints is indexed by the INPUT order (0 = start, 1..N = our
+    // intermediate stops, N+1 = end). Each entry has a `waypoint_index`
+    // telling us where Mapbox decided to visit it on the optimized trip.
+    // We re-sort the intermediates by waypoint_index to get the new order.
+    const intermediates = data.waypoints.slice(1, -1);
+    const ordered = intermediates
+      .map((wp, originalIdx) => ({ waypoint_index: wp.waypoint_index, original: waypoints[originalIdx] }))
+      .sort((a, b) => a.waypoint_index - b.waypoint_index)
+      .map((x) => x.original);
+    return ordered;
+  } catch (err) {
+    console.warn("[routing] Optimized-Trips threw:", (err as Error).message);
+    return null;
+  }
+}
+
 async function routeOsrm(waypoints: Waypoint[]): Promise<RouteResult | null> {
   const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(";");
   const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`;

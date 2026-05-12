@@ -602,20 +602,14 @@ function MapTab({
     setFocusKey((k) => k + 1);
   };
 
-  // Enter stop mode — single intermediate stop. Pin starts at the existing
-  // stop (if one is set) or the van's current position.
+  // Enter stop mode — ADD a new intermediate stop. The pin starts at the
+  // van's current position so Mark can drag it to wherever the new stop
+  // belongs; the server-side optimizer will figure out the visit order
+  // automatically when stops are saved.
   const enterStop = () => {
-    const existingStop = stopsArr.find((s) => s.lat != null && s.lng != null);
-    let start: { lat: number; lng: number } | null = null;
-    if (existingStop && existingStop.lat != null && existingStop.lng != null) {
-      start = { lat: existingStop.lat, lng: existingStop.lng };
-      setEditAddress(existingStop.address ?? null);
-    } else if (pos) {
-      start = { lat: pos.lat, lng: pos.lng };
-      setEditAddress(null);
-    }
-    if (!start) return;
-    setEditPin(start);
+    if (!pos) return;
+    setEditPin({ lat: pos.lat, lng: pos.lng });
+    setEditAddress(null);
     setEditTarget("stop");
     setFocusMode("me");
     setFocusKey((k) => k + 1);
@@ -747,17 +741,18 @@ function MapTab({
     }
   };
 
-  // Commit/Modify the single intermediate stop. PUTs the trip's stops
-  // array — replaces the existing stop (we cap at one) or inserts.
+  // APPEND a new intermediate stop. The stops endpoint runs Mapbox's
+  // Optimized-Trips API server-side after save, so Mark doesn't need to
+  // think about where the new stop slots into the existing route — it
+  // gets placed in the position that minimizes total drive time.
   const commitStop = async () => {
     if (!editPin || editBusy) return;
     setEditBusy(true);
     try {
       const trip = live ?? mapTrip;
       if (!trip) return;
-      const existing = stopsArr[0];
-      const nextStop = {
-        id: existing?.id ?? crypto.randomUUID(),
+      const newStop = {
+        id: crypto.randomUUID(),
         kind: "stop",
         address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
         lat: editPin.lat,
@@ -769,7 +764,7 @@ function MapTab({
       await fetch(`/api/trips/${trip.id}/stops`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: [nextStop] }),
+        body: JSON.stringify({ stops: [...stopsArr, newStop] }),
       });
       exitEdit();
       refresh();
@@ -780,22 +775,25 @@ function MapTab({
     }
   };
 
-  // Remove the intermediate stop. Only meaningful when one exists.
-  const removeStop = async () => {
+  // Clear ALL pending stops at once. Used when Mark long-presses the Stop
+  // button (or as a fallback when the list grows unwieldy). Arrived stops
+  // stay in place because their history matters.
+  const clearStops = async () => {
     if (editBusy) return;
     setEditBusy(true);
     try {
       const trip = live ?? mapTrip;
       if (!trip) return;
+      const keep = stopsArr.filter((s) => (s as unknown as { arrived_at?: string | null }).arrived_at != null);
       await fetch(`/api/trips/${trip.id}/stops`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: [] }),
+        body: JSON.stringify({ stops: keep }),
       });
       exitEdit();
       refresh();
     } catch (err) {
-      console.warn("[MarkApp] stop remove failed", err);
+      console.warn("[MarkApp] stop clear failed", err);
     } finally {
       setEditBusy(false);
     }
@@ -980,7 +978,12 @@ function MapTab({
                 onClick={enterStop}
                 className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-zinc-900 ring-1 ring-violet-700/60 hover:bg-zinc-800"
               >
-                {stopsArr.length > 0 ? "Modify stop" : "Add stop"}
+                Add stop
+                {stopsArr.length > 0 && (
+                  <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] tabular-nums">
+                    {stopsArr.length}
+                  </span>
+                )}
               </button>
             )}
           </>
@@ -1092,9 +1095,7 @@ function MapTab({
                     ? live?.dropoff_lat != null
                       ? "Modify dropoff"
                       : "Set dropoff"
-                    : stopsArr.length > 0
-                      ? "Modify stop"
-                      : "Add stop"}
+                    : `Add stop${stopsArr.length > 0 ? ` · ${stopsArr.length} pending` : ""}`}
               </span>
               <span className="text-zinc-500">·</span>
               <span className="text-zinc-400">Drag purple icon</span>
@@ -1159,17 +1160,16 @@ function MapTab({
                     ? live?.dropoff_lat != null
                       ? "Update dropoff"
                       : "Set dropoff"
-                    : stopsArr.length > 0
-                      ? "Update stop"
-                      : "Add stop"}
+                    : "Add stop"}
                 </button>
                 {stopMode && stopsArr.length > 0 && (
                   <button
-                    onClick={removeStop}
+                    onClick={clearStops}
                     disabled={editBusy}
+                    title="Clear all pending stops"
                     className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-zinc-900 disabled:opacity-50"
                   >
-                    Remove
+                    Clear all
                   </button>
                 )}
               </div>

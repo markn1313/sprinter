@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
+import { optimizeStops } from "@/lib/routing";
 import { logTripEvent } from "@/lib/log";
 
 interface Stop {
@@ -97,7 +98,7 @@ export async function PUT(
 
   // Geocode any stops missing lat/lng
   const sb = supabaseAdmin();
-  const next: Stop[] = [];
+  const filled: Stop[] = [];
   for (const s of body.stops) {
     let lat = s.lat;
     let lng = s.lng;
@@ -108,7 +109,7 @@ export async function PUT(
         lng = g.lng;
       }
     }
-    next.push({
+    filled.push({
       id: s.id ?? crypto.randomUUID(),
       kind: s.kind ?? "stop",
       address: s.address,
@@ -119,9 +120,61 @@ export async function PUT(
       added_at: s.added_at ?? new Date().toISOString(),
     });
   }
+
+  // Auto-optimize the visit order of intermediate stops via Mapbox's
+  // Optimized-Trips API. Mark trusts the system to sequence them; he
+  // shouldn't have to think about whether Huntington Beach goes before
+  // or after a Long Beach stop on a Newport → LA trip. ALREADY-ARRIVED
+  // stops are pinned in place (their order is historical, not optional);
+  // only pending stops get permuted.
+  let next: Stop[] = filled;
+  const { data: trip } = await sb
+    .from("trips")
+    .select("pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
+    .eq("id", id)
+    .maybeSingle();
+  if (
+    trip?.pickup_lat != null &&
+    trip?.pickup_lng != null &&
+    trip?.dropoff_lat != null &&
+    trip?.dropoff_lng != null
+  ) {
+    const arrived = filled.filter((s) => s.arrived_at != null);
+    const pending = filled.filter((s) => s.arrived_at == null && s.lat != null && s.lng != null);
+    if (pending.length >= 2) {
+      const optimized = await optimizeStops(
+        { lat: trip.pickup_lat, lng: trip.pickup_lng },
+        { lat: trip.dropoff_lat, lng: trip.dropoff_lng },
+        pending.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
+      );
+      if (optimized) {
+        // Rebuild the pending list in optimized order, then concat after
+        // arrived stops so history stays intact.
+        const remaining = pending.slice();
+        const reordered: Stop[] = [];
+        for (const wp of optimized) {
+          const idx = remaining.findIndex(
+            (s) => Math.abs((s.lat as number) - wp.lat) < 1e-6 && Math.abs((s.lng as number) - wp.lng) < 1e-6,
+          );
+          if (idx >= 0) {
+            reordered.push(remaining[idx]);
+            remaining.splice(idx, 1);
+          }
+        }
+        // Append any leftovers (shouldn't happen, but defensive)
+        next = [...arrived, ...reordered, ...remaining];
+      }
+    }
+  }
+
   const { error } = await sb.from("trips").update({ stops: next }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  logTripEvent({ trip_id: id, kind: "stops_replaced", actor_token: ctx.token, payload: { stops: next } });
+  logTripEvent({
+    trip_id: id,
+    kind: "stops_replaced",
+    actor_token: ctx.token,
+    payload: { stops: next, optimized: next !== filled },
+  });
   return NextResponse.json({ stops: next });
 }
 
