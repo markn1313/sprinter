@@ -109,7 +109,7 @@ export default function TvApp({ token }: { token: string }) {
             left: 50,
             right: 50,
           }}
-          fitMaxZoom={15}
+          fitMaxZoom={17}
           routeLineWidth={8}
           routeGlowWidth={20}
           vanIconSize={36}
