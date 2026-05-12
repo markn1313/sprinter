@@ -717,8 +717,8 @@ function MapTab({
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
-        droppedPin={droppedPin}
-        onMapClick={onMapClick}
+        droppedPin={pickupMode ? null : droppedPin}
+        onMapClick={pickupMode ? undefined : onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
         onPinDragEnd={mapTrip || pickupMode ? handlePinDrag : undefined}
         routeLineWidth={6}

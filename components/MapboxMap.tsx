@@ -100,17 +100,19 @@ const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => s
     passenger: () =>
       `<div style="font-size:${Math.round(24 * scale)}px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
     // Violet teardrop pin used as the pickup-mode draggable target.
-    // Matches the violet Pickup button color so the visual language ties
-    // the mode to the entry control. Always rendered draggable by callers.
+    // Bigger hit target than the other pins (52px) so a thumb drag lands
+    // reliably. The violet glow is rendered as an SVG drop-shadow filter
+    // instead of a wrapping div+padding+gradient — earlier versions had a
+    // padded wrapper around the SVG that intercepted touchstart events
+    // inconsistently on iOS, making the drag feel laggy / multi-attempt.
+    // Now the SVG element itself IS the hit target with no surrounding
+    // layout box stealing pointer events.
     "pickup-target": () => {
-      const size = Math.round(40 * scale);
-      const halo = Math.round(12 * scale);
-      return `<div style="line-height:0;padding:${halo}px;border-radius:9999px;background:radial-gradient(closest-side,rgba(139,92,246,.55),rgba(139,92,246,.18) 65%,rgba(139,92,246,0) 80%);box-shadow:0 0 30px rgba(139,92,246,.7);">
-        <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 5px rgba(0,0,0,.85))">
-          <path d="M12 1C7.5 1 4 4.5 4 9c0 5.5 8 14 8 14s8-8.5 8-14c0-4.5-3.5-8-8-8z" fill="#8b5cf6" stroke="#ffffff" stroke-width="1.5"/>
-          <circle cx="12" cy="9" r="3" fill="#ffffff"/>
-        </svg>
-      </div>`;
+      const size = Math.round(52 * scale);
+      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:block;cursor:grab;touch-action:none;filter:drop-shadow(0 0 14px rgba(139,92,246,.85)) drop-shadow(0 2px 5px rgba(0,0,0,.85))">
+        <path d="M12 1C7.5 1 4 4.5 4 9c0 5.5 8 14 8 14s8-8.5 8-14c0-4.5-3.5-8-8-8z" fill="#8b5cf6" stroke="#ffffff" stroke-width="1.5"/>
+        <circle cx="12" cy="9" r="3" fill="#ffffff"/>
+      </svg>`;
     },
   };
 };
