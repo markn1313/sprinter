@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { VanPosition } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { useRealtime } from "@/components/useRealtime";
 
 type PosWithSource = VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" };
 
@@ -39,23 +40,29 @@ function near(a: number | null | undefined, b: number | null | undefined): boole
   return Math.abs(a - b) < 0.00005; // ~5.5m of latitude
 }
 
-export function usePosition(token: string, intervalMs = 8000) {
+// Minimum gap between refetches triggered by realtime CDC. The Bouncie webhook
+// can fire 10+ samples per second on busy roads; without this, every event
+// re-hits /api/position which writes to van_position which... fires another
+// CDC event. The /api/position write side is also idempotent now (skip when
+// nothing changed), but the throttle here is belt-and-suspenders.
+const MIN_REFETCH_MS = 2000;
+
+export function usePosition(token: string, intervalMs = 20_000) {
   const [pos, setPos] = useState<PosWithSource | null>(() => readCache());
   const [error, setError] = useState<string | null>(null);
+  const lastFetchAtRef = useRef<number>(0);
+  const inflightRef = useRef<Promise<void> | null>(null);
+  const lastRef = useRef<PosWithSource | null>(readCache());
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let last: PosWithSource | null = readCache();
-
-    const tick = async () => {
-      if (cancelled) return;
+  const fetchNow = useCallback(async () => {
+    if (inflightRef.current) return inflightRef.current;
+    const now = Date.now();
+    if (now - lastFetchAtRef.current < MIN_REFETCH_MS) return;
+    lastFetchAtRef.current = now;
+    const p = (async () => {
       try {
         const data = await api<PosWithSource>(token, "/api/position");
-        if (cancelled) return;
-        // Suppress the state update if the new reading is essentially the
-        // same as the last one — keeps the map marker still instead of
-        // ping-ponging on tiny GPS jitter.
+        const last = lastRef.current;
         const same =
           last &&
           near(data.lat, last.lat) &&
@@ -65,28 +72,45 @@ export function usePosition(token: string, intervalMs = 8000) {
         if (!same) {
           setPos(data);
           writeCache(data);
-          last = data;
+          lastRef.current = data;
         }
         setError(null);
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        setError((err as Error).message);
       } finally {
-        if (!cancelled) timer = setTimeout(tick, intervalMs);
+        inflightRef.current = null;
       }
-    };
+    })();
+    inflightRef.current = p;
+    return p;
+  }, [token]);
 
+  // Long-interval poll as a safety net. The bulk of the freshness comes from
+  // realtime subscriptions below; polling only fires when subscriptions are
+  // disconnected (PWA backgrounded on iOS, network blip, etc.).
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      await fetchNow();
+      if (!cancelled) timer = setTimeout(tick, intervalMs);
+    };
     tick();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, intervalMs]);
+  }, [fetchNow, intervalMs]);
 
-  // Note: previously this hook also subscribed to van_position realtime, but
-  // that triggered a feedback loop — every /api/position write to the cache
-  // table fired a CDC event that triggered another /api/position fetch, and
-  // GPS noise made the marker ping-pong. Polling alone is fine here.
+  // Realtime: refetch when ANY of the three position-relevant tables change.
+  // Each subscription is independent and uses its own channel (per useRealtime
+  // contract). The MIN_REFETCH_MS throttle and the /api/position idempotent
+  // write together prevent the feedback loop the old comment in this file
+  // warned about.
+  useRealtime({ table: "van_position", onChange: fetchNow });
+  useRealtime({ table: "mark_location", onChange: fetchNow });
+  useRealtime({ table: "driver_location", onChange: fetchNow });
 
   return { pos, error };
 }

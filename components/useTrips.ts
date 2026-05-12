@@ -5,7 +5,10 @@ import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { useRealtime } from "@/components/useRealtime";
 
-export function useTrips(token: string, intervalMs = 30000) {
+// Polling is the safety net only — realtime CDC on `trips` is the primary
+// freshness mechanism (see useRealtime call below). Long interval covers
+// PWA backgrounding + network blips.
+export function useTrips(token: string, intervalMs = 60_000) {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

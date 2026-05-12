@@ -54,23 +54,47 @@ export async function GET(req: Request) {
     if (derived != null) pos.heading = derived;
   }
 
-  // Also persist latest so realtime subscribers (other dashboards) get pushed
+  // Persist latest to van_position ONLY when something actually changed.
+  // Writing on every GET (when nothing changed) creates a realtime feedback
+  // loop: CDC fires → subscriber refetches → /api/position writes again →
+  // CDC fires again. Suppress when lat/lng/speed are essentially the same
+  // AND updated_at hasn't advanced. Subscribers (TV map, Mark home) now
+  // only get pushed events when there's a real change worth re-rendering.
   try {
-    await supabaseAdmin()
+    const sb = supabaseAdmin();
+    const { data: prev } = await sb
       .from("van_position")
-      .update({
-        lat: pos.lat,
-        lng: pos.lng,
-        heading: pos.heading,
-        speed_mph: pos.speed_mph,
-        fuel_pct: pos.fuel_pct,
-        battery_v: pos.battery_v,
-        mileage: pos.mileage,
-        ignition: pos.ignition,
-        source: pos.source,
-        updated_at: pos.updated_at,
-      })
-      .eq("id", 1);
+      .select("lat,lng,speed_mph,fuel_pct,updated_at")
+      .eq("id", 1)
+      .maybeSingle();
+    const prevLat = (prev?.lat as number | null) ?? null;
+    const prevLng = (prev?.lng as number | null) ?? null;
+    const prevSpeed = (prev?.speed_mph as number | null) ?? null;
+    const prevFuel = (prev?.fuel_pct as number | null) ?? null;
+    const movedM =
+      prevLat != null && prevLng != null
+        ? Math.hypot((pos.lat - prevLat) * 111_111, (pos.lng - prevLng) * 111_111 * Math.cos((pos.lat * Math.PI) / 180))
+        : Infinity;
+    const speedDelta = Math.abs((pos.speed_mph ?? 0) - (prevSpeed ?? 0));
+    const fuelDelta = Math.abs((pos.fuel_pct ?? 0) - (prevFuel ?? 0));
+    const noPrev = !prev || prevLat == null;
+    if (noPrev || movedM > 3 || speedDelta >= 1 || fuelDelta >= 0.005) {
+      await sb
+        .from("van_position")
+        .update({
+          lat: pos.lat,
+          lng: pos.lng,
+          heading: pos.heading,
+          speed_mph: pos.speed_mph,
+          fuel_pct: pos.fuel_pct,
+          battery_v: pos.battery_v,
+          mileage: pos.mileage,
+          ignition: pos.ignition,
+          source: pos.source,
+          updated_at: pos.updated_at,
+        })
+        .eq("id", 1);
+    }
   } catch {
     // non-fatal
   }

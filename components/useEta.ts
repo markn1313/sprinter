@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { useRealtime } from "@/components/useRealtime";
 
@@ -49,27 +49,52 @@ export interface EtaData {
   traffic_aware: boolean;
 }
 
-export function useEta(token: string, tripId: string | null, intervalMs = 30_000) {
+// ETA recomputation hits Mapbox's Directions API (server-side, via /api/eta).
+// We don't want to re-call it on every Bouncie/phone position sample — that
+// would be every 1-3 seconds. Throttle to 15s; freshness comes from local
+// position state, which animates the van marker independently.
+const MIN_ETA_REFETCH_MS = 15_000;
+
+export function useEta(token: string, tripId: string | null, intervalMs = 60_000) {
   const [eta, setEta] = useState<EtaData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastFetchAtRef = useRef<number>(0);
+  const inflightRef = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
     if (!tripId) {
       setEta(null);
       return;
     }
+    if (inflightRef.current) return inflightRef.current;
+    const now = Date.now();
+    if (now - lastFetchAtRef.current < MIN_ETA_REFETCH_MS) return;
+    lastFetchAtRef.current = now;
     setLoading(true);
-    try {
-      const data = await api<EtaData>(token, `/api/eta?trip=${tripId}`);
-      setEta(data);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    const p = (async () => {
+      try {
+        const data = await api<EtaData>(token, `/api/eta?trip=${tripId}`);
+        setEta(data);
+        setError(null);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
+        inflightRef.current = null;
+      }
+    })();
+    inflightRef.current = p;
+    return p;
   }, [token, tripId]);
+
+  // Manual refresh that bypasses the throttle — needed when the route
+  // itself changes (status flip, stop edited). Realtime trip-row events
+  // call this; van-movement events call the throttled `refresh`.
+  const forceRefresh = useCallback(async () => {
+    lastFetchAtRef.current = 0;
+    await refresh();
+  }, [refresh]);
 
   useEffect(() => {
     if (!tripId) {
@@ -90,13 +115,15 @@ export function useEta(token: string, tripId: string | null, intervalMs = 30_000
     };
   }, [refresh, tripId, intervalMs]);
 
-  // Realtime: any driver_location change → recompute ETA.
+  // Realtime: van moves → ETA may have changed. Throttled to 15s by refresh.
+  useRealtime({ table: "van_position", onChange: refresh, enabled: !!tripId });
   useRealtime({ table: "driver_location", onChange: refresh, enabled: !!tripId });
-  // Trip rows (status / stops) changing also affect ETA.
+  // Trip rows (status / stops) changing also affect ETA. Force refresh so a
+  // route edit shows up immediately even if we just refetched 2s ago.
   useRealtime({
     table: "trips",
     filter: tripId ? `id=eq.${tripId}` : undefined,
-    onChange: refresh,
+    onChange: forceRefresh,
     enabled: !!tripId,
   });
 
