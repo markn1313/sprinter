@@ -70,15 +70,38 @@ export default function TvApp({ token }: { token: string }) {
 
   return (
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
-      {/* Map fills the whole screen */}
-      <div className="absolute inset-0">
+      {/* Split-screen map. LEFT = close-up around the van (follow-cam, top-
+          down, high zoom) so Mark sees street-level detail of where he is
+          right now. RIGHT = full remaining route fit-to-bounds so he sees
+          the whole path to the destination. Both share the same position,
+          polyline, congestion, and pins — only the framing differs. */}
+      <div className="absolute inset-0 flex">
+        <div className="relative flex-1 border-r border-zinc-700">
+          <ClientMap
+            position={pos}
+            pins={pins}
+            polyline={polyline}
+            congestion={congestion}
+            mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
+            className="h-full w-full"
+            fitBounds={false}
+            routeLineWidth={8}
+            routeGlowWidth={20}
+            vanIconSize={36}
+            pinScale={2.8}
+            followCam={true}
+            followCamPitch={0}
+            followCamZoom={17}
+            followCamRotate={false}
+          />
+        </div>
         <ClientMap
           position={pos}
           pins={pins}
           polyline={polyline}
           congestion={congestion}
           mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
-          className="h-full w-full"
+          className="h-full flex-1"
           fitBounds={true}
           fitPadding={{
             top: 110,

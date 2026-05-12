@@ -54,6 +54,11 @@ interface Props {
   followCam?: boolean;
   followCamPitch?: number; // degrees, 0 = top-down, 60 = strong perspective
   followCamZoom?: number;
+  // When true (default) follow-cam rotates the map to the van's bearing —
+  // first-person feel. Set false to keep north up while still centering on
+  // the van; useful for the split-screen close-up paired with a static
+  // wide-view map.
+  followCamRotate?: boolean;
   focusMode?: FocusMode;
   focusKey?: number;
   dropPinMode?: boolean;
@@ -68,16 +73,19 @@ const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => s
   const stopBadgeLeft = Math.round(14 * scale);
   const stopBadgeSize = Math.round(16 * scale);
   const stopBadgeFont = Math.max(10, Math.round(10 * scale));
-  // White-and-light-gray checkered flag drawn as an inline SVG so it reads
-  // crisply against the satellite imagery (the system 🏁 emoji is dark and
-  // disappears into vegetation/asphalt). Pole stays dark for grounding.
-  const flagSize = Math.round(28 * scale);
+  // White-and-charcoal checkered flag rendered as inline SVG so it reads
+  // crisply against satellite imagery. Bigger than the system emoji, wrapped
+  // in a radial-gradient halo for additional pop. The halo is emerald-tinted
+  // so it matches the route polyline; the pole + outline stay dark for
+  // grounding against light asphalt.
+  const flagSize = Math.round(44 * scale);
+  const haloPad = Math.round(10 * scale);
   const flagWhiteSvg = `<svg width="${flagSize}" height="${flagSize}" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.85))"><rect x="3" y="3" width="2" height="22" fill="#1c1917"/><g transform="translate(5,3)"><rect width="20" height="11" fill="#ffffff"/><g fill="#1c1917"><rect x="0" y="0" width="4" height="3"/><rect x="8" y="0" width="4" height="3"/><rect x="16" y="0" width="4" height="3"/><rect x="4" y="3" width="4" height="3"/><rect x="12" y="3" width="4" height="3"/><rect x="0" y="6" width="4" height="3"/><rect x="8" y="6" width="4" height="3"/><rect x="16" y="6" width="4" height="3"/></g><rect width="20" height="11" fill="none" stroke="#1c1917" stroke-width="0.6"/></g></svg>`;
   return {
     pickup: () =>
       `<div style="font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩</div>`,
     dropoff: () =>
-      `<div style="line-height:1;">${flagWhiteSvg}</div>`,
+      `<div style="line-height:1;padding:${haloPad}px;border-radius:9999px;background:radial-gradient(closest-side,rgba(16,185,129,.55),rgba(16,185,129,.18) 65%,rgba(16,185,129,0) 80%);box-shadow:0 0 28px rgba(16,185,129,.55);">${flagWhiteSvg}</div>`,
     stop: (idx) =>
       `<div style="position:relative;font-size:${base}px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));">🚩<span style="position:absolute;top:${stopBadgeOffset}px;left:${stopBadgeLeft}px;background:#dc2626;color:white;border-radius:9999px;width:${stopBadgeSize}px;height:${stopBadgeSize}px;display:inline-flex;align-items:center;justify-content:center;font-size:${stopBadgeFont}px;font-weight:700;font-family:-apple-system,system-ui,sans-serif;">${idx ?? ""}</span></div>`,
     mark: () =>
@@ -104,6 +112,7 @@ export default function MapboxMap({
   followCam = false,
   followCamPitch = 60,
   followCamZoom = 16.5,
+  followCamRotate = true,
   focusMode = "auto",
   focusKey = 0,
   dropPinMode = false,
@@ -449,11 +458,11 @@ export default function MapboxMap({
         if (!map.isStyleLoaded()) return;
         const a = animatedVanRef.current;
         if (!a) return;
-        const bearing = lastVanLngLatRef.current?.bearing ?? 0;
+        const targetBearing = followCamRotate ? (lastVanLngLatRef.current?.bearing ?? 0) : 0;
         if (!initialApplied) {
           map.easeTo({
             center: [a.lng, a.lat],
-            bearing,
+            bearing: targetBearing,
             pitch: followCamPitch,
             zoom: followCamZoom,
             duration: 800,
@@ -461,11 +470,12 @@ export default function MapboxMap({
           });
           initialApplied = true;
         } else {
-          // Slide center + bearing, keep zoom + pitch where they are so the
-          // tile loader has time to fetch and avoid camera-thrash.
+          // Slide center (+ bearing if rotation enabled); keep zoom + pitch
+          // where they are so the tile loader has time to fetch and avoid
+          // camera-thrash.
           map.easeTo({
             center: [a.lng, a.lat],
-            bearing,
+            bearing: targetBearing,
             duration: 200,
             essential: true,
           });
@@ -482,7 +492,7 @@ export default function MapboxMap({
       cancelled = true;
       clearInterval(id);
     };
-  }, [followCam, followCamPitch, followCamZoom]);
+  }, [followCam, followCamPitch, followCamZoom, followCamRotate]);
 
   // When follow-cam turns OFF, reset pitch/bearing so subsequent fitBounds
   // gives a clean top-down view.
