@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Trip } from "@/lib/types";
 import { usePosition } from "@/components/usePosition";
 import { useTrips, activeTrip } from "@/components/useTrips";
@@ -258,15 +258,51 @@ function MapTab({
     setFocusKey((k) => k + 1);
   };
   const [myGps, setMyGps] = useState<{ lat: number; lng: number } | null>(null);
+  const localGeoOk = useRef<boolean>(false);
   useEffect(() => {
     if (!shareGps || typeof navigator === "undefined" || !navigator.geolocation) return;
     const id = navigator.geolocation.watchPosition(
-      (p) => setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude }),
-      undefined,
+      (p) => {
+        localGeoOk.current = true;
+        setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude });
+      },
+      () => {
+        // Permission denied / unavailable — fall back to server-side
+        // mark_location (Mark's iPhone PWA posts to /api/mark-location).
+        localGeoOk.current = false;
+      },
       { enableHighAccuracy: true, maximumAge: 10_000 },
     );
     return () => navigator.geolocation.clearWatch(id);
   }, [shareGps]);
+  // Server-side fallback: poll /api/mark-location every 20s so this tab can
+  // see Mark's iPhone-reported position even when local navigator.geolocation
+  // is denied or unavailable (dev Chrome sessions, etc.).
+  useEffect(() => {
+    if (!shareGps) return;
+    let cancel = false;
+    const tick = async () => {
+      if (cancel || localGeoOk.current) return;
+      try {
+        const r = await fetch("/api/mark-location", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { location?: { lat: number; lng: number; reported_at: string } | null };
+        if (cancel || localGeoOk.current) return;
+        if (j.location) {
+          const ageS = (Date.now() - new Date(j.location.reported_at).getTime()) / 1000;
+          if (ageS < 300) setMyGps({ lat: j.location.lat, lng: j.location.lng });
+        }
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 20_000);
+    return () => {
+      cancel = true;
+      clearInterval(id);
+    };
+  }, [shareGps, token]);
 
   const stopsArr =
     ((mapTrip as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
