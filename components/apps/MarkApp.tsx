@@ -22,7 +22,7 @@ import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
 import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
-import { statusLabel } from "@/lib/format";
+import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
@@ -943,6 +943,17 @@ function MapTab({
       {pickupMode && (
         <div className="absolute inset-x-3 bottom-3 z-30">
           <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-3 shadow-2xl">
+            {/* Edit mode: show the currently-locked-in pickup time at the
+                top so Mark can see what Dio's already planning before he
+                changes it. Times formatted in PT. */}
+            {pickupModeKind === "edit" && editTrip?.scheduled_at && (
+              <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-zinc-500">
+                <span>Currently</span>
+                <span className="font-mono text-base font-bold tabular-nums text-emerald-300 normal-case tracking-normal">
+                  {shortTime(editTrip.scheduled_at)}
+                </span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-violet-300">
               <span aria-hidden>📍</span>
               {pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}
@@ -956,16 +967,27 @@ function MapTab({
               </div>
             )}
             <div className="mt-3 grid grid-cols-4 gap-2">
-              {[0, 10, 15, 20].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => dispatchPickup(m)}
-                  disabled={pickupBusy || !pickupPin}
-                  className="rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-3 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
-                >
-                  {m === 0 ? "Now" : `${m} min`}
-                </button>
-              ))}
+              {[0, 10, 15, 20].map((m) => {
+                const targetAt = new Date(Date.now() + m * 60_000);
+                const targetLabel = targetAt.toLocaleTimeString("en-US", {
+                  timeZone: "America/Los_Angeles",
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+                return (
+                  <button
+                    key={m}
+                    onClick={() => dispatchPickup(m)}
+                    disabled={pickupBusy || !pickupPin}
+                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-2.5 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
+                  >
+                    <span>{m === 0 ? "Now" : `${m} min`}</span>
+                    <span className="mt-0.5 font-mono text-[11px] font-normal text-violet-100/85 tabular-nums">
+                      {targetLabel}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             {pickupModeKind !== "edit" && (
               <div className="mt-2 text-[10px] text-zinc-500">
