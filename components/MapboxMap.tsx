@@ -15,6 +15,11 @@ export interface MapPin {
   // Stable id used by the drag-end handler to resolve which underlying
   // record to update (or in pickup-mode, the synthetic "pickup-target").
   id?: string;
+  // Stop-only: passenger name + token threaded through to the popup so it
+  // can render "Picking up <name>" + a "Share link" button. Set when Mark
+  // tags an intermediate stop with whoever's getting in there.
+  passenger?: string | null;
+  passenger_link_token?: string | null;
 }
 
 type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
@@ -77,6 +82,11 @@ interface Props {
   // underlying record. Currently wired for `stop` kind only — pickup /
   // dropoff are not removable from the map (they're the trip endpoints).
   onPinRemove?: (pin: MapPin) => void;
+  // Stop-pin popup also gets a "Picking up …" input + Save button. When the
+  // caller wires this, saving fires with the pin + the trimmed name (or null
+  // to clear). Returns the share URL (passenger tracking page) so the popup
+  // can switch into "Share link" mode without a follow-up render round-trip.
+  onPinPassengerSave?: (pin: MapPin, name: string | null) => Promise<string | null>;
 }
 
 const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => string> => {
@@ -148,6 +158,7 @@ export default function MapboxMap({
   onDroppedPinClick,
   onPinDragEnd,
   onPinRemove,
+  onPinPassengerSave,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -167,6 +178,10 @@ export default function MapboxMap({
   useEffect(() => {
     onPinRemoveRef.current = onPinRemove;
   }, [onPinRemove]);
+  const onPinPassengerSaveRef = useRef(onPinPassengerSave);
+  useEffect(() => {
+    onPinPassengerSaveRef.current = onPinPassengerSave;
+  }, [onPinPassengerSave]);
   // Ref-stored fitBounds applier — populated by the fitBounds useEffect so
   // the ResizeObserver (in the init effect) can re-run the fit when the
   // container's flex layout settles AFTER initial mount. Otherwise a tight
@@ -612,32 +627,108 @@ export default function MapboxMap({
             });
           }
           // Popup behavior:
-          //  - Stop pins get a "Remove this stop" button (single-tap → delete).
+          //  - Stop pins get an address + passenger name field +
+          //    Share-link button + "Remove this stop" button.
           //  - Other pin kinds (pickup / dropoff / mark / passenger /
           //    pickup-target) just show their address label, if any.
           if (p.kind === "stop") {
             const escapeHtml = (s: string) =>
               s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
-            const popup = new mapboxgl.Popup({ offset: 22, closeButton: false, className: "sprinter-stop-popup" });
-            popup.setHTML(
-              `<div style="min-width:180px;padding:8px 4px;display:flex;flex-direction:column;gap:8px;">
-                <div style="font-size:12px;color:#52525b;line-height:1.3;">${p.label ? escapeHtml(p.label) : "Intermediate stop"}</div>
+            const popup = new mapboxgl.Popup({ offset: 22, closeButton: false, className: "sprinter-stop-popup", maxWidth: "260px" });
+            const renderHtml = (pin: MapPin, savedUrl: string | null) => {
+              const passenger = pin.passenger ?? null;
+              const passengerLabel = passenger
+                ? `<div style="font-size:12px;color:#10b981;line-height:1.3;font-weight:600;">Picking up ${escapeHtml(passenger)}</div>`
+                : `<div style="font-size:11px;color:#a1a1aa;line-height:1.3;">Tag a passenger to mint a tracking link</div>`;
+              const shareBtn = (passenger && (savedUrl || pin.passenger_link_token))
+                ? `<button class="sprinter-stop-share" style="background:#1e40af;color:#dbeafe;border:0;padding:8px 10px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;letter-spacing:.02em;">Share link with ${escapeHtml(passenger)}</button>`
+                : "";
+              const saveLabel = passenger ? "Update name" : "Save";
+              return `<div style="min-width:200px;padding:8px 4px;display:flex;flex-direction:column;gap:8px;">
+                <div style="font-size:12px;color:#52525b;line-height:1.3;">${pin.label ? escapeHtml(pin.label) : "Intermediate stop"}</div>
+                ${passengerLabel}
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <input class="sprinter-stop-passenger" type="text" inputmode="text" autocomplete="off" placeholder="Passenger name" value="${passenger ? escapeHtml(passenger) : ""}" style="flex:1;min-width:0;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:6px;padding:6px 8px;font-size:12px;color:#18181b;outline:none;" />
+                  <button class="sprinter-stop-passenger-save" style="background:#15803d;color:#dcfce7;border:0;padding:6px 10px;font-size:11px;font-weight:600;border-radius:6px;cursor:pointer;">${saveLabel}</button>
+                </div>
+                ${shareBtn}
                 <button class="sprinter-stop-remove" style="background:#7f1d1d;color:#fee2e2;border:0;padding:8px 10px;font-size:12px;font-weight:600;border-radius:8px;cursor:pointer;letter-spacing:.02em;">Remove this stop</button>
-              </div>`,
-            );
+              </div>`;
+            };
+            // Mutable local copy of the pin so re-rendering the popup after
+            // a successful save reflects the new name/token without waiting
+            // for parent state to round-trip through React.
+            const localPin: MapPin = { ...p };
+            // Cache the share URL returned from the latest save so Share
+            // doesn't have to reconstruct it from the token.
+            let cachedShareUrl: string | null = null;
+            popup.setHTML(renderHtml(localPin, cachedShareUrl));
             marker.setPopup(popup);
-            popup.on("open", () => {
-              const btn = popup.getElement()?.querySelector(".sprinter-stop-remove") as HTMLElement | null;
-              if (!btn) return;
-              btn.onclick = () => {
-                try {
-                  onPinRemoveRef.current?.(p);
-                } catch (err) {
-                  console.warn("[MapboxMap] onPinRemove handler threw", err);
-                }
-                popup.remove();
-              };
-            });
+            const wire = () => {
+              const root = popup.getElement();
+              if (!root) return;
+              const removeBtn = root.querySelector(".sprinter-stop-remove") as HTMLElement | null;
+              if (removeBtn) {
+                removeBtn.onclick = () => {
+                  try {
+                    onPinRemoveRef.current?.(localPin);
+                  } catch (err) {
+                    console.warn("[MapboxMap] onPinRemove handler threw", err);
+                  }
+                  popup.remove();
+                };
+              }
+              const input = root.querySelector(".sprinter-stop-passenger") as HTMLInputElement | null;
+              const saveBtn = root.querySelector(".sprinter-stop-passenger-save") as HTMLButtonElement | null;
+              if (saveBtn && input) {
+                saveBtn.onclick = async () => {
+                  if (!onPinPassengerSaveRef.current) return;
+                  const v = input.value.trim();
+                  saveBtn.disabled = true;
+                  saveBtn.textContent = "Saving…";
+                  try {
+                    const url = await onPinPassengerSaveRef.current(localPin, v || null);
+                    localPin.passenger = v || null;
+                    cachedShareUrl = url;
+                    popup.setHTML(renderHtml(localPin, cachedShareUrl));
+                    wire();
+                  } catch (err) {
+                    console.warn("[MapboxMap] onPinPassengerSave handler threw", err);
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = localPin.passenger ? "Update name" : "Save";
+                  }
+                };
+                input.onkeydown = (ev) => {
+                  if (ev.key === "Enter") saveBtn.click();
+                };
+              }
+              const shareBtn = root.querySelector(".sprinter-stop-share") as HTMLButtonElement | null;
+              if (shareBtn) {
+                shareBtn.onclick = async () => {
+                  const url = cachedShareUrl ?? (localPin.passenger_link_token
+                    ? `${typeof window !== "undefined" ? window.location.origin : ""}/p/${localPin.passenger_link_token}`
+                    : null);
+                  if (!url) return;
+                  const text = `Sprinter pickup tracker for ${localPin.passenger}: ${url}`;
+                  // Prefer the native share sheet (iOS opens a contact /
+                  // app picker so Mark can drop it straight into Messages).
+                  // Fall back to a sms: deeplink — that opens iMessage with
+                  // a blank recipient + the body prefilled, which is still
+                  // one tap from "send" to the chosen contact.
+                  const nav = navigator as Navigator & { share?: (data: { text?: string; url?: string }) => Promise<void> };
+                  try {
+                    if (nav.share) {
+                      await nav.share({ text, url });
+                    } else {
+                      window.location.href = `sms:?&body=${encodeURIComponent(text)}`;
+                    }
+                  } catch {
+                    // User cancelled — silent ignore.
+                  }
+                };
+              }
+            };
+            popup.on("open", wire);
           } else if (p.label) {
             marker.setPopup(new mapboxgl.Popup({ offset: 18 }).setText(p.label));
           }

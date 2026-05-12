@@ -337,23 +337,41 @@ function MapTab({
       if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
       return out;
     }
-    // Resolve stop UUIDs by matching label against the server-side stops
-    // array — `upcoming` (from eta) doesn't include the id directly.
-    const stopByLabel = new Map<string, string>();
+    // Resolve stop UUIDs + passenger info by matching label against the
+    // server-side stops array — `upcoming` (from eta) doesn't include the
+    // id or passenger fields directly.
+    const stopMetaByLabel = new Map<string, { id: string; passenger: string | null; passenger_link_token: string | null }>();
     stopsArr.forEach((s) => {
-      if (s.id) stopByLabel.set(s.address, s.id);
+      if (s.id) {
+        const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
+        stopMetaByLabel.set(s.address, {
+          id: s.id,
+          passenger: sx.passenger ?? null,
+          passenger_link_token: sx.passenger_link_token ?? null,
+        });
+      }
     });
     if (upcoming && upcoming.length > 0) {
       let stopIdx = 0;
       upcoming.forEach((w) => {
         const idx = w.kind === "stop" ? ++stopIdx : undefined;
+        const meta = w.kind === "stop" ? stopMetaByLabel.get(w.label) : undefined;
         const id =
           w.kind === "pickup"
             ? "pickup"
             : w.kind === "dropoff"
               ? "dropoff"
-              : stopByLabel.get(w.label) ?? undefined;
-        out.push({ kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}), ...(id ? { id } : {}) });
+              : meta?.id;
+        out.push({
+          kind: w.kind,
+          lat: w.lat,
+          lng: w.lng,
+          label: w.label,
+          ...(idx != null ? { index: idx } : {}),
+          ...(id ? { id } : {}),
+          ...(meta?.passenger ? { passenger: meta.passenger } : {}),
+          ...(meta?.passenger_link_token ? { passenger_link_token: meta.passenger_link_token } : {}),
+        });
       });
     } else {
       // Fallback while ETA hasn't loaded yet
@@ -362,8 +380,19 @@ function MapTab({
       if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
         out.push({ kind: "dropoff", id: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
       stopsArr.forEach((s, i) => {
-        if (s.lat != null && s.lng != null)
-          out.push({ kind: "stop", id: s.id, lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+        if (s.lat != null && s.lng != null) {
+          const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
+          out.push({
+            kind: "stop",
+            id: s.id,
+            lat: s.lat,
+            lng: s.lng,
+            label: s.address,
+            index: i + 1,
+            ...(sx.passenger ? { passenger: sx.passenger } : {}),
+            ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
+          });
+        }
       });
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
@@ -803,6 +832,33 @@ function MapTab({
     }
   };
 
+  // Tag a stop with a passenger name and auto-mint a passenger-link token.
+  // Returns the share URL (passenger tracker page) so the popup can switch
+  // straight into share-sheet mode without waiting for the next refresh
+  // cycle. Passing null clears the name + revokes the token.
+  const savePinPassenger = async (pin: MapPin, name: string | null): Promise<string | null> => {
+    if (pin.kind !== "stop" || !pin.id) return null;
+    const trip = live ?? mapTrip;
+    if (!trip) return null;
+    try {
+      const res = await fetch(`/api/trips/${trip.id}/stops/${pin.id}/passenger`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const j = (await res.json().catch(() => null)) as { token?: string | null } | null;
+      refresh();
+      if (j?.token) {
+        const base = typeof window !== "undefined" ? window.location.origin : "";
+        return `${base}/p/${j.token}`;
+      }
+      return null;
+    } catch (err) {
+      console.warn("[MarkApp] savePinPassenger failed", err);
+      throw err;
+    }
+  };
+
   // Clear ALL pending stops at once. Used when Mark long-presses the Stop
   // button (or as a fallback when the list grows unwieldy). Arrived stops
   // stay in place because their history matters.
@@ -856,6 +912,7 @@ function MapTab({
         onDroppedPinClick={() => setSheet("droppedPin")}
         onPinDragEnd={mapTrip || inEditMode ? handlePinDrag : undefined}
         onPinRemove={mapTrip && !inEditMode ? removeStopPin : undefined}
+        onPinPassengerSave={mapTrip && !inEditMode ? savePinPassenger : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={56}

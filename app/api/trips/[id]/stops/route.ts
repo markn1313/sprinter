@@ -13,6 +13,11 @@ interface Stop {
   lat: number | null;
   lng: number | null;
   passenger?: string | null;
+  // Per-stop passenger-link token. Minted by
+  // POST /api/trips/[id]/stops/[stopId]/passenger when Mark sets a name
+  // on a stop. Stored here so the stop popup can deep-link into the
+  // passenger view (and revoke the old one if Mark renames the passenger).
+  passenger_link_token?: string | null;
   arrived_at?: string | null;
   added_at: string;
 }
@@ -116,6 +121,7 @@ export async function PUT(
       lat,
       lng,
       passenger: s.passenger ?? null,
+      passenger_link_token: s.passenger_link_token ?? null,
       arrived_at: s.arrived_at ?? null,
       added_at: s.added_at ?? new Date().toISOString(),
     });
