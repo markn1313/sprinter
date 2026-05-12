@@ -96,12 +96,18 @@ function ymd(d: Date): string {
 // null if Bouncie can't be reached or no usable data exists.
 async function computeFromBouncie(days: number = 7): Promise<MpgSnapshot | null> {
   const now = new Date();
-  // Bouncie's API caps the window at one week per call. Stay within that.
+  // Bouncie's /v1/trips enforces a STRICT 7-calendar-day span — the
+  // diff between starts-after and ends-before (in days) must be <= 7,
+  // and a request spanning 8 days returns HTTP 500 with "Start and End
+  // dates must be within a week of each other". We want to include
+  // today's already-completed trips, so end = today + 1 day; that means
+  // start can be no earlier than (end - 7) = today - 6.
   const cappedDays = Math.min(days, 7);
-  const start = new Date(now.getTime() - cappedDays * 86_400_000);
+  const end = new Date(now.getTime() + 86_400_000); // tomorrow
+  const start = new Date(end.getTime() - cappedDays * 86_400_000);
   const trips = await fetchBouncieTrips({
     startsAfter: ymd(start),
-    endsBefore: ymd(new Date(now.getTime() + 86_400_000)), // tomorrow → catches today's trips
+    endsBefore: ymd(end),
   });
   if (!trips) return null;
   let miles = 0;
