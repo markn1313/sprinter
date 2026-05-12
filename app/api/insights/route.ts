@@ -155,13 +155,21 @@ export async function GET(req: Request) {
   // because a frequent pickup is usually "home" — and we want it to be one
   // tap away when Mark is OUT and wants to go back. Filter "current
   // location" / "my location" sentinel pickups (those carry no info).
+  // Mark can also long-press a chip to permanently hide an address — those
+  // live in `hidden_destinations` and are excluded here.
   const month = new Date(now - 30 * 86400_000).toISOString();
-  const { data: allTrips } = await sb
-    .from("trips")
-    .select("pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
-    .gte("scheduled_at", month)
-    .order("scheduled_at", { ascending: false })
-    .limit(300);
+  const [{ data: allTrips }, { data: hiddenRows }] = await Promise.all([
+    sb
+      .from("trips")
+      .select("pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
+      .gte("scheduled_at", month)
+      .order("scheduled_at", { ascending: false })
+      .limit(300),
+    sb.from("hidden_destinations").select("address_key"),
+  ]);
+  const hiddenSet = new Set<string>(
+    ((hiddenRows ?? []) as Array<{ address_key: string }>).map((r) => r.address_key),
+  );
 
   const destBuckets = new Map<string, { address: string; lat: number | null; lng: number | null; count: number; last: string }>();
   const skipRe = /current\s+location|my\s+location|^pickup$/i;
@@ -174,6 +182,7 @@ export async function GET(req: Request) {
       const trimmed = addr.trim();
       if (!trimmed) continue;
       const key = trimmed.toLowerCase();
+      if (hiddenSet.has(key)) continue;
       const existing = destBuckets.get(key);
       if (existing) {
         existing.count += 1;

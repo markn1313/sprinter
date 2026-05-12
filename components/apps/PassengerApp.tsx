@@ -13,7 +13,7 @@ import CabinControls from "@/components/CabinControls";
 import PushToggle from "@/components/PushToggle";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import CabinChat from "@/components/CabinChat";
-import { statusLabel, shortTime } from "@/lib/format";
+import { statusLabel, shortTime, shortAddr } from "@/lib/format";
 import { rangeMiles } from "@/lib/range";
 import VanIcon from "@/components/VanIcon";
 import { Map as MapIcon, MessageCircle, Sliders, Navigation, Fuel, Gauge } from "lucide-react";
@@ -175,7 +175,7 @@ function StatusBanner({ trip, etaMinutes }: { trip: Trip; etaMinutes: number | n
       case "at_pickup":
         return "Van has arrived";
       case "onboard":
-        return etaMinutes != null && trip.dropoff_address ? `${etaMinutes} min to ${trip.dropoff_address.split(",")[0]}` : "Onboard";
+        return etaMinutes != null && trip.dropoff_address ? `${etaMinutes} min to ${shortAddr(trip.dropoff_address)}` : "Onboard";
       case "at_dropoff":
         return "Arrived";
       case "complete":

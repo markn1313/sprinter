@@ -61,6 +61,24 @@ export function shortDate(iso: string): string {
   });
 }
 
+// Short one-line form of an address — typically "<street>" only,
+// dropping city/state/zip. Nominatim occasionally returns building-number
+// ranges as "230,232 Newport Boulevard" (comma-joined) which broke naive
+// split(",")[0]; this version re-attaches a pure-digit leading segment to
+// the next part so "230,232 Newport Boulevard, Newport Beach, CA 92663"
+// shortens cleanly to "230,232 Newport Boulevard" instead of "230".
+export function shortAddr(addr: string | null | undefined): string {
+  if (!addr) return "";
+  const parts = addr.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return "";
+  // If the first segment is purely numeric (a leading building number),
+  // glue it onto the next segment so we keep the number AND the street.
+  if (parts.length >= 2 && /^\d+(?:-\d+)?$/.test(parts[0])) {
+    return `${parts[0]},${parts[1]}`;
+  }
+  return parts[0];
+}
+
 // Strip a trailing US ZIP (5-digit or ZIP+4) from a display address. Leaves
 // the underlying record untouched — only meant for rendering. Examples:
 //   "2914 West Ocean Front, Newport Beach, CA 92663" → "...CA"

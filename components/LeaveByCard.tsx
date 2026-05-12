@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { shortAddr } from "@/lib/format";
 import { Clock, AlertTriangle, Calendar } from "lucide-react";
 
 interface Props {
@@ -133,7 +134,7 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
       </div>
       {trip.pickup_address && (
         <div className="mt-1 truncate text-[11px] text-zinc-500">
-          {trip.pickup_address.split(",")[0]}
+          {shortAddr(trip.pickup_address)}
         </div>
       )}
       <div className={`mt-2 flex items-center gap-1.5 text-sm font-semibold ${palette.text}`}>

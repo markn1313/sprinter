@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
+import { shortAddr } from "@/lib/format";
 import { CheckCircle2, MapPin, Flag } from "lucide-react";
 
 interface RecapStats {
@@ -93,10 +94,6 @@ function Stat({ value, unit, label }: { value: string; unit?: string; label: str
       <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
     </div>
   );
-}
-
-function shortAddr(a: string): string {
-  return a.split(",")[0].trim();
 }
 
 function computeDurationMin(t: TripWithExtras): number | null {
