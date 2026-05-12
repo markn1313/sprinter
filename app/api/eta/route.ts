@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getVanPosition } from "@/lib/bouncie";
-import { route, nextManeuver } from "@/lib/routing";
+import { route, nextManeuver, STOP_WAIT_SECONDS } from "@/lib/routing";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +76,13 @@ export async function POST(req: Request) {
     route([{ lat: origin.lat, lng: origin.lng }, { lat: next.lat, lng: next.lng }]),
     route([{ lat: origin.lat, lng: origin.lng }, ...wp.map((p) => ({ lat: p.lat, lng: p.lng }))]),
   ]);
+  // Every waypoint in `wp` except the last (final destination) is a place
+  // the van stops at long enough to pick up / drop off — boarding takes
+  // real time and ETAs that ignore it are wrong by 2-4 min on multi-stop
+  // trips. The next-waypoint ETA gets no wait because the van hasn't
+  // reached it yet.
+  const finalWaitS = Math.max(0, wp.length - 1) * STOP_WAIT_SECONDS;
+  const finalSecsWithWait = rFinal ? rFinal.duration_s + finalWaitS : null;
   return NextResponse.json({
     van: { lat: origin.lat, lng: origin.lng, heading: origin.heading, speed_mph: origin.speed_mph, source: origin.source },
     to_next: rNext
@@ -90,12 +97,14 @@ export async function POST(req: Request) {
           traffic_aware: rNext.source === "mapbox-traffic",
         }
       : null,
-    to_final: rFinal
+    to_final: rFinal && finalSecsWithWait != null
       ? {
           kind: wp[wp.length - 1].kind ?? "dropoff",
           label: wp[wp.length - 1].label ?? "",
-          eta_seconds: rFinal.duration_s,
-          eta_minutes: Math.round(rFinal.duration_s / 60),
+          eta_seconds: finalSecsWithWait,
+          eta_minutes: Math.round(finalSecsWithWait / 60),
+          drive_seconds: rFinal.duration_s,
+          wait_seconds: finalWaitS,
           distance_miles: +(rFinal.distance_m / 1609.34).toFixed(1),
           polyline: rFinal.polyline,
           congestion: rFinal.congestion ?? null,
@@ -227,6 +236,13 @@ export async function GET(req: Request) {
     route([{ lat: origin.lat, lng: origin.lng }, ...upcoming.map((u) => ({ lat: u.lat, lng: u.lng }))]),
   ]);
 
+  // 2 min per stop (pickup + every intermediate stop) on the way to the
+  // final dropoff. The last waypoint IS the final destination so we don't
+  // wait there. `to_next` stays driving-only because the van hasn't pulled
+  // up to a curb yet.
+  const finalWaitS = Math.max(0, upcoming.length - 1) * STOP_WAIT_SECONDS;
+  const finalSecsWithWait = rFinal ? rFinal.duration_s + finalWaitS : null;
+
   return NextResponse.json({
     van: { lat: origin.lat, lng: origin.lng, heading: origin.heading, speed_mph: origin.speed_mph, source: origin.source },
     upcoming,
@@ -243,12 +259,14 @@ export async function GET(req: Request) {
           traffic_aware: rNext.source === "mapbox-traffic",
         }
       : null,
-    to_final: rFinal
+    to_final: rFinal && finalSecsWithWait != null
       ? {
           kind: upcoming[upcoming.length - 1].kind,
           label: upcoming[upcoming.length - 1].label,
-          eta_seconds: rFinal.duration_s,
-          eta_minutes: Math.round(rFinal.duration_s / 60),
+          eta_seconds: finalSecsWithWait,
+          eta_minutes: Math.round(finalSecsWithWait / 60),
+          drive_seconds: rFinal.duration_s,
+          wait_seconds: finalWaitS,
           distance_meters: rFinal.distance_m,
           distance_miles: +(rFinal.distance_m / 1609.34).toFixed(1),
           polyline: rFinal.polyline,

@@ -3,7 +3,7 @@ import { newToken, requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { parseDispatch } from "@/lib/parse-dispatch";
 import { geocode } from "@/lib/geocode";
-import { route, Waypoint } from "@/lib/routing";
+import { route, Waypoint, STOP_WAIT_SECONDS } from "@/lib/routing";
 import { getVanPosition } from "@/lib/bouncie";
 import { logTripEvent } from "@/lib/log";
 import { cancelOpenTrips } from "@/lib/single-trip";
@@ -49,7 +49,12 @@ export async function POST(req: Request) {
     if (r) {
       polyline = r.polyline;
       distance_m = r.distance_m;
-      duration_s = r.duration_s;
+      // wp = [van, pickup, dropoff] — pickup is one intermediate stop so
+      // add a single STOP_WAIT_SECONDS for boarding before dropoff. Routes
+      // without a pickup (shouldn't happen here since pickup is required to
+      // reach this branch) add zero.
+      const intermediates = Math.max(0, wp.length - 2);
+      duration_s = r.duration_s + intermediates * STOP_WAIT_SECONDS;
     }
   }
 

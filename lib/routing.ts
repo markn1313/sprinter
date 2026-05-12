@@ -33,12 +33,19 @@ export interface Waypoint {
   lng: number;
 }
 
-// Sprinter vans take ~10% longer than the reference car Mapbox routes for —
+// Sprinter vans take ~15% longer than the reference car Mapbox routes for —
 // slower acceleration, lower top speed, and stricter speed limits on
 // commercial vehicles in some jurisdictions. Apply this to every leg
 // duration we report so ETAs displayed to Mark, Dio, and passengers track
 // reality. Only affects time, not distance.
-const SPRINTER_TIME_FACTOR = 1.10;
+const SPRINTER_TIME_FACTOR = 1.15;
+
+// Each intermediate waypoint adds a real-world pause for boarding /
+// dropping off. Two minutes per stop covers door open + step out + bags
+// + door close in normal cases. Applied by ETA-computing endpoints on
+// top of Mapbox's pure driving duration. NOT applied inside route() —
+// some callers (turn-by-turn navigation) want pure driving time.
+export const STOP_WAIT_SECONDS = 120;
 
 export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
