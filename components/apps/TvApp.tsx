@@ -7,7 +7,7 @@ import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
-import { rangeMiles } from "@/lib/range";
+import { useRange } from "@/components/useRange";
 import { stripZip } from "@/lib/format";
 import VanIcon from "@/components/VanIcon";
 import EtaCard from "@/components/EtaCard";
@@ -24,6 +24,7 @@ export default function TvApp({ token }: { token: string }) {
     .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())[0];
   const focus = live ?? upcomingNonLive;
   const { eta } = useEta(token, focus?.id ?? null, 20_000);
+  const range = useRange(token);
 
   const stopsArr = ((focus as unknown as { stops?: Array<{ lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
 
@@ -146,7 +147,7 @@ export default function TvApp({ token }: { token: string }) {
         <div className="absolute right-8 top-8 z-30 flex flex-col gap-3">
           <BigStat
             icon={<span className="text-emerald-400 text-2xl">↗</span>}
-            value={rangeMiles(pos.fuel_pct ?? null)?.toString() ?? "—"}
+            value={range?.range_miles?.toString() ?? "—"}
             unit="MI"
             label="Range"
           />

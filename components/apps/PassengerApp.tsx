@@ -14,7 +14,7 @@ import PushToggle from "@/components/PushToggle";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import CabinChat from "@/components/CabinChat";
 import { statusLabel, shortTime, shortAddr } from "@/lib/format";
-import { rangeMiles } from "@/lib/range";
+import { useRange } from "@/components/useRange";
 import VanIcon from "@/components/VanIcon";
 import { Map as MapIcon, MessageCircle, Sliders, Navigation, Fuel, Gauge } from "lucide-react";
 
@@ -25,6 +25,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
   const { trips } = useTrips(token, 5000);
   const trip = trips[0] ?? null;
   const { eta } = useEta(token, trip?.id ?? null, 20_000);
+  const range = useRange(token);
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window === "undefined") return "map";
     const v = window.localStorage.getItem(`sprinter:tab:${token}`);
@@ -106,7 +107,7 @@ export default function PassengerApp({ token }: { token: string; name: string })
               </VitalChip>
               <VitalChip>
                 <span className="text-emerald-400">↗</span>
-                <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
+                <span>{range?.range_miles ?? "—"} mi</span>
               </VitalChip>
               <SpeedChip mph={pos.speed_mph ?? null} />
             </div>

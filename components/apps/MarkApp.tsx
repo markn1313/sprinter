@@ -30,7 +30,7 @@ import CabinChat from "@/components/CabinChat";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
 import VanIcon from "@/components/VanIcon";
-import { rangeMiles } from "@/lib/range";
+import { useRange } from "@/components/useRange";
 import {
   Map as MapIcon,
   Settings,
@@ -222,6 +222,10 @@ function MapTab({
   // waypoints so the pending pickup pin can render with the van's route to
   // reach it, not just float on the map alone.
   const { eta } = useEta(token, mapTrip?.id ?? null, 25_000);
+  // Rolling-actual-MPG range — pulled from /api/range which multiplies
+  // tank-gallons × fuel_pct × rolling_mpg (Bouncie trip data, last 7
+  // days). Replaces the old static 18-mpg constant. Updates once a min.
+  const range = useRange(token);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
 
@@ -1166,7 +1170,7 @@ function MapTab({
             </VitalChip>
             <VitalChip>
               <span className="text-emerald-400">↗</span>
-              <span>{rangeMiles(pos.fuel_pct ?? null) ?? "—"} mi</span>
+              <span title={range?.mpg_source === "bouncie_trips" && range.mpg ? `${range.mpg.toFixed(1)} mpg · ${range.window_miles?.toFixed(0)} mi over ${range.window_days}d` : undefined}>{range?.range_miles ?? "—"} mi</span>
             </VitalChip>
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
@@ -1355,6 +1359,7 @@ function MapTab({
             fuelPct={pos?.fuel_pct ?? null}
             vanLat={pos?.lat ?? null}
             vanLng={pos?.lng ?? null}
+            rangeMi={range?.range_miles ?? null}
           />
           <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
           {vanFromMe && vanFromMe.miles >= 0.1 && (

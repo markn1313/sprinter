@@ -402,6 +402,76 @@ export async function saveCredentials(token: {
     .eq("id", 1);
 }
 
+// A single completed trip from Bouncie's /v1/trips endpoint. We use the
+// distance + fuelConsumed pair to compute actual rolling MPG.
+export interface BouncieTrip {
+  transactionId: string;
+  startTime: string;
+  endTime: string;
+  startOdometer: number;
+  endOdometer: number;
+  distance: number; // miles
+  fuelConsumed: number | null; // gallons; null when ECU didn't report
+  averageSpeed: number;
+  maxSpeed: number;
+  totalIdleDuration: number;
+  imei: string;
+}
+
+// Fetch trips between two dates (inclusive). Bouncie caps the window at
+// one week per request — callers wanting more history should iterate in
+// 7-day chunks. Date strings are YYYY-MM-DD.
+export async function fetchBouncieTrips(opts: {
+  startsAfter: string;
+  endsBefore: string;
+}): Promise<BouncieTrip[] | null> {
+  const token = await ensureFreshToken();
+  if (!token) return null;
+  const creds = await loadCreds();
+  // Bouncie's trips endpoint takes imei, not vin. We don't store imei
+  // separately so we derive it from the live vehicles call when we don't
+  // have it cached. (The vehicles credential row could cache imei too,
+  // saving a round-trip on every MPG refresh.)
+  let imei: string | null = (creds as unknown as { imei?: string | null })?.imei ?? null;
+  if (!imei) {
+    try {
+      const res = await fetch(`${BOUNCIE_API}/vehicles`, {
+        headers: { Authorization: token },
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Array<{ vin: string; imei?: string }>;
+        const v = creds?.vehicle_vin
+          ? data.find((x) => x.vin === creds.vehicle_vin) ?? data[0]
+          : data[0];
+        imei = v?.imei ?? null;
+      }
+    } catch {}
+  }
+  if (!imei) return null;
+  const qs = new URLSearchParams({
+    imei,
+    "starts-after": opts.startsAfter,
+    "ends-before": opts.endsBefore,
+    "gps-format": "geojson",
+  });
+  try {
+    const res = await fetch(`${BOUNCIE_API}/trips?${qs.toString()}`, {
+      headers: { Authorization: token },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      console.warn("[bouncie] trips fetch failed", res.status, (await res.text()).slice(0, 160));
+      return null;
+    }
+    const data = (await res.json()) as BouncieTrip[];
+    return Array.isArray(data) ? data : null;
+  } catch (err) {
+    console.warn("[bouncie] trips threw", (err as Error).message);
+    return null;
+  }
+}
+
 export async function attachVehicle(): Promise<{ vin: string; nickname: string | null } | null> {
   const token = await ensureFreshToken();
   if (!token) return null;

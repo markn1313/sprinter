@@ -6,6 +6,9 @@ interface Props {
   fuelPct: number | null;
   vanLat: number | null;
   vanLng: number | null;
+  // Range in miles from /api/range (rolling actual MPG). When null we
+  // fall back to a coarse static estimate to keep the card render-safe.
+  rangeMi?: number | null;
 }
 
 // When the tank is below 25% and there's no active trip, prominently surface
@@ -18,7 +21,7 @@ interface Props {
 // real estate when not needed.
 const LOW_THRESHOLD = 0.25;
 
-export default function FuelAlertCard({ fuelPct, vanLat, vanLng }: Props) {
+export default function FuelAlertCard({ fuelPct, vanLat, vanLng, rangeMi: rangeProp }: Props) {
   if (fuelPct == null || fuelPct >= LOW_THRESHOLD) return null;
   const pct = Math.round(fuelPct * 100);
   const tone = pct < 10 ? "red" : pct < 18 ? "amber" : "amber";
@@ -26,8 +29,9 @@ export default function FuelAlertCard({ fuelPct, vanLat, vanLng }: Props) {
     ? { ring: "border-red-700/70", text: "text-red-300", icon: "text-red-400", bar: "bg-red-500" }
     : { ring: "border-amber-700/60", text: "text-amber-300", icon: "text-amber-400", bar: "bg-amber-400" };
 
-  // Range estimate: 24 gal × pct × 18 mpg
-  const rangeMi = Math.round(24 * fuelPct * 18);
+  // Prefer the rolling-MPG range from /api/range. Coarse fallback uses
+  // 24.5 gal × pct × 22 mpg if the prop isn't wired yet.
+  const rangeMi = rangeProp ?? Math.round(24.5 * fuelPct * 22);
 
   // Maps deep link: search 'gas stations' centered at the van. Works on iOS
   // (handed off to Apple Maps if Google Maps not installed) and Android.
