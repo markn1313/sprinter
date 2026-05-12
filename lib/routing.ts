@@ -33,6 +33,13 @@ export interface Waypoint {
   lng: number;
 }
 
+// Sprinter vans take ~10% longer than the reference car Mapbox routes for —
+// slower acceleration, lower top speed, and stricter speed limits on
+// commercial vehicles in some jurisdictions. Apply this to every leg
+// duration we report so ETAs displayed to Mark, Dio, and passengers track
+// reality. Only affects time, not distance.
+const SPRINTER_TIME_FACTOR = 1.10;
+
 export async function route(waypoints: Waypoint[]): Promise<RouteResult | null> {
   if (waypoints.length < 2) return null;
   const mapboxToken = process.env.MAPBOX_TOKEN;
@@ -125,8 +132,8 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
     return {
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
-      duration_s: Math.round(r.duration),
-      duration_in_traffic_s: Math.round(r.duration),
+      duration_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
+      duration_in_traffic_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
       geometry: r.geometry,
       steps,
       congestion: congestion.length > 0 ? congestion : undefined,
@@ -217,7 +224,7 @@ async function routeOsrm(waypoints: Waypoint[]): Promise<RouteResult | null> {
     return {
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
-      duration_s: Math.round(r.duration),
+      duration_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
       duration_in_traffic_s: null,
       geometry: r.geometry,
       steps: [],
