@@ -521,21 +521,12 @@ function MapTab({
       {/* "Van is N min / X mi from me" — always visible when both GPS sources
           are reporting. Useful when waiting for pickup or knowing how close
           the van is on a walk-back. */}
-      {/* Hide the chip when Mark is essentially IN the van (his GPS is
-          within ~0.1 mi of the van's position) — the "VAN 0 min · 0 mi
-          from you" reading would be meaningless. The same threshold the
-          eta endpoint uses to collapse pickup/dropoff redundancy. */}
-      {vanFromMe && live?.status !== "onboard" && vanFromMe.miles >= 0.1 && (
-        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-2xl border border-zinc-800 bg-zinc-950 px-3 py-1.5 shadow-xl">
-          <div className="flex items-baseline gap-2 text-xs">
-            <span className="text-zinc-500 uppercase tracking-wider">Van</span>
-            <span className="font-mono text-base font-bold tabular-nums text-emerald-300">{vanFromMe.minutes}</span>
-            <span className="text-zinc-400">min</span>
-            <span className="ml-1 font-mono text-base font-semibold tabular-nums text-zinc-200">{vanFromMe.miles}</span>
-            <span className="text-zinc-400">mi from you</span>
-          </div>
-        </div>
-      )}
+      {/* The "Van X min from you" chip used to live at top-center; it's
+          now rendered as a bottom-strip card (see !live branch below) so
+          the bottom of the screen is the single place that shows
+          time-to-target — whether the target is the van (when waiting),
+          the next destination (when picked up), or the final destination
+          (always when onboard). */}
 
       {/* Turn-by-turn maneuver chip — only when onboard. Mirrors TV banner
           but in phone-friendly compact form. */}
@@ -677,10 +668,13 @@ function MapTab({
         );
       })()}
 
-      {/* No active trip — just the operational cards (recap, fuel alert,
-          upcoming-trip leave-by). The home-CTA chip strip and welcome
-          banner were removed — they cluttered the screen with rarely-
-          useful info. */}
+      {/* No active trip — operational cards stacked with the "Van to you"
+          tile pinned to the bottom (same visual slot the Final-destination
+          card occupies when a trip is live). Mark always glances at the
+          bottom of the screen for time-to-target: when waiting that's
+          time-to-van; when picked up it becomes time-to-destination. The
+          Van card is hidden when Mark is essentially in the van already
+          (< 0.1 mi). */}
       {!live && (
         <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
           <TripRecapCard token={token} />
@@ -690,6 +684,17 @@ function MapTab({
             vanLng={pos?.lng ?? null}
           />
           <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
+          {vanFromMe && vanFromMe.miles >= 0.1 && (
+            <EtaCard
+              compact
+              kind="stop"
+              label="You"
+              minutes={vanFromMe.minutes}
+              miles={vanFromMe.miles}
+              primary
+              titleOverride="Van to you"
+            />
+          )}
         </div>
       )}
 
