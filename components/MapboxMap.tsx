@@ -126,6 +126,13 @@ export default function MapboxMap({
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const dropPinMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const fittedRef = useRef<string>("");
+  // Ref-stored fitBounds applier — populated by the fitBounds useEffect so
+  // the ResizeObserver (in the init effect) can re-run the fit when the
+  // container's flex layout settles AFTER initial mount. Otherwise a tight
+  // 1-mile bounds initially fit at zoom 17 looks correct on a narrow
+  // container, but when the container grows the camera is locked to that
+  // narrow framing and never re-tightens.
+  const refitRef = useRef<(() => void) | null>(null);
 
   // Init
   useEffect(() => {
@@ -276,10 +283,18 @@ export default function MapboxMap({
     // Mapbox to re-measure. We also fire a few `resize()` calls right after
     // mount as belt-and-suspenders for the first-paint case.
     let ro: ResizeObserver | null = null;
+    let refitTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       ro = new ResizeObserver(() => {
         try {
           map.resize();
+          // Debounce a re-fit so flex/grid layouts that resize the container
+          // post-mount get a correct camera framing instead of being stuck
+          // at the initial (often-too-narrow) fit.
+          if (refitTimer) clearTimeout(refitTimer);
+          refitTimer = setTimeout(() => {
+            if (refitRef.current) refitRef.current();
+          }, 120);
         } catch {
           /* map may be torn down */
         }
@@ -626,11 +641,14 @@ export default function MapboxMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !fitBounds || focusMode !== "auto" || allPoints.length < 2) return;
-    if (followCam) return;
-    const key = allPoints.map((p) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(";");
-    if (key === fittedRef.current) return;
-    fittedRef.current = key;
+    if (!map || !fitBounds || focusMode !== "auto" || allPoints.length < 2) {
+      refitRef.current = null;
+      return;
+    }
+    if (followCam) {
+      refitRef.current = null;
+      return;
+    }
     const apply = () => {
       try {
         const bounds = new mapboxgl.LngLatBounds();
@@ -640,6 +658,11 @@ export default function MapboxMap({
         console.warn("[MapboxMap] fitBounds failed", err);
       }
     };
+    // Expose to ResizeObserver so it can re-fire on container resize.
+    refitRef.current = apply;
+    const key = allPoints.map((p) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`).join(";");
+    if (key === fittedRef.current) return;
+    fittedRef.current = key;
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
   }, [allPoints, fitBounds, focusMode, fitPadding, fitMaxZoom, followCam]);
