@@ -236,6 +236,21 @@ function MapTab({
   const { eta } = useEta(token, live?.id ?? null, 25_000);
   const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
   const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
+
+  // Pickup mode — the map view transforms in place: zooms to Mark's
+  // position, drops a violet draggable pin there, replaces the bottom
+  // strip with time chips. Single-tap on a chip dispatches the trip with
+  // the (possibly dragged) pin coords. Pickup button becomes an X to
+  // cancel.
+  const [pickupMode, setPickupMode] = useState(false);
+  const [pickupPin, setPickupPin] = useState<{ lat: number; lng: number } | null>(null);
+  const [pickupAddress, setPickupAddress] = useState<string | null>(null);
+  const [pickupBusy, setPickupBusy] = useState(false);
+  // Van → pickup-pin route preview (replaces the ambient van→me route in
+  // pickup mode so Mark sees how the new ETA looks before tapping a time).
+  const [pickupRoute, setPickupRoute] = useState<{ polyline: string | null; congestion: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes: number | null; distance_miles: number | null }>(
+    { polyline: null, congestion: null, eta_minutes: null, distance_miles: null },
+  );
   const onMapClick = async (lat: number, lng: number) => {
     setDroppedPin({ lat, lng });
     setSheet("droppedPin");
@@ -320,6 +335,12 @@ function MapTab({
 
   const pins = useMemo<MapPin[]>(() => {
     const out: MapPin[] = [];
+    // Pickup mode → just the violet draggable target. The "You" mark pin
+    // would compete visually; the violet pin IS Mark's pickup intent.
+    if (pickupMode && pickupPin) {
+      out.push({ kind: "pickup-target", id: "pickup-target", lat: pickupPin.lat, lng: pickupPin.lng, label: pickupAddress ?? undefined });
+      return out;
+    }
     // No active trip → show ONLY the "you" pin so the map fits to van + me
     // and renders the van→me route polyline. Don't surface a scheduled
     // trip's pickup/dropoff here — that pulls the camera way out and is
@@ -431,11 +452,14 @@ function MapTab({
     // Re-run roughly every time the van moves > ~50m or myGps changes.
   }, [live, token, pos?.lat?.toFixed(3), pos?.lng?.toFixed(3), myGps?.lat?.toFixed(3), myGps?.lng?.toFixed(3)]);
 
-  // Live ETA polyline first (reflects van's current position through what's
-  // remaining); when no live trip, prefer the van→me route so Mark sees how
-  // the van would reach him. Final fallback: saved trip route_polyline.
-  const polyline = eta?.polyline ?? vanToMe.polyline ?? (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? null;
-  const congestion = eta?.congestion ?? vanToMe.congestion ?? null;
+  // Pickup mode → preview the van→pin route. Outside pickup mode: live
+  // ETA polyline first, then van→me route, then saved trip route_polyline.
+  const polyline = pickupMode
+    ? pickupRoute.polyline
+    : eta?.polyline ?? vanToMe.polyline ?? (mapTrip as unknown as { route_polyline?: string })?.route_polyline ?? null;
+  const congestion = pickupMode
+    ? pickupRoute.congestion
+    : eta?.congestion ?? vanToMe.congestion ?? null;
 
   // "Van is X min / Y mi from me" — prefer the Mapbox-computed route ETA
   // (vanToMe) when we have it; fall back to a straight-line haversine +
@@ -466,6 +490,12 @@ function MapTab({
   // the stops array (intermediate stop). Trips refresh via realtime on
   // success so the map snaps to the persisted coordinates.
   const handlePinDrag = async (pin: MapPin, newLat: number, newLng: number) => {
+    // Pickup-mode pin: update local state, refresh address + route preview.
+    // Doesn't PATCH anything until Mark taps a time chip to commit.
+    if (pin.kind === "pickup-target") {
+      setPickupPin({ lat: newLat, lng: newLng });
+      return;
+    }
     if (!mapTrip) return;
     let address: string | undefined;
     try {
@@ -511,6 +541,101 @@ function MapTab({
     }
   };
 
+  // Enter pickup mode: drop the violet pin at Mark's GPS, zoom in, swap
+  // the bottom strip for the time chips.
+  const enterPickup = () => {
+    if (!myGps) return; // No "me" to anchor on — silently no-op
+    setPickupPin({ lat: myGps.lat, lng: myGps.lng });
+    setPickupAddress(meAddress ?? null);
+    setPickupMode(true);
+    // Hard zoom into Mark's spot at street level. We do it via focusKey
+    // bump so the existing focus-mode pipeline handles the smooth fly.
+    setFocusMode("me");
+    setFocusKey((k) => k + 1);
+  };
+  const exitPickup = () => {
+    setPickupMode(false);
+    setPickupPin(null);
+    setPickupAddress(null);
+    setPickupRoute({ polyline: null, congestion: null, eta_minutes: null, distance_miles: null });
+  };
+
+  // Reverse-geocode the pickup pin whenever it moves so the bottom card
+  // shows a real address (e.g., "230 Newport Boulevard") instead of raw
+  // coordinates.
+  useEffect(() => {
+    if (!pickupMode || !pickupPin) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/places/reverse-geocode?lat=${pickupPin.lat}&lng=${pickupPin.lng}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { display?: string };
+        if (!cancel && j.display) setPickupAddress(j.display);
+      } catch {}
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [pickupMode, pickupPin?.lat?.toFixed(5), pickupPin?.lng?.toFixed(5), token]);
+
+  // Refresh the van→pin route preview as the pin moves. Uses the same
+  // /api/eta POST endpoint as the trip detail editor.
+  useEffect(() => {
+    if (!pickupMode || !pickupPin) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/eta", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ waypoints: [{ lat: pickupPin.lat, lng: pickupPin.lng, kind: "stop", label: "Pickup" }] }),
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { polyline?: string | null; congestion?: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes?: number | null; distance_miles?: number | null };
+        if (cancel) return;
+        setPickupRoute({
+          polyline: j.polyline ?? null,
+          congestion: j.congestion ?? null,
+          eta_minutes: j.eta_minutes ?? null,
+          distance_miles: j.distance_miles ?? null,
+        });
+      } catch {}
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [pickupMode, pickupPin?.lat?.toFixed(4), pickupPin?.lng?.toFixed(4), token]);
+
+  // Dispatch handler — fires when Mark taps a time chip. Sends the
+  // (possibly dragged) pin coords to /api/quick-pickup with the chosen
+  // offset, then exits pickup mode. Server cancels any open trip and
+  // reverse-geocodes the sentinel pickup label.
+  const dispatchPickup = async (offsetMin: number) => {
+    if (!pickupPin || pickupBusy) return;
+    setPickupBusy(true);
+    try {
+      const when = offsetMin > 0
+        ? new Date(Date.now() + offsetMin * 60_000).toISOString()
+        : new Date().toISOString();
+      await postJson(token, "/api/quick-pickup", {
+        lat: pickupPin.lat,
+        lng: pickupPin.lng,
+        address: "My current location",
+        scheduled_at: when,
+        notes: offsetMin === 0 ? "Pick me up now" : `Pick me up in ${offsetMin} min`,
+      });
+      exitPickup();
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] pickup dispatch failed", err);
+    } finally {
+      setPickupBusy(false);
+    }
+  };
+
   const navUrl = useMemo(() => {
     if (!mapTrip) return null;
     const wp: Array<{ lat: number; lng: number; label?: string }> = [];
@@ -538,7 +663,7 @@ function MapTab({
         droppedPin={droppedPin}
         onMapClick={onMapClick}
         onDroppedPinClick={() => setSheet("droppedPin")}
-        onPinDragEnd={mapTrip ? handlePinDrag : undefined}
+        onPinDragEnd={mapTrip || pickupMode ? handlePinDrag : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={56}
@@ -651,10 +776,15 @@ function MapTab({
           competing with the map controls on the left. */}
       <div className="absolute right-3 top-3 z-30 flex w-fit flex-col items-stretch gap-1.5">
         <button
-          onClick={() => setSheet("pickup")}
-          className="rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-700 px-3 py-2 text-xs font-semibold text-white shadow hover:from-violet-500 hover:to-fuchsia-600"
+          onClick={() => (pickupMode ? exitPickup() : enterPickup())}
+          disabled={!pickupMode && !myGps}
+          className={`rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow ${
+            pickupMode
+              ? "bg-zinc-800 hover:bg-zinc-700"
+              : "bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
+          }`}
         >
-          Pickup
+          {pickupMode ? "✕ Cancel" : "Pickup"}
         </button>
         <button
           onClick={() => setShareGps((v) => !v)}
@@ -746,14 +876,50 @@ function MapTab({
         );
       })()}
 
-      {/* No active trip — operational cards stacked with the "Van to you"
-          tile pinned to the bottom (same visual slot the Final-destination
-          card occupies when a trip is live). Mark always glances at the
-          bottom of the screen for time-to-target: when waiting that's
-          time-to-van; when picked up it becomes time-to-destination. The
-          Van card is hidden when Mark is essentially in the van already
-          (< 0.1 mi). */}
-      {!live && (
+      {/* Pickup mode bottom strip — replaces the no-trip Van-to-you tile
+          with an address + 4 time chips. Tapping a chip dispatches the
+          trip and exits pickup mode. */}
+      {pickupMode && (
+        <div className="absolute inset-x-3 bottom-3 z-30">
+          <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-3 shadow-2xl">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-violet-300">
+              <span aria-hidden>📍</span> Pick me up
+            </div>
+            <div className="mt-1 truncate text-base font-semibold text-zinc-100 leading-tight">
+              {pickupAddress ?? (pickupPin ? `${pickupPin.lat.toFixed(5)}, ${pickupPin.lng.toFixed(5)}` : "Locating…")}
+            </div>
+            {pickupRoute.eta_minutes != null && pickupRoute.distance_miles != null && (
+              <div className="mt-1 text-[11px] text-zinc-500">
+                Van: {pickupRoute.eta_minutes} min · {pickupRoute.distance_miles} mi away
+              </div>
+            )}
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {[0, 10, 15, 20].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => dispatchPickup(m)}
+                  disabled={pickupBusy || !pickupPin}
+                  className="rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-3 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
+                >
+                  {m === 0 ? "Now" : `${m} min`}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 text-[10px] text-zinc-500">
+              Drag the pin to move the pickup spot.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* No active trip + NOT in pickup mode — operational cards stacked
+          with the "Van to you" tile pinned to the bottom (same visual slot
+          the Final-destination card occupies when a trip is live). Mark
+          always glances at the bottom of the screen for time-to-target:
+          when waiting that's time-to-van; when picked up it becomes
+          time-to-destination. The Van card is hidden when Mark is
+          essentially in the van already (< 0.1 mi). */}
+      {!live && !pickupMode && (
         <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
           <TripRecapCard token={token} />
           <FuelAlertCard

@@ -8,7 +8,7 @@ import { VanPosition } from "@/lib/types";
 import { decodePolyline } from "@/lib/routing";
 
 export interface MapPin {
-  kind: "pickup" | "dropoff" | "stop" | "mark" | "passenger";
+  kind: "pickup" | "dropoff" | "stop" | "mark" | "passenger" | "pickup-target";
   lat: number;
   lng: number;
   label?: string;

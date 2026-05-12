@@ -7,11 +7,14 @@ import { VanPosition } from "@/lib/types";
 import { decodePolyline } from "@/lib/routing";
 
 export interface MapPin {
-  kind: "pickup" | "dropoff" | "stop" | "mark" | "passenger";
+  kind: "pickup" | "dropoff" | "stop" | "mark" | "passenger" | "pickup-target";
   lat: number;
   lng: number;
   label?: string;
   index?: number;
+  // Stable id used by the drag-end handler to resolve which underlying
+  // record to update (or in pickup-mode, the synthetic "pickup-target").
+  id?: string;
 }
 
 type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
@@ -96,6 +99,19 @@ const PIN_HTML = (scale: number = 1): Record<MapPin["kind"], (idx?: number) => s
       `<div style="position:relative;width:18px;height:18px;"><span style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;box-shadow:0 0 0 2px white,0 0 0 4px rgba(59,130,246,.45);"></span><span style="position:absolute;inset:-6px;border-radius:50%;background:#3b82f6;opacity:.35;animation:sprinter-pulse 1.6s ease-out infinite;"></span></div>`,
     passenger: () =>
       `<div style="font-size:${Math.round(24 * scale)}px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));">👤</div>`,
+    // Violet teardrop pin used as the pickup-mode draggable target.
+    // Matches the violet Pickup button color so the visual language ties
+    // the mode to the entry control. Always rendered draggable by callers.
+    "pickup-target": () => {
+      const size = Math.round(40 * scale);
+      const halo = Math.round(12 * scale);
+      return `<div style="line-height:0;padding:${halo}px;border-radius:9999px;background:radial-gradient(closest-side,rgba(139,92,246,.55),rgba(139,92,246,.18) 65%,rgba(139,92,246,0) 80%);box-shadow:0 0 30px rgba(139,92,246,.7);">
+        <svg width="${size}" height="${size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 5px rgba(0,0,0,.85))">
+          <path d="M12 1C7.5 1 4 4.5 4 9c0 5.5 8 14 8 14s8-8.5 8-14c0-4.5-3.5-8-8-8z" fill="#8b5cf6" stroke="#ffffff" stroke-width="1.5"/>
+          <circle cx="12" cy="9" r="3" fill="#ffffff"/>
+        </svg>
+      </div>`;
+    },
   };
 };
 
@@ -551,7 +567,7 @@ export default function MapboxMap({
           // is wired — lets Mark hold-and-drag the flag/pin slightly on the
           // map to tweak the location without opening the editor. Van /
           // mark / passenger markers stay fixed.
-          const editable = !!onPinDragEnd && (p.kind === "pickup" || p.kind === "dropoff" || p.kind === "stop");
+          const editable = !!onPinDragEnd && (p.kind === "pickup" || p.kind === "dropoff" || p.kind === "stop" || p.kind === "pickup-target");
           const marker = new mapboxgl.Marker({ element: el, anchor, draggable: editable }).setLngLat([p.lng, p.lat]);
           if (editable) {
             el.style.cursor = "grab";
@@ -782,16 +798,19 @@ export default function MapboxMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || focusMode === "auto") return;
-    const me = pins.find((p) => p.kind === "mark");
+    // "me" focus also resolves to the pickup-target pin when the host
+    // app is in pickup-mode (the mark pin is hidden in favor of the
+    // violet draggable pin during that mode).
+    const me = pins.find((p) => p.kind === "mark") ?? pins.find((p) => p.kind === "pickup-target");
     const dest = pins.find((p) => p.kind === "dropoff") ?? pins.find((p) => p.kind === "pickup");
-    const flyTo = (lat: number, lng: number) => map.flyTo({ center: [lng, lat], zoom: 14, duration: 700 });
+    const flyTo = (lat: number, lng: number, zoom = 14) => map.flyTo({ center: [lng, lat], zoom, duration: 700 });
     const fit = (pts: Array<{ lat: number; lng: number }>) => {
       const b = new mapboxgl.LngLatBounds();
       pts.forEach((p) => b.extend([p.lng, p.lat]));
       map.fitBounds(b, { padding: 80, maxZoom: 14, duration: 700 });
     };
     if (focusMode === "van" && position) flyTo(position.lat, position.lng);
-    else if (focusMode === "me" && me) flyTo(me.lat, me.lng);
+    else if (focusMode === "me" && me) flyTo(me.lat, me.lng, me.kind === "pickup-target" ? 16.5 : 14);
     else if (focusMode === "dest" && dest) flyTo(dest.lat, dest.lng);
     else if (focusMode === "van-me" && position && me) fit([{ lat: position.lat, lng: position.lng }, me]);
     else if (focusMode === "me-dest" && me && dest) fit([me, dest]);
