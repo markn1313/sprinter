@@ -360,6 +360,33 @@ function MapTab({
     return out;
   }, [live, upcoming, mapTrip, stopsArr, myGps]);
 
+  // Reverse-geocode Mark's GPS so the bottom card shows his actual
+  // street/neighborhood ("Newport Heights, CA") instead of the literal
+  // word "You". Refreshes when he moves > ~50m (3 decimals on lat/lng).
+  const [meAddress, setMeAddress] = useState<string | null>(null);
+  useEffect(() => {
+    if (!myGps) {
+      setMeAddress(null);
+      return;
+    }
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/places/reverse-geocode?lat=${myGps.lat}&lng=${myGps.lng}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { display?: string };
+        if (!cancel && j.display) setMeAddress(j.display);
+      } catch {
+        // keep prior address
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [token, myGps?.lat?.toFixed(3), myGps?.lng?.toFixed(3)]);
+
   // When NO trip is active, fetch a "van → me" route so Mark sees how the
   // van would get to where he's standing right now. Refreshes whenever the
   // van or his GPS moves meaningfully. The same /api/eta POST endpoint the
@@ -685,29 +712,15 @@ function MapTab({
           />
           <LeaveByCard token={token} vanLat={pos?.lat ?? null} vanLng={pos?.lng ?? null} />
           {vanFromMe && vanFromMe.miles >= 0.1 && (
-            <div className="flex items-stretch gap-2">
-              <div className="flex-1">
-                <EtaCard
-                  compact
-                  kind="stop"
-                  label="You"
-                  minutes={vanFromMe.minutes}
-                  miles={vanFromMe.miles}
-                  primary
-                  titleOverride="Van to you"
-                />
-              </div>
-              {navUrl && (
-                <a
-                  href={navUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-zinc-950/90 px-4 py-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-700/60 backdrop-blur shadow-2xl hover:bg-zinc-900"
-                >
-                  <Navigation size={14} /> Maps
-                </a>
-              )}
-            </div>
+            <EtaCard
+              compact
+              kind="stop"
+              label={meAddress ?? "Your location"}
+              minutes={vanFromMe.minutes}
+              miles={vanFromMe.miles}
+              primary
+              titleOverride="Van to you"
+            />
           )}
         </div>
       )}
@@ -718,12 +731,10 @@ function MapTab({
           <VoiceCabin token={token} tripId={live.id} />
         </div>
       )}
-      {/* Maps fallback — show whenever navUrl exists and the ETA-bottom-bar
-          branch isn't rendering (no live trip OR eta hasn't loaded yet)
-          AND the Van-to-you row above isn't already showing its own Maps
-          button. Otherwise we'd stack two Maps buttons on top of each
-          other. */}
-      {(!live || !eta) && navUrl && !(!live && vanFromMe && vanFromMe.miles >= 0.1) && (
+      {/* Maps fallback — only shows when there's a live trip without an
+          ETA yet. When there's no live trip we don't need a standalone
+          Maps button — the Van-to-you bottom card is the focus. */}
+      {live && !eta && navUrl && (
         <a
           href={navUrl}
           target="_blank"
