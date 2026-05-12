@@ -8,6 +8,7 @@ import { useEta } from "@/components/useEta";
 import ClientMap from "@/components/ClientMap";
 import { MapPin } from "@/components/LiveMap";
 import { rangeMiles } from "@/lib/range";
+import { stripZip } from "@/lib/format";
 import VanIcon from "@/components/VanIcon";
 import { Gauge, Flag, MapPin as PinIcon, Navigation } from "lucide-react";
 
@@ -150,30 +151,33 @@ export default function TvApp({ token }: { token: string }) {
             /current\s+location|my\s+location/i.test(eta.to_next.label) ||
             eta.to_next.distance_miles < 0.3
           );
+        // Each card is half the screen wide. When only Final Destination
+        // remains, the left slot is empty so the card sits on the right
+        // half. When there's a meaningful Next Stop, it goes in the left
+        // slot with Final on the right.
+        const showNext = !sameTarget && !!eta.to_next;
         return (
-          <div
-            className={`absolute bottom-0 left-0 right-0 z-30 grid gap-4 px-6 pb-3 ${
-              sameTarget || !eta.to_next ? "grid-cols-1" : "grid-cols-2"
-            }`}
-          >
-            {!sameTarget && eta.to_next && (
+          <div className="absolute bottom-0 left-0 right-0 z-30 grid grid-cols-2 gap-4 px-6 pb-3">
+            {showNext ? (
               <EtaCard
                 kind="stop"
-                label={eta.to_next.label}
-                minutes={eta.to_next.eta_minutes}
-                miles={eta.to_next.distance_miles}
+                label={stripZip(eta.to_next!.label)}
+                minutes={eta.to_next!.eta_minutes}
+                miles={eta.to_next!.distance_miles}
                 primary
                 titleOverride="Next stop"
               />
+            ) : (
+              <div aria-hidden />
             )}
             {eta.to_final && (
               <EtaCard
                 kind="dropoff"
-                label={eta.to_final.label}
+                label={stripZip(eta.to_final.label)}
                 minutes={eta.to_final.eta_minutes}
                 miles={eta.to_final.distance_miles}
                 titleOverride="Final destination"
-                primary={sameTarget}
+                primary={!showNext}
               />
             )}
           </div>
@@ -334,13 +338,13 @@ function RouteSummary({ trip, stops }: { trip: Trip | null; stops: Array<{ id?: 
         <Navigation size={18} className="text-zinc-400" /> Route
       </div>
       <ul className="mt-3 space-y-1.5 text-base">
-        {trip.pickup_address && <li className="truncate">🚩 {trip.pickup_address}</li>}
+        {trip.pickup_address && <li className="truncate">🚩 {stripZip(trip.pickup_address)}</li>}
         {stops.map((s, i) => (
           <li key={s.id ?? `${i}-${s.address}`} className="truncate">
-            {i + 1}. {s.address}
+            {i + 1}. {stripZip(s.address)}
           </li>
         ))}
-        {trip.dropoff_address && <li className="truncate">🏁 {trip.dropoff_address}</li>}
+        {trip.dropoff_address && <li className="truncate">🏁 {stripZip(trip.dropoff_address)}</li>}
       </ul>
     </div>
   );

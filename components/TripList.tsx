@@ -1,7 +1,7 @@
 "use client";
 
 import { Trip, Role } from "@/lib/types";
-import { dollars, statusLabel, statusColor, shortDate, shortTime } from "@/lib/format";
+import { dollars, statusLabel, statusColor, shortDate, shortTime, stripZip } from "@/lib/format";
 import { Copy, MessageSquare, ExternalLink } from "lucide-react";
 import { useState, MouseEvent } from "react";
 import SwipeToDelete from "./SwipeToDelete";
@@ -74,8 +74,8 @@ export default function TripList({ trips, role, origin, token, onOpenTrip, onCha
                   <span className="font-medium text-zinc-100">{t.passenger_name}</span>
                 </div>
                 <div className="mt-1 truncate text-xs text-zinc-400">
-                  {t.pickup_address && <>From {t.pickup_address} · </>}
-                  {t.dropoff_address && <>To {t.dropoff_address}</>}
+                  {t.pickup_address && <>From {stripZip(t.pickup_address)} · </>}
+                  {t.dropoff_address && <>To {stripZip(t.dropoff_address)}</>}
                   {!t.pickup_address && !t.dropoff_address && <em>No address parsed</em>}
                 </div>
                 <div className="mt-1 text-xs text-zinc-500">

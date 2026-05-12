@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Trip, Role } from "@/lib/types";
 import { postJson } from "@/lib/api-client";
-import { dollars, durationMinutes, statusLabel, statusColor } from "@/lib/format";
+import { dollars, durationMinutes, statusLabel, statusColor, stripZip } from "@/lib/format";
 import { Check, MapPin, User, Clock } from "lucide-react";
 
 interface Props {
@@ -82,13 +82,13 @@ export default function ActiveTripCard({ token, role, trip, hourlyRateCents = 35
         {trip.pickup_address && (
           <div className="flex items-center gap-2 text-zinc-300">
             <MapPin size={14} className="text-amber-500" />
-            <span className="text-sm">From {trip.pickup_address}</span>
+            <span className="text-sm">From {stripZip(trip.pickup_address)}</span>
           </div>
         )}
         {trip.dropoff_address && (
           <div className="flex items-center gap-2 text-zinc-300">
             <MapPin size={14} className="text-blue-500" />
-            <span className="text-sm">To {trip.dropoff_address}</span>
+            <span className="text-sm">To {stripZip(trip.dropoff_address)}</span>
           </div>
         )}
         <div className="flex items-center gap-2 text-zinc-400">

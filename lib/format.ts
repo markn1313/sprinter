@@ -61,6 +61,20 @@ export function shortDate(iso: string): string {
   });
 }
 
+// Strip a trailing US ZIP (5-digit or ZIP+4) from a display address. Leaves
+// the underlying record untouched — only meant for rendering. Examples:
+//   "2914 West Ocean Front, Newport Beach, CA 92663" → "...CA"
+//   "1 Apple Park Way, Cupertino, CA 95014-2086"     → "...CA"
+//   "Some place"                                     → "Some place"
+// Also trims any stray trailing comma+space left after the ZIP is removed.
+export function stripZip(addr: string | null | undefined): string {
+  if (!addr) return "";
+  return addr
+    .replace(/[\s,]*\d{5}(?:-\d{4})?\s*$/, "")
+    .replace(/[\s,]+$/, "")
+    .trim();
+}
+
 export function durationMinutes(startIso: string | null, endIso: string | null = null): number | null {
   if (!startIso) return null;
   const start = new Date(startIso).getTime();

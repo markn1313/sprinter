@@ -7,7 +7,7 @@ import { useEta } from "@/components/useEta";
 import { useDriverGpsReporter } from "@/components/useMarkLocation";
 import { api, postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
-import { shortTime } from "@/lib/format";
+import { shortTime, stripZip } from "@/lib/format";
 import CabinRequestInbox from "@/components/CabinRequestInbox";
 import PushToggle from "@/components/PushToggle";
 import { Navigation, User, MapPin, Check, ArrowUp, Loader2 } from "lucide-react";
@@ -109,7 +109,7 @@ function DriverHero({
         </div>
         <div className="mt-3 flex items-start gap-2 text-zinc-200">
           <MapPin size={20} className="mt-1 shrink-0 text-amber-400" />
-          <span className="text-lg">{targetAddr ?? "(no address)"}</span>
+          <span className="text-lg">{targetAddr ? stripZip(targetAddr) : "(no address)"}</span>
         </div>
         <div className="mt-3 flex items-baseline justify-between">
           <div className="flex items-baseline gap-2">
