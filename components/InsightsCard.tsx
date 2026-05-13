@@ -14,23 +14,40 @@ export default function InsightsCard({ token }: { token: string }) {
     );
   }
 
+  const fuel = data.fuel ?? null;
   return (
     <div className="space-y-3">
-      <StatBlock label="Last 24h" stats={data.today} accent="emerald" />
-      <StatBlock label="Last 7 days" stats={data.week} accent="blue" />
-      <StatBlock label="Last 30 days" stats={data.month} accent="violet" />
-      {data.fuel && (
+      <StatBlock label="Last 24h" stats={data.today} fuel={fuel} accent="emerald" />
+      <StatBlock label="Last 7 days" stats={data.week} fuel={fuel} accent="blue" />
+      <StatBlock label="Last 30 days" stats={data.month} fuel={fuel} accent="violet" />
+      {fuel && (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-500">
-          Diesel pricing: ${data.fuel.price_per_gal.toFixed(2)}/gal (CA retail
-          {data.fuel.effective_date ? `, week of ${data.fuel.effective_date}` : ""},
-          {data.fuel.source === "eia" ? " EIA" : data.fuel.source === "cache_stale" ? " EIA cached" : data.fuel.source === "manual" ? " manual" : " fallback"})
+          Diesel pricing source: CA retail
+          {fuel.effective_date ? `, week of ${fuel.effective_date}` : ""},
+          {fuel.source === "eia" ? " EIA" : fuel.source === "cache_stale" ? " EIA cached" : fuel.source === "manual" ? " manual" : " fallback"}
         </div>
       )}
     </div>
   );
 }
 
-function StatBlock({ label, stats, accent }: { label: string; stats: InsightStats; accent: "emerald" | "blue" | "violet" }) {
+interface FuelMeta {
+  price_per_gal: number;
+  source: "eia" | "fallback" | "cache_stale" | "manual";
+  effective_date: string | null;
+}
+
+function StatBlock({
+  label,
+  stats,
+  fuel,
+  accent,
+}: {
+  label: string;
+  stats: InsightStats;
+  fuel: FuelMeta | null;
+  accent: "emerald" | "blue" | "violet";
+}) {
   const accentText = accent === "emerald" ? "text-emerald-300" : accent === "blue" ? "text-blue-300" : "text-violet-300";
   const accentBorder = accent === "emerald" ? "border-emerald-700/40" : accent === "blue" ? "border-blue-700/40" : "border-violet-700/40";
   return (
@@ -62,6 +79,11 @@ function StatBlock({ label, stats, accent }: { label: string; stats: InsightStat
           label="Fuel"
           value={`$${stats.fuel_cost_dollars}`}
           accent={accentText}
+          // Surface the per-gallon price right beneath the total so
+          // it's clear which rate produced this cost — same source
+          // for all three windows, but rendered per-box per Mark's
+          // request. Skipped when fuel meta is absent (older API).
+          sub={fuel ? `@ $${fuel.price_per_gal.toFixed(2)}/gal` : undefined}
         />
         {stats.idle_minutes > 0 && (
           <Cell
@@ -76,7 +98,21 @@ function StatBlock({ label, stats, accent }: { label: string; stats: InsightStat
   );
 }
 
-function Cell({ icon, label, value, unit, accent }: { icon: React.ReactNode; label: string; value: string; unit?: string; accent: string }) {
+function Cell({
+  icon,
+  label,
+  value,
+  unit,
+  accent,
+  sub,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  unit?: string;
+  accent: string;
+  sub?: string;
+}) {
   return (
     <div>
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-500">
@@ -87,6 +123,7 @@ function Cell({ icon, label, value, unit, accent }: { icon: React.ReactNode; lab
         <span className={`font-mono text-lg font-bold tabular-nums ${accent}`}>{value}</span>
         {unit && <span className="text-[10px] text-zinc-500">{unit}</span>}
       </div>
+      {sub && <div className="text-[10px] text-zinc-500 tabular-nums">{sub}</div>}
     </div>
   );
 }
