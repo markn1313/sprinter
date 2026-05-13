@@ -2,19 +2,28 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
-import { sendPushToRole } from "@/lib/push";
+import { sendPushToRole, sendPushToTripPassenger } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
 
-// Single thread for v1: mark↔driver. Easy to extend with per-trip threads later.
+// Single shared thread for v1: Mark, Dio, and the active trip's passenger
+// all live in one stream. Single-trip mode means there's only ever one
+// passenger participating at a time, so cross-conversation pollution is
+// minimal. Per-trip threads can be added later if it becomes noisy.
 const DEFAULT_THREAD = "mark-driver";
+
+type ChatRole = "mark" | "dio" | "passenger";
+
+function allowed(role: string): role is ChatRole {
+  return role === "mark" || role === "dio" || role === "passenger";
+}
 
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
   const ctx = await loadSession(token);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (ctx.role !== "mark" && ctx.role !== "dio") {
+  if (!allowed(ctx.role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -32,13 +41,12 @@ export async function GET(req: Request) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Auto-mark messages from the OTHER party as read
-  const otherRole = ctx.role === "mark" ? "dio" : "mark";
+  // Auto-mark messages from anyone-but-me as read.
   await supabaseAdmin()
     .from("messages")
     .update({ read_at: new Date().toISOString() })
     .eq("thread", thread)
-    .eq("sender_role", otherRole)
+    .neq("sender_role", ctx.role)
     .is("read_at", null);
 
   return NextResponse.json({ messages: data, role: ctx.role });
@@ -49,7 +57,7 @@ export async function POST(req: Request) {
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
   const ctx = await loadSession(token);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (ctx.role !== "mark" && ctx.role !== "dio") {
+  if (!allowed(ctx.role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -71,41 +79,52 @@ export async function POST(req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Best-effort: log against the active trip if one is in progress.
-  void (async () => {
-    try {
-      const { data: activeTrip } = await supabaseAdmin()
-        .from("trips")
-        .select("id")
-        .in("status", ["dispatched", "at_pickup", "onboard", "at_dropoff"])
-        .order("scheduled_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (activeTrip?.id) {
-        logTripEvent({
-          trip_id: activeTrip.id,
-          kind: "message_sent",
-          actor_token: ctx.token,
-          payload: {
-            thread,
-            sender_role: ctx.role,
-            body_preview: data.body.slice(0, 80),
-          },
-        });
-      }
-    } catch {
-      // ignore
-    }
-  })();
+  // Also captured for the passenger-fan-out below.
+  let activeTripId: string | null = null;
+  try {
+    const { data: activeTrip } = await supabaseAdmin()
+      .from("trips")
+      .select("id")
+      .in("status", ["dispatched", "at_pickup", "onboard", "at_dropoff"])
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    activeTripId = activeTrip?.id ?? null;
+  } catch {
+    // ignore
+  }
+  if (activeTripId) {
+    void logTripEvent({
+      trip_id: activeTripId,
+      kind: "message_sent",
+      actor_token: ctx.token,
+      payload: {
+        thread,
+        sender_role: ctx.role,
+        body_preview: data.body.slice(0, 80),
+      },
+    });
+  }
 
-  // Push the OTHER party
+  // Push every party EXCEPT the sender so all three (Mark, Dio, active
+  // passenger) get the message. Passenger pushes are scoped to the
+  // active trip's passenger token — there's no global "passenger" role
+  // to push to since their tokens are per-trip.
   void (async () => {
+    const title = ctx.role === "mark" ? "Mark" : ctx.role === "dio" ? "Driver" : "Passenger";
+    const payload = {
+      title,
+      body: data.body.slice(0, 80),
+      tag: "chat-" + thread,
+    };
+    const tasks: Promise<void>[] = [];
+    if (ctx.role !== "mark") tasks.push(sendPushToRole("mark", payload));
+    if (ctx.role !== "dio") tasks.push(sendPushToRole("dio", payload));
+    if (ctx.role !== "passenger" && activeTripId) {
+      tasks.push(sendPushToTripPassenger(activeTripId, payload));
+    }
     try {
-      const otherRole: "mark" | "dio" = ctx.role === "mark" ? "dio" : "mark";
-      await sendPushToRole(otherRole, {
-        title: ctx.role === "mark" ? "Mark" : "Driver",
-        body: data.body.slice(0, 80),
-        tag: "chat-" + thread,
-      });
+      await Promise.all(tasks);
     } catch {
       // non-fatal
     }

@@ -85,7 +85,7 @@ export default function MarkApp({
   }, []);
 
   const live = activeTrip(trips);
-  const unreadDriver = useUnreadDriverChat(token, "mark");
+  const unreadDriver = useUnreadDriverChat(token, role);
 
   // Single-trip mode: live trip, else next-scheduled. Shared between Map and Trip tabs.
   const mapTrip = useMemo<Trip | null>(() => {
@@ -109,10 +109,12 @@ export default function MarkApp({
       <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
         <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
           <div className="mx-auto flex max-w-3xl items-center gap-2">
-            <span className="text-sm font-medium text-zinc-100">Driver chat</span>
+            <span className="text-sm font-medium text-zinc-100">
+              {role === "passenger" ? "Chat with driver" : "Driver chat"}
+            </span>
           </div>
         </header>
-        <DriverChat token={token} viewerRole="mark" />
+        <DriverChat token={token} viewerRole={role} />
       </div>
       <div className={tab === "help" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
         <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
@@ -131,14 +133,10 @@ export default function MarkApp({
       <nav className="z-40 border-t border-zinc-900 bg-zinc-950/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl">
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Map" />
-          {/* Driver chat = Mark <-> Dio coordination. Passengers don't
-              have a role-aligned identity in that thread, so hide the
-              tab for them. They have Help (cabin assistant) for
-              in-cabin questions; urgent driver coordination can happen
-              out-of-band. */}
-          {role === "mark" && (
-            <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
-          )}
+          {/* Chat thread is shared by Mark + Dio + the active trip's
+              passenger. Each role's messages render as "mine" on their
+              own side and "theirs" to the other two. */}
+          <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
           <TabButton active={tab === "help"} onClick={() => setTab("help")} icon={<HelpCircle size={20} />} label="Help" />
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={20} />} label="Settings" />
         </div>
