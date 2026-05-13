@@ -27,13 +27,6 @@ export const dynamic = "force-dynamic";
 
 const FUEL_PRICE_PER_GAL = 5; // CA diesel ballpark; tune as needed
 
-interface TripRow {
-  id: string;
-  status: string;
-  scheduled_at: string;
-  completed_at: string | null;
-}
-
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -44,11 +37,18 @@ interface WindowAgg {
   idle_minutes: number;
   avg_speed_mph: number;
   fuel_cost_dollars: number;
+  // Count of distinct Bouncie drives (one per ignition-on → ignition-
+  // off session). Uses Bouncie's drive concept rather than our app's
+  // passenger-transport "trip" so the count lines up with miles +
+  // driving-time. Previously we surfaced the count of OUR completed
+  // trips, which could read "0 trips, 4.8 mi" if Mark drove the van
+  // without dispatching through the app first — confusing.
+  trips_completed: number;
 }
 
 function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
   if (trips.length === 0) {
-    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0 };
+    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0, trips_completed: 0 };
   }
   let miles = 0;
   let idleSec = 0;
@@ -81,6 +81,7 @@ function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
     idle_minutes: Math.round(idleSec / 60),
     avg_speed_mph: speedWeight > 0 ? +(speedWeighted / speedWeight).toFixed(1) : 0,
     fuel_cost_dollars: +(fuelGal * FUEL_PRICE_PER_GAL).toFixed(2),
+    trips_completed: trips.length,
   };
 }
 
@@ -115,23 +116,6 @@ export async function GET(req: Request) {
 
   const today = aggregateBouncieTrips(todayTrips ?? []);
   const week = aggregateBouncieTrips(weekTrips ?? []);
-
-  // Trip count: from OUR trips table, status='complete' only.
-  // Different concept from a Bouncie drive (one Bouncie drive can
-  // span multiple passenger transports, or vice versa).
-  const weekStartIso = new Date(now.getTime() - 7 * 86_400_000).toISOString();
-  const { data: trips } = await sb
-    .from("trips")
-    .select("id,status,scheduled_at,completed_at")
-    .eq("status", "complete")
-    .gte("scheduled_at", weekStartIso)
-    .order("scheduled_at", { ascending: false });
-  const tripRows = (trips ?? []) as TripRow[];
-  const todayMs = startOfTodayPT.getTime();
-  const completedToday = tripRows.filter(
-    (t) => t.completed_at && new Date(t.completed_at).getTime() >= todayMs,
-  ).length;
-  const completedWeek = tripRows.length;
 
   // Top destinations from trip history (any status — every address
   // sent to is fair game for the frequent-destinations strip).
@@ -183,8 +167,8 @@ export async function GET(req: Request) {
     .slice(0, 6);
 
   return NextResponse.json({
-    today: { ...today, trips_completed: completedToday },
-    week: { ...week, trips_completed: completedWeek },
+    today,
+    week,
     top_destinations: topDestinations,
     source: "bouncie_trips_api",
   });
