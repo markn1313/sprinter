@@ -93,6 +93,74 @@ export function stripZip(addr: string | null | undefined): string {
     .trim();
 }
 
+// Aggressive abbreviator for the Mark-home compact destination banner.
+// Goal: lose the fewest information bits possible while shaving enough
+// characters that "1234 Newport Boulevard, Costa Mesa, California, USA"
+// fits on one line at the existing font size. Strategy:
+//   1) strip ZIP / state code / "United States" tail
+//   2) abbreviate common street-type words (Boulevard -> Blvd, etc) and
+//      direction words (North -> N) — zero info lost, ~10-25% shorter
+//   3) collapse multiple spaces
+//
+// We don't drop the city here; that's a second-level fallback the caller
+// can apply if the result still overflows (see EtaCard).
+const STREET_ABBR: Array<[RegExp, string]> = [
+  [/\bBoulevard\b/gi, "Blvd"],
+  [/\bAvenue\b/gi, "Ave"],
+  [/\bStreet\b/gi, "St"],
+  [/\bDrive\b/gi, "Dr"],
+  [/\bRoad\b/gi, "Rd"],
+  [/\bHighway\b/gi, "Hwy"],
+  [/\bParkway\b/gi, "Pkwy"],
+  [/\bCourt\b/gi, "Ct"],
+  [/\bPlace\b/gi, "Pl"],
+  [/\bLane\b/gi, "Ln"],
+  [/\bTerrace\b/gi, "Ter"],
+  [/\bSquare\b/gi, "Sq"],
+  [/\bCircle\b/gi, "Cir"],
+  [/\bExpressway\b/gi, "Expy"],
+  [/\bFreeway\b/gi, "Fwy"],
+  [/\bTurnpike\b/gi, "Tpke"],
+  [/\bMountain\b/gi, "Mtn"],
+  [/\bSaint\b/gi, "St"],
+  // Direction words inside street names ("North Newport Blvd" → "N Newport Blvd")
+  [/\bNorth\b/gi, "N"],
+  [/\bSouth\b/gi, "S"],
+  [/\bEast\b/gi, "E"],
+  [/\bWest\b/gi, "W"],
+  // Common trailers
+  [/\bUnited States\b/gi, ""],
+  [/\bU\.?S\.?A\.?\b/gi, ""],
+];
+
+// Match the standalone 2-letter state code at the end of an address
+// segment so we can drop it (CA / NY / etc). Loose match — anything that
+// looks like " XX" before the next comma or end of string.
+const STATE_CODE_TAIL = /,\s*[A-Z]{2}(\s*,)?\s*$/;
+
+export function compactAddr(addr: string | null | undefined): string {
+  if (!addr) return "";
+  let s = stripZip(addr);
+  // Drop trailing state code (", CA") and country word.
+  s = s.replace(STATE_CODE_TAIL, "");
+  for (const [pat, rep] of STREET_ABBR) {
+    s = s.replace(pat, rep);
+  }
+  // Clean up: collapse double-spaces, strip trailing commas/spaces.
+  s = s.replace(/\s{2,}/g, " ").replace(/[\s,]+$/g, "").replace(/,\s*,/g, ",").trim();
+  return s;
+}
+
+// Drop the city when even the abbreviated form still overflows. Keeps
+// the leading "<number> <street>" — the only bit Mark needs to recognize
+// where he's going.
+export function compactAddrNoCity(addr: string | null | undefined): string {
+  if (!addr) return "";
+  const c = compactAddr(addr);
+  const idx = c.indexOf(",");
+  return idx > 0 ? c.slice(0, idx).trim() : c;
+}
+
 export function durationMinutes(startIso: string | null, endIso: string | null = null): number | null {
   if (!startIso) return null;
   const start = new Date(startIso).getTime();

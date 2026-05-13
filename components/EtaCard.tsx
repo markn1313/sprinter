@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Flag, MapPin as PinIcon } from "lucide-react";
-import { stripZip } from "@/lib/format";
+import { stripZip, compactAddr, compactAddrNoCity } from "@/lib/format";
 
 interface Props {
   kind: "pickup" | "stop" | "dropoff";
@@ -77,9 +78,7 @@ export default function EtaCard({
               </span>
             </div>
           )}
-          <div className={`${compact ? "" : "mt-0.5"} truncate ${sizes.addr} font-semibold text-zinc-100 leading-tight`}>
-            {stripZip(label)}
-          </div>
+          <AddressLine label={label} compact={compact} addrClass={sizes.addr} />
         </div>
         <div>
           <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Distance</div>
@@ -100,6 +99,55 @@ export default function EtaCard({
           <div className={`mt-0.5 font-mono ${sizes.arrival} font-bold tabular-nums leading-none text-zinc-100`}>{arrival}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Address renderer with a 2-stage fallback for the compact banner:
+//   1) compactAddr — street-type abbreviations + drop state/country
+//   2) if even that overflows the container, drop the city too
+// TV's large variant still uses stripZip + truncate since it has the
+// horizontal room and shouldn't lose city context.
+function AddressLine({
+  label,
+  compact,
+  addrClass,
+}: {
+  label: string;
+  compact: boolean;
+  addrClass: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Start at level 0 (compactAddr); bump to 1 (no city) if the text
+  // would overflow its single-line container. Reset whenever the label
+  // changes so a shorter address re-tries level 0.
+  const [level, setLevel] = useState(0);
+  useEffect(() => {
+    setLevel(0);
+  }, [label, compact]);
+  useEffect(() => {
+    if (!compact) return;
+    const el = ref.current;
+    if (!el) return;
+    // scrollWidth > clientWidth means the text is being clipped/truncated.
+    // Bump to the no-city form. We only escalate once — if even that
+    // overflows the existing `truncate` ellipsis handles the rest.
+    if (level === 0 && el.scrollWidth > el.clientWidth + 1) {
+      setLevel(1);
+    }
+  });
+
+  const displayed = !compact
+    ? stripZip(label)
+    : level === 0
+      ? compactAddr(label)
+      : compactAddrNoCity(label);
+  return (
+    <div
+      ref={ref}
+      className={`${compact ? "" : "mt-0.5"} truncate ${addrClass} font-semibold text-zinc-100 leading-tight`}
+    >
+      {displayed}
     </div>
   );
 }
