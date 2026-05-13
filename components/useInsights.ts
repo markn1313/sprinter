@@ -9,7 +9,6 @@ export interface InsightStats {
   idle_minutes: number;
   avg_speed_mph: number;
   fuel_cost_dollars: number;
-  trips_completed: number;
 }
 
 export interface DestEntry {

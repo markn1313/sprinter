@@ -18,8 +18,6 @@ export const dynamic = "force-dynamic";
 //   avg_speed_mph    distance-weighted avg of averageSpeed
 //   fuel_cost        sum(fuelConsumed) × $/gal (no MPG estimation
 //                    needed — Bouncie reports actual gallons used)
-//   trips_completed  count of OUR trips with status='complete'
-//                    (different concept from a Bouncie 'drive')
 //
 // Bouncie's /v1/trips has a 7-day max span per request. "Today" and
 // "This week" both fit; we still pass tomorrow's date as ends-before
@@ -37,18 +35,11 @@ interface WindowAgg {
   idle_minutes: number;
   avg_speed_mph: number;
   fuel_cost_dollars: number;
-  // Count of distinct Bouncie drives (one per ignition-on → ignition-
-  // off session). Uses Bouncie's drive concept rather than our app's
-  // passenger-transport "trip" so the count lines up with miles +
-  // driving-time. Previously we surfaced the count of OUR completed
-  // trips, which could read "0 trips, 4.8 mi" if Mark drove the van
-  // without dispatching through the app first — confusing.
-  trips_completed: number;
 }
 
 function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
   if (trips.length === 0) {
-    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0, trips_completed: 0 };
+    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0 };
   }
   let miles = 0;
   let idleSec = 0;
@@ -81,7 +72,6 @@ function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
     idle_minutes: Math.round(idleSec / 60),
     avg_speed_mph: speedWeight > 0 ? +(speedWeighted / speedWeight).toFixed(1) : 0,
     fuel_cost_dollars: +(fuelGal * FUEL_PRICE_PER_GAL).toFixed(2),
-    trips_completed: trips.length,
   };
 }
 
@@ -94,28 +84,37 @@ export async function GET(req: Request) {
   const sb = supabaseAdmin();
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 86_400_000);
-  // PT-anchored "today" boundary. The cleanup endpoint uses local-date
-  // semantics; Bouncie's trip API takes YYYY-MM-DD, so we work in
-  // dates not millis here.
-  const startOfTodayPT = new Date(now);
-  startOfTodayPT.setHours(0, 0, 0, 0);
-  const weekStartDate = new Date(tomorrow.getTime() - 7 * 86_400_000);
+  // Rolling windows anchored to NOW (not calendar day boundaries).
+  // Bouncie's /v1/trips takes ymd dates only, so we over-query by
+  // ~one calendar day on each side and filter precisely by endTime.
+  const cutoff24h = new Date(now.getTime() - 24 * 3600_000);
+  const cutoff7d = new Date(now.getTime() - 7 * 86_400_000);
+  const startDate24h = new Date(cutoff24h.getTime() - 86_400_000); // pad one day back so trips crossing the cutoff are included
+  const startDate7d = new Date(tomorrow.getTime() - 7 * 86_400_000); // 7-day Bouncie cap; covers everything in cutoff7d window
 
-  // Two windows, parallel. Each Bouncie call is one HTTP round-trip
-  // (cached server-side by Bouncie itself).
-  const [todayTrips, weekTrips] = await Promise.all([
+  const [last24hRaw, last7dRaw] = await Promise.all([
     fetchBouncieTrips({
-      startsAfter: ymd(startOfTodayPT),
+      startsAfter: ymd(startDate24h),
       endsBefore: ymd(tomorrow),
     }),
     fetchBouncieTrips({
-      startsAfter: ymd(weekStartDate),
+      startsAfter: ymd(startDate7d),
       endsBefore: ymd(tomorrow),
     }),
   ]);
 
-  const today = aggregateBouncieTrips(todayTrips ?? []);
-  const week = aggregateBouncieTrips(weekTrips ?? []);
+  // Filter to trips whose endTime falls within the rolling window.
+  // Open trips (endTime missing — still driving) are included if
+  // they started within the window.
+  const within = (cutoffMs: number) => (t: BouncieTrip) => {
+    const refMs = t.endTime ? new Date(t.endTime).getTime() : t.startTime ? new Date(t.startTime).getTime() : 0;
+    return refMs >= cutoffMs;
+  };
+  const last24hTrips = (last24hRaw ?? []).filter(within(cutoff24h.getTime()));
+  const last7dTrips = (last7dRaw ?? []).filter(within(cutoff7d.getTime()));
+
+  const today = aggregateBouncieTrips(last24hTrips);
+  const week = aggregateBouncieTrips(last7dTrips);
 
   // Top destinations from trip history (any status — every address
   // sent to is fair game for the frequent-destinations strip).
