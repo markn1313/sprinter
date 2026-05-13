@@ -120,8 +120,8 @@ export default function LinkGenerator({ token, origin }: Props) {
         <div className="text-xs uppercase tracking-wider text-zinc-500">In-van TV display</div>
         {tvToken ? (
           <>
-            <div className="mt-3 overflow-hidden rounded-lg border border-blue-900/60 bg-blue-950/30 px-4 py-3">
-              <div className="font-mono text-base font-bold text-blue-100 break-all leading-tight">
+            <div className="mt-3 overflow-hidden rounded-lg border border-blue-900/60 bg-blue-950/30 px-3 py-2.5">
+              <div className="font-mono text-sm font-semibold text-blue-100 break-all leading-tight">
                 {origin.replace(/^https?:\/\//, "")}/tv/{tvToken}
               </div>
             </div>
