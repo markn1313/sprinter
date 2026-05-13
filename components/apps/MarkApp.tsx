@@ -1636,6 +1636,28 @@ function TripSheet({
     refresh();
   };
 
+  // Manual cancel escape hatch — for stuck/test trips that the cron
+  // sweep would eventually catch but Mark wants gone now. Confirms
+  // before firing so an accidental tap doesn't kill a real trip.
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const cancelTrip = async () => {
+    if (cancelBusy) return;
+    const ok = typeof window !== "undefined"
+      ? window.confirm("Cancel this trip? This can't be undone.")
+      : false;
+    if (!ok) return;
+    setCancelBusy(true);
+    try {
+      await postJson(token, `/api/trips/${trip.id}/cancel`, {});
+      refresh();
+      onClose();
+    } catch (err) {
+      console.warn("[MarkApp] cancel trip failed", err);
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
   return (
     <Sheet title={`Trip · ${statusLabel(trip.status)}`} onClose={onClose}>
       <div className="text-base font-semibold text-zinc-100">{trip.passenger_name}</div>
@@ -1652,6 +1674,13 @@ function TripSheet({
         <SmartStop token={token} tripId={trip.id} onAdded={refresh} />
         <AddressAutocomplete token={token} onSelect={addStopAddress} placeholder="Add a stop or destination — autocompletes" />
       </div>
+      <button
+        onClick={cancelTrip}
+        disabled={cancelBusy}
+        className="mt-6 w-full rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-900/60 disabled:opacity-50"
+      >
+        {cancelBusy ? "Cancelling…" : "Cancel trip"}
+      </button>
     </Sheet>
   );
 }
