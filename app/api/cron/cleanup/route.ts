@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
 import { refreshDieselPrice } from "@/lib/fuel-price";
+import { syncBouncieTrips } from "@/lib/bouncie";
 
 export const dynamic = "force-dynamic";
 
@@ -112,6 +113,12 @@ export async function GET(req: Request) {
   // EIA publishes weekly but a daily refresh is cheap insurance.
   const fuel = await refreshDieselPrice();
 
+  // 5) Sync the last 7 days of Bouncie trips into the local history
+  // table. Idempotent (upsert on transaction_id) so running every
+  // 15 min just refreshes the last few days' rows — in-flight trips
+  // get their endTime/distance/fuel populated once they complete.
+  const trips = await syncBouncieTrips(7);
+
   return NextResponse.json({
     ok: true,
     at: nowIso,
@@ -119,5 +126,6 @@ export async function GET(req: Request) {
     cancelled_mid_trip: midStale.length,
     cabin_requests_acked: ackedCabin?.length ?? 0,
     fuel_price: { price: fuel.price, source: fuel.source, effective_date: fuel.effective_date },
+    bouncie_trips_synced: trips,
   });
 }

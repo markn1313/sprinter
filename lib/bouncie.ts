@@ -472,6 +472,59 @@ export async function fetchBouncieTrips(opts: {
   }
 }
 
+// Pull the last `days` of Bouncie trips and upsert each one into the
+// bouncie_trips table. Idempotent: same transactionId rewrites the
+// row (so an in-flight trip's incomplete first row gets corrected
+// once it ends). Used by /api/cron/cleanup to keep the persistent
+// trip history fresh as new drives finish.
+export async function syncBouncieTrips(days: number = 7): Promise<{ pulled: number; upserted: number } | null> {
+  // Bouncie /v1/trips has a 7-day max-span cap. Cap the request even
+  // if a caller asks for more than that.
+  const cappedDays = Math.min(days, 7);
+  const now = new Date();
+  const end = new Date(now.getTime() + 86_400_000); // tomorrow → catches today's completed trips
+  const start = new Date(end.getTime() - cappedDays * 86_400_000);
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const trips = await fetchBouncieTrips({
+    startsAfter: ymd(start),
+    endsBefore: ymd(end),
+  });
+  if (!trips) return null;
+  if (trips.length === 0) return { pulled: 0, upserted: 0 };
+
+  const sb = supabaseAdmin();
+  // Strip the heavy `gps` field out of `raw` so we don't double-store
+  // the LineString (gps has its own column).
+  const rows = trips.map((t) => {
+    const { gps, ...rest } = t as BouncieTrip & { gps?: unknown };
+    return {
+      transaction_id: t.transactionId,
+      imei: t.imei,
+      start_time: t.startTime,
+      end_time: t.endTime ?? null,
+      start_odometer: t.startOdometer ?? null,
+      end_odometer: t.endOdometer ?? null,
+      distance: t.distance ?? null,
+      fuel_consumed: t.fuelConsumed ?? null,
+      average_speed: t.averageSpeed ?? null,
+      max_speed: t.maxSpeed ?? null,
+      total_idle_duration: t.totalIdleDuration ?? null,
+      hard_braking_count: (t as BouncieTrip & { hardBrakingCount?: number }).hardBrakingCount ?? null,
+      hard_acceleration_count: (t as BouncieTrip & { hardAccelerationCount?: number }).hardAccelerationCount ?? null,
+      time_zone: (t as BouncieTrip & { timeZone?: string }).timeZone ?? null,
+      gps: gps ?? null,
+      raw: rest,
+      fetched_at: new Date().toISOString(),
+    };
+  });
+  const { error } = await sb.from("bouncie_trips").upsert(rows, { onConflict: "transaction_id" });
+  if (error) {
+    console.warn("[bouncie] syncBouncieTrips upsert failed:", error.message);
+    return { pulled: trips.length, upserted: 0 };
+  }
+  return { pulled: trips.length, upserted: rows.length };
+}
+
 export async function attachVehicle(): Promise<{ vin: string; nickname: string | null } | null> {
   const token = await ensureFreshToken();
   if (!token) return null;
