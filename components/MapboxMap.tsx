@@ -30,11 +30,6 @@ export interface MapPin {
 
 type FocusMode = "auto" | "van" | "me" | "dest" | "van-me" | "me-dest";
 
-interface DroppedPin {
-  lat: number;
-  lng: number;
-}
-
 interface Props {
   position: (VanPosition & { source?: "bouncie" | "bouncie_cached" | "mock" }) | null;
   pins?: MapPin[];
@@ -81,10 +76,6 @@ interface Props {
   followCamRotate?: boolean;
   focusMode?: FocusMode;
   focusKey?: number;
-  dropPinMode?: boolean;
-  droppedPin?: DroppedPin | null;
-  onMapClick?: (lat: number, lng: number) => void;
-  onDroppedPinClick?: () => void;
   // When provided, pickup / stop / dropoff markers become draggable. The
   // callback fires with the moved pin and its new lat/lng so the caller can
   // PATCH the underlying record. Mark / passenger / van markers stay fixed.
@@ -165,10 +156,6 @@ export default function MapboxMap({
   followCamRotate = true,
   focusMode = "auto",
   focusKey = 0,
-  dropPinMode = false,
-  droppedPin = null,
-  onMapClick,
-  onDroppedPinClick,
   onPinDragEnd,
   onPinRemove,
   onPinPassengerSave,
@@ -177,7 +164,6 @@ export default function MapboxMap({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const vanMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([]);
-  const dropPinMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const fittedRef = useRef<string>("");
   // Ref-stored onPinDragEnd so the pin-creation useEffect doesn't re-fire
   // every time the parent re-renders (which would tear down and rebuild
@@ -436,12 +422,6 @@ export default function MapboxMap({
           try { m.remove(); } catch {}
         });
         pinMarkersRef.current = [];
-      } catch {}
-      try {
-        if (dropPinMarkerRef.current) {
-          dropPinMarkerRef.current.remove();
-          dropPinMarkerRef.current = null;
-        }
       } catch {}
       try {
         map.remove();
@@ -944,85 +924,11 @@ export default function MapboxMap({
     else map.once("load", apply);
   }, [allPoints, fitBounds, focusMode, fitPadding, fitMaxZoom, followCam]);
 
-  // Long-press / right-click on the map → drop a pin at that point.
-  // Mapbox's `contextmenu` event fires on long-press for touch devices and
-  // right-click on desktop. Also supports the legacy `dropPinMode` toggle as a fallback.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !onMapClick) return;
-    const longPressHandler = (e: mapboxgl.MapMouseEvent) => {
-      onMapClick(e.lngLat.lat, e.lngLat.lng);
-      e.preventDefault?.();
-    };
-    map.on("contextmenu", longPressHandler);
-
-    // Backup: manually detect long touchstart on the map canvas, since some iOS
-    // PWAs swallow the contextmenu event.
-    let touchTimer: ReturnType<typeof setTimeout> | null = null;
-    let touchLngLat: { lng: number; lat: number } | null = null;
-    const onTouchStart = (e: mapboxgl.MapTouchEvent) => {
-      if (e.originalEvent.touches.length !== 1) return;
-      touchLngLat = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-      touchTimer = setTimeout(() => {
-        if (touchLngLat) {
-          onMapClick(touchLngLat.lat, touchLngLat.lng);
-          if ("vibrate" in navigator) try { navigator.vibrate?.(40); } catch {}
-        }
-      }, 550);
-    };
-    const cancelTouch = () => {
-      if (touchTimer) {
-        clearTimeout(touchTimer);
-        touchTimer = null;
-      }
-      touchLngLat = null;
-    };
-    map.on("touchstart", onTouchStart);
-    map.on("touchmove", cancelTouch);
-    map.on("touchend", cancelTouch);
-    map.on("touchcancel", cancelTouch);
-
-    // Also handle the explicit drop-pin mode (legacy) — single click drops pin
-    const clickHandler = (e: mapboxgl.MapMouseEvent) => {
-      if (dropPinMode) {
-        onMapClick(e.lngLat.lat, e.lngLat.lng);
-      }
-    };
-    map.on("click", clickHandler);
-    map.getCanvas().style.cursor = dropPinMode ? "crosshair" : "";
-
-    return () => {
-      map.off("contextmenu", longPressHandler);
-      map.off("touchstart", onTouchStart);
-      map.off("touchmove", cancelTouch);
-      map.off("touchend", cancelTouch);
-      map.off("touchcancel", cancelTouch);
-      map.off("click", clickHandler);
-      cancelTouch();
-      map.getCanvas().style.cursor = "";
-    };
-  }, [dropPinMode, onMapClick]);
-
-  // Render the dropped pin marker
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (dropPinMarkerRef.current) {
-      dropPinMarkerRef.current.remove();
-      dropPinMarkerRef.current = null;
-    }
-    if (!droppedPin) return;
-    const el = document.createElement("div");
-    el.style.cursor = "pointer";
-    el.innerHTML = `<div style="position:relative;font-size:36px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7));animation:drop-bounce .5s ease-out;">📍</div>`;
-    el.onclick = (e) => {
-      e.stopPropagation();
-      onDroppedPinClick?.();
-    };
-    dropPinMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
-      .setLngLat([droppedPin.lng, droppedPin.lat])
-      .addTo(map);
-  }, [droppedPin, onDroppedPinClick]);
+  // Drop-pin retired (Mark feedback): tapping / long-pressing the map no
+  // longer drops a generic "what do you want to do?" pin. Pickup / Dropoff
+  // / Stop each own their own draggable pin flow, which makes the generic
+  // drop-pin redundant and easy to fire by accident. Map taps now just
+  // pan/zoom via Mapbox's built-in handlers.
 
   // Imperative focus modes — triggered by focusKey changes
   useEffect(() => {

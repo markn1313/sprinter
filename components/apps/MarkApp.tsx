@@ -41,7 +41,6 @@ import {
   MessageCircle,
   HelpCircle,
   Fuel,
-  Trash2,
 } from "lucide-react";
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
@@ -226,8 +225,7 @@ function MapTab({
   // tank-gallons × fuel_pct × rolling_mpg (Bouncie trip data, last 7
   // days). Replaces the old static 18-mpg constant. Updates once a min.
   const range = useRange(token);
-  const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip" | "droppedPin">("none");
-  const [droppedPin, setDroppedPin] = useState<{ lat: number; lng: number; address?: string } | null>(null);
+  const [sheet, setSheet] = useState<"none" | "dispatch" | "pickup" | "trip">("none");
 
   // Edit mode — Mark is currently editing one of pickup / dropoff / stop.
   // All three flows share the in-place map transform (violet draggable pin
@@ -247,21 +245,10 @@ function MapTab({
   const dropoffMode = editTarget === "dropoff";
   const stopMode = editTarget === "stop";
   const inEditMode = editTarget !== null;
-  const onMapClick = async (lat: number, lng: number) => {
-    setDroppedPin({ lat, lng });
-    setSheet("droppedPin");
-    try {
-      const res = await fetch(`/api/places/reverse-geocode?lat=${lat}&lng=${lng}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDroppedPin({ lat, lng, address: data.display });
-      }
-    } catch {
-      // ignore
-    }
-  };
+  // Drop-pin retired — was redundant with Pickup / Dropoff / Stop, each of
+  // which already opens a draggable pin with live ETA + address. Drop-pin
+  // fired easily by accident (any errant map tap opened the action sheet).
+  // Removing it is pure subtraction: tap on map = pan/zoom only.
   const [focusMode, setFocusMode] = useState<"auto" | "van" | "me" | "dest" | "van-me" | "me-dest">("auto");
   const [focusKey, setFocusKey] = useState(0);
   const focus = (mode: typeof focusMode) => {
@@ -1002,9 +989,6 @@ function MapTab({
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
-        droppedPin={inEditMode ? null : droppedPin}
-        onMapClick={inEditMode ? undefined : onMapClick}
-        onDroppedPinClick={() => setSheet("droppedPin")}
         onPinDragEnd={mapTrip || inEditMode ? handlePinDrag : undefined}
         onPinRemove={mapTrip && !inEditMode ? removeStopPin : undefined}
         onPinPassengerSave={mapTrip && !inEditMode ? savePinPassenger : undefined}
@@ -1106,13 +1090,6 @@ function MapTab({
           onClick={() => focus("auto")}
           title="Auto-fit"
         />
-        {droppedPin && (
-          <FocusBtn
-            label={<span className="text-2xl leading-none">✕</span>}
-            onClick={() => setDroppedPin(null)}
-            title="Clear dropped pin"
-          />
-        )}
         {/* Share + Maps — moved here from the right column so the vital
             chips (fuel/range/speed) stand alone, and so these trip-action
             chips sit alongside the map-focus buttons (also trip-context).
@@ -1432,24 +1409,6 @@ function MapTab({
           refresh={refresh}
         />
       )}
-      {sheet === "droppedPin" && droppedPin && (
-        <DroppedPinSheet
-          token={token}
-          trip={mapTrip}
-          stops={stopsArr}
-          pin={droppedPin}
-          onClose={() => setSheet("none")}
-          onRemovePin={() => {
-            setDroppedPin(null);
-            setSheet("none");
-          }}
-          onApplied={() => {
-            setDroppedPin(null);
-            setSheet("none");
-            refresh();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -1641,244 +1600,6 @@ async function totalDistanceMiles(
   }
 }
 
-function DroppedPinSheet({
-  token,
-  trip,
-  stops,
-  pin,
-  onClose,
-  onRemovePin,
-  onApplied,
-}: {
-  token: string;
-  trip: Trip | null;
-  stops: Array<{ id: string; lat: number | null; lng: number | null; address: string }>;
-  pin: { lat: number; lng: number; address?: string };
-  onClose: () => void;
-  onRemovePin: () => void;
-  onApplied: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const pinAddress = pin.address ?? `${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`;
-
-  // Smart-insert: build [pickup, ...stops, dropoff], try every internal position,
-  // pick the one with the shortest total route distance. Falls back to append when
-  // there are too many stops or routing fails.
-  const smartAddAsStop = async () => {
-    if (!trip) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      // Build the existing waypoint chain
-      const chain: Array<{ lat: number; lng: number }> = [];
-      if (trip.pickup_lat != null && trip.pickup_lng != null)
-        chain.push({ lat: trip.pickup_lat, lng: trip.pickup_lng });
-      stops.forEach((s) => {
-        if (s.lat != null && s.lng != null) chain.push({ lat: s.lat, lng: s.lng });
-      });
-      if (trip.dropoff_lat != null && trip.dropoff_lng != null)
-        chain.push({ lat: trip.dropoff_lat, lng: trip.dropoff_lng });
-
-      // stopsCount = how many intermediate stops currently exist
-      const stopsCount = stops.filter((s) => s.lat != null && s.lng != null).length;
-
-      // Default: append at end of stops list (server side index = stopsCount)
-      let chosenIdx = stopsCount;
-
-      // Smart-insert is only worth doing when N <= 5 (≤ 7 candidate sequences).
-      // For larger trips, just append — the user can re-order in trip detail.
-      // Insertion happens between pickup and dropoff: candidate positions in the
-      // chain are 1..chain.length-1 (so we never displace pickup or dropoff).
-      // The matching server-side stops index is candidatePos - 1 (since position 1
-      // in the chain == stops[0]).
-      if (chain.length >= 2 && stopsCount <= 5) {
-        let bestDist = Infinity;
-        let bestServerIdx = chosenIdx;
-        for (let pos = 1; pos < chain.length; pos++) {
-          const candidate = [...chain];
-          candidate.splice(pos, 0, { lat: pin.lat, lng: pin.lng });
-          // eslint-disable-next-line no-await-in-loop
-          const d = await totalDistanceMiles(token, candidate);
-          if (d != null && d < bestDist) {
-            bestDist = d;
-            bestServerIdx = pos - 1; // stops index space
-          }
-        }
-        if (Number.isFinite(bestDist)) chosenIdx = bestServerIdx;
-      }
-
-      await postJson(token, `/api/trips/${trip.id}/stops`, {
-        kind: "stop",
-        address: pinAddress,
-        lat: pin.lat,
-        lng: pin.lng,
-        index: chosenIdx,
-      });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setAsNewPickup = async () => {
-    if (!trip) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await fetch(`/api/trips/${trip.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pickup_address: pinAddress,
-          pickup_lat: pin.lat,
-          pickup_lng: pin.lng,
-        }),
-      });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setAsNewDropoff = async () => {
-    if (!trip) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      await fetch(`/api/trips/${trip.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dropoff_address: pinAddress,
-          dropoff_lat: pin.lat,
-          dropoff_lng: pin.lng,
-        }),
-      });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // No active/scheduled trip — let Mark create one straight from the pin
-  const pickupHere = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await postJson(token, "/api/quick-pickup", {
-        lat: pin.lat,
-        lng: pin.lng,
-        address: pinAddress,
-        scheduled_at: new Date().toISOString(),
-        notes: `Pick me up at ${pinAddress}`,
-      });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const takeMeHere = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const myGps = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
-        if (typeof navigator === "undefined" || !navigator.geolocation) {
-          resolve(null);
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(
-          (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
-          () => resolve(null),
-          { enableHighAccuracy: true, maximumAge: 10_000, timeout: 12_000 },
-        );
-      });
-      await postJson(token, "/api/quick-pickup", {
-        lat: myGps?.lat,
-        lng: myGps?.lng,
-        address: myGps ? "My current location" : "My location (unknown)",
-        dropoff_address: pinAddress,
-        dropoff_lat: pin.lat,
-        dropoff_lng: pin.lng,
-        scheduled_at: new Date().toISOString(),
-        notes: `Take me to ${pinAddress}`,
-      });
-      onApplied();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Sheet title="Pin dropped" onClose={onClose}>
-      <div className="text-sm text-zinc-300">{pinAddress}</div>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {trip ? (
-          <>
-            <button
-              onClick={smartAddAsStop}
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : "🚩"} Add as stop (smart-insert)
-            </button>
-            <button
-              onClick={setAsNewPickup}
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-transparent px-3 py-3 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50"
-            >
-              📍 Set as new pickup
-            </button>
-            <button
-              onClick={setAsNewDropoff}
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-transparent px-3 py-3 text-sm font-semibold text-zinc-100 hover:bg-zinc-900 disabled:opacity-50"
-            >
-              🏁 Set as new dropoff
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={takeMeHere}
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              🏁 Take me here (pickup at my location)
-            </button>
-            <button
-              onClick={pickupHere}
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-3 py-3 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-            >
-              🚩 Pick me up here
-            </button>
-          </>
-        )}
-        <button
-          onClick={onRemovePin}
-          disabled={busy}
-          className="flex items-center justify-center gap-2 rounded-2xl bg-transparent px-3 py-3 text-sm font-semibold text-red-400 hover:bg-red-950/40 disabled:opacity-50"
-        >
-          <Trash2 size={14} /> Remove pin
-        </button>
-      </div>
-      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
-    </Sheet>
-  );
-}
 
 function getGps(): Promise<{ lat: number; lng: number }> {
   return new Promise((resolve, reject) => {
