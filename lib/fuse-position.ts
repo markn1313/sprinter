@@ -8,15 +8,25 @@ import { supabaseAdmin } from "./supabase";
 // Bouncie because those are vehicle-side data the phone can't supply.
 //
 // Gates (all required):
-//   - Phone fix is < PHONE_FRESH_S old
+//   - Caller's Bouncie reading is LIVE, not bouncie_cached. Cached means
+//     the dongle hasn't pinged recently; the proximity baseline is stale.
+//   - Bouncie reports the van is actively moving (speed >= VAN_MIN_MPH).
+//     This is the single most reliable "phone is in this van" signal we
+//     have. A parked van has zero position lag to mitigate, and proximity
+//     alone can't distinguish "phone in cabin" from "phone owner walked
+//     into a neighboring shop." Skipping fusion when stopped is what
+//     keeps the van icon planted at the real van when Mark steps out.
+//   - Phone fix is < PHONE_FRESH_S old.
 //   - Phone accuracy is < PHONE_ACC_MAX_M (filters out 2000 m bad fixes
-//     we've seen indoors / behind glass)
-//   - Phone is within PHONE_PROX_M of the Bouncie position (sanity:
-//     confirms the phone is actually in/near the van, not on Mark's desk)
+//     we've seen indoors / behind glass).
+//   - Phone is within PHONE_PROX_M of the Bouncie position. Tightened
+//     from 200 m to 30 m — only a phone essentially inside the cabin
+//     should ever pass this, even if the speed gate above is fuzzy.
 
 const PHONE_FRESH_S = 10;
 const PHONE_ACC_MAX_M = 100;
-const PHONE_PROX_M = 200;
+const PHONE_PROX_M = 30;
+const VAN_MIN_MPH = 5;
 
 interface PhoneFix {
   lat: number;
@@ -28,6 +38,8 @@ interface PhoneFix {
 interface BouncieRef {
   lat: number;
   lng: number;
+  speed_mph?: number | null;
+  source?: "bouncie" | "bouncie_cached" | "mock" | string;
 }
 
 function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -66,6 +78,14 @@ export interface FusedFix {
 // Returns a fresher phone-based position when one passes all gates, else null.
 // Caller decides what to do with it (typically: override Bouncie's lat/lng).
 export async function fuseFromPhone(bouncie: BouncieRef): Promise<FusedFix | null> {
+  // Top-of-function guards — short-circuit before any DB read so a stopped
+  // van is never even a candidate for fusion. These are the most important
+  // checks: they keep the van icon planted at the real van when Mark steps
+  // out (proximity alone wasn't enough — a phone next door is still within
+  // 200 m). See header comment for the full reasoning.
+  if (bouncie.source && bouncie.source !== "bouncie") return null;
+  if ((bouncie.speed_mph ?? 0) < VAN_MIN_MPH) return null;
+
   const [mark, driver] = await Promise.all([
     loadFix("mark_location"),
     loadFix("driver_location"),

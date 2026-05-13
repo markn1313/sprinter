@@ -660,8 +660,16 @@ function MapTab({
   // in the van for those), or (b) his GPS is within ~50 m of the van's
   // position. If we don't have GPS, fall back to the trip-status signal.
   const inVan = useMemo(() => {
+    // Trip-status signal is the most authoritative — once onboard, we know
+    // Mark is in the van regardless of GPS noise.
     if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
     if (!myGps || !pos) return false;
+    // Tightened proximity 50m -> 20m. The earlier 50m was permissive
+    // enough that Mark standing on the sidewalk next to a parked van
+    // looked "in" — which then suppressed the Pickup button and showed
+    // Dropoff. Inside the cabin, phone-vs-van GPS lines up sub-10m;
+    // 20m allows for typical GPS jitter without catching the sidewalk.
+    // Belt-and-suspenders for the fusion fix in lib/fuse-position.ts.
     const R = 6_371_000;
     const toRad = (d: number) => (d * Math.PI) / 180;
     const dLat = toRad(pos.lat - myGps.lat);
@@ -670,7 +678,13 @@ function MapTab({
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return m < 50;
+    if (m >= 20) return false;
+    // Additional gate: van must be moving OR Mark explicitly onboarded.
+    // A parked van + Mark within 20m of it isn't enough — he could be
+    // standing right next to a van he's not in. Speed > 3 mph means the
+    // van is actually driving him somewhere.
+    if ((pos.speed_mph ?? 0) >= 3) return true;
+    return false;
   }, [live, myGps, pos]);
 
   // Enter pickup mode. In edit-modify mode the pin starts at the existing

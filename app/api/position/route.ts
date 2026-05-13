@@ -34,10 +34,19 @@ export async function GET(req: Request) {
   // third of a mile of position lag. When Mark's or Dio's phone is in
   // the van and reporting fresh GPS via /api/mark-location or
   // /api/driver-location, we use that for lat/lng (still keeping
-  // Bouncie's vehicle-side speed/fuel/odometer). Fuser falls back to
-  // null when no fresh phone fix is close enough to the van.
-  if (pos.source === "bouncie" || pos.source === "bouncie_cached") {
-    const fused = await fuseFromPhone({ lat: pos.lat, lng: pos.lng });
+  // Bouncie's vehicle-side speed/fuel/odometer).
+  //
+  // ONLY fuses on a live `bouncie` source — `bouncie_cached` means the
+  // dongle hasn't pinged recently and the proximity baseline is stale.
+  // fuseFromPhone() also self-gates on speed + tight proximity so a
+  // parked van + Mark stepping out can't drag the van icon to his coords.
+  if (pos.source === "bouncie") {
+    const fused = await fuseFromPhone({
+      lat: pos.lat,
+      lng: pos.lng,
+      speed_mph: pos.speed_mph,
+      source: pos.source,
+    });
     if (fused) {
       pos.lat = fused.lat;
       pos.lng = fused.lng;
