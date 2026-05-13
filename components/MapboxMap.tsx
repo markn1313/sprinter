@@ -181,6 +181,11 @@ export default function MapboxMap({
   useEffect(() => {
     onPinPassengerSaveRef.current = onPinPassengerSave;
   }, [onPinPassengerSave]);
+  // True while the user is actively holding-and-dragging a marker. The pin
+  // rebuild effect bails when this is set so an unrelated re-render (myGps
+  // tick, eta poll, polyline refresh) can't tear down the marker mid-drag
+  // and snap it back to the stale React state position.
+  const isDraggingRef = useRef(false);
   // Ref-stored fitBounds applier — populated by the fitBounds useEffect so
   // the ResizeObserver (in the init effect) can re-run the fit when the
   // container's flex layout settles AFTER initial mount. Otherwise a tight
@@ -610,6 +615,13 @@ export default function MapboxMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    // BAIL if the user is actively dragging. Re-rendering markers while a
+    // drag is in flight tears down the marker the finger is locked onto —
+    // Mapbox stops emitting drag events, the marker pops back to whatever
+    // React state currently holds, and the user sees a snap-back. Any
+    // legitimate change that arrived during the drag will re-fire this
+    // effect via the next render after dragend.
+    if (isDraggingRef.current) return;
     pinMarkersRef.current.forEach((m) => {
       try { m.remove(); } catch {}
     });
@@ -641,10 +653,12 @@ export default function MapboxMap({
             el.style.cursor = "grab";
             el.title = "Drag to update";
             marker.on("dragstart", () => {
+              isDraggingRef.current = true;
               el.style.cursor = "grabbing";
               el.style.opacity = "0.85";
             });
             marker.on("dragend", () => {
+              isDraggingRef.current = false;
               el.style.cursor = "grab";
               el.style.opacity = "";
               const ll = marker.getLngLat();

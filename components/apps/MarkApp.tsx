@@ -432,7 +432,13 @@ function MapTab({
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
     return out;
-  }, [live, upcoming, mapTrip, stopsArr, myGps]);
+    // editPin / editAddress / inEditMode included so the violet
+    // pickup-target pin reflects the latest dragged position after the
+    // user lifts their finger. Without them the memoized array was
+    // stuck on the OLD editPin closure value until an unrelated dep
+    // (myGps, upcoming, …) happened to tick, which was visible as the
+    // marker drifting back to where it started during the next rebuild.
+  }, [live, upcoming, mapTrip, stopsArr, myGps, editPin, editAddress, inEditMode]);
 
   // Reverse-geocode Mark's GPS so the bottom card shows his actual
   // street/neighborhood ("Newport Heights, CA") instead of the literal

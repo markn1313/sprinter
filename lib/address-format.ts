@@ -97,9 +97,15 @@ export function shortenAddress(item: NominatimItem | null | undefined): string {
   const a = item.address ?? {};
   const houseNum = (a.house_number ?? "").trim();
   const road = (a.road ?? a.pedestrian ?? a.path ?? a.cycleway ?? a.footway ?? "").trim();
-  const street = [houseNum, road].filter(Boolean).join(" ");
+  // A bare house number with no road is useless ("2203" tells you nothing
+  // about WHERE). Drop the number entirely when Nominatim has no road
+  // segment — usually means the point is on a parking lot, private drive,
+  // or vacant lot that OSM hasn't labeled. We fall through to neighborhood
+  // / display_name below for a more meaningful label.
+  const street = road ? [houseNum, road].filter(Boolean).join(" ") : "";
+  const neighborhood = (a.neighbourhood ?? a.suburb ?? "").trim();
   const city =
-    (a.city ?? a.town ?? a.village ?? a.hamlet ?? a.suburb ?? a.neighbourhood ?? "").trim();
+    (a.city ?? a.town ?? a.village ?? a.hamlet ?? "").trim();
   const state = stateAbbr(a.state);
   const postcode = (a.postcode ?? "").trim();
 
@@ -111,16 +117,29 @@ export function shortenAddress(item: NominatimItem | null | undefined): string {
     parts.push(item.name);
   } else if (street) {
     parts.push(street);
+  } else if (neighborhood) {
+    // No road and no POI name. Show the neighborhood / suburb so Mark at
+    // least sees something like "Newport Heights" instead of a bare number
+    // or empty string.
+    parts.push(neighborhood);
   }
 
-  if (city && parts[0] !== city) parts.push(city);
+  // Prefer (neighborhood -> city) when we landed on neighborhood already,
+  // otherwise just city. Avoid duplicating the same word twice.
+  const cityCandidate = city || (parts[0] === neighborhood ? "" : neighborhood);
+  if (cityCandidate && parts[0] !== cityCandidate) parts.push(cityCandidate);
+
   const tail = [state, postcode].filter(Boolean).join(" ");
   if (tail) parts.push(tail);
 
   if (parts.length === 0) {
-    // Fallback: trim verbose display_name to first 3 segments
+    // Fallback: trim verbose display_name to first 3 segments BUT drop
+    // a leading bare house-number segment ("2203, Some Hood, Newport
+    // Beach" → "Some Hood, Newport Beach").
     const display = item.display_name ?? "";
-    return display.split(",").slice(0, 3).join(",").trim();
+    const segs = display.split(",").map((s) => s.trim()).filter(Boolean);
+    if (segs.length > 0 && /^\d+(?:-\d+)?$/.test(segs[0])) segs.shift();
+    return segs.slice(0, 3).join(", ").trim();
   }
   return parts.join(", ");
 }
