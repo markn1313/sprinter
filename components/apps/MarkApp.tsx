@@ -329,8 +329,28 @@ function MapTab({
     };
   }, [shareGps, token]);
 
+  // Stops array on the trip. Each stop may carry `created_by_token` —
+  // the link-token of whoever's Pickup button created it. We use that
+  // to find "MY stop" (vs other people's stops) and turn the Pickup
+  // button into an in-place modifier instead of an append.
+  type TripStop = {
+    id: string;
+    lat: number | null;
+    lng: number | null;
+    address: string;
+    passenger?: string | null;
+    passenger_link_token?: string | null;
+    created_by_token?: string | null;
+    arrived_at?: string | null;
+  };
   const stopsArr =
-    ((mapTrip as unknown as { stops?: Array<{ id: string; lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
+    ((mapTrip as unknown as { stops?: TripStop[] })?.stops ?? []) as TripStop[];
+
+  // The stop *I* own — created by my Pickup button. Lets the button
+  // flip between add ("Pickup") and modify ("Modify pickup") modes.
+  const myStop = useMemo<TripStop | null>(() => {
+    return stopsArr.find((s) => s.created_by_token === token) ?? null;
+  }, [stopsArr, token]);
 
   // Mirror TV behavior: pin set comes from the live ETA's `upcoming` array
   // (which knows to drop pickup once onboard, etc.) so Mark's home map
@@ -351,12 +371,14 @@ function MapTab({
     // trip's pickup/dropoff here — that pulls the camera way out and is
     // not what Mark wants to look at while idle.
     if (!live) {
-      // Scheduled trip waiting for dispatch — surface the pending pickup
-      // pin (violet teardrop) so Mark sees WHERE the van is coming to
-      // fetch him, plus his own "You" mark and any dropoff/stops already
-      // staged. Suppressing the pickup pin (as the original branch did)
-      // hid useful state once a pickup was set 10 min away from him.
-      if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null) {
+      // Scheduled trip waiting for dispatch.
+      // Universal-Pickup model: pickups live in stops[]. The first
+      // pickup-style stop renders as the violet "pending pickup"
+      // teardrop; subsequent stops render as the regular numbered stop
+      // pin. Legacy trips with only trip.pickup_* (no stops[]) fall
+      // back to the original behavior so old trips don't lose their pin.
+      const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
+      if (!hasAnyStop && mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null) {
         out.push({
           kind: "pickup",
           id: "pickup",
@@ -378,13 +400,18 @@ function MapTab({
       stopsArr.forEach((s, i) => {
         if (s.lat != null && s.lng != null) {
           const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
+          // First stop on a scheduled trip is the lead pickup — render
+          // it as a violet teardrop "pending pickup" so it visually
+          // matches what Mark expects pre-dispatch.
+          const isFirstPickupSlot = i === 0;
           out.push({
-            kind: "stop",
+            kind: isFirstPickupSlot ? "pickup" : "stop",
             id: s.id,
             lat: s.lat,
             lng: s.lng,
             label: s.address,
             index: i + 1,
+            ...(isFirstPickupSlot ? { pending: true } : {}),
             ...(sx.passenger ? { passenger: sx.passenger } : {}),
             ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
           });
@@ -652,21 +679,19 @@ function MapTab({
     }
   };
 
-  // Pickup mode operates in two flavors. "edit" applies when a trip is
-  // already in motion toward Mark (scheduled / dispatched / at_pickup):
-  // tapping a time chip PATCHes that existing trip's pickup location +
-  // scheduled_at, instead of cancelling and creating a fresh one. The
-  // map pin pre-populates at the existing pickup so Mark can drag from
-  // there. "new" applies otherwise — fresh trip from Mark's current GPS.
+  // Universal Pickup-button model: every pickup is a stop. The user's
+  // own pickup is the stop with created_by_token === their token.
+  //   - First tap → ADD that stop ("Pickup").
+  //   - Subsequent taps → MODIFY that stop ("Modify pickup").
+  // editTrip is the trip the action will apply to (live, else next
+  // scheduled). When no trip exists, the action creates one via
+  // /api/quick-pickup (which now also writes the stop).
   const editTrip = useMemo<Trip | null>(() => {
-    // live = dispatched / at_pickup / onboard / at_dropoff; we only
-    // edit-mode for dispatched and at_pickup. Fall back to mapTrip
-    // (which may be the next scheduled trip when no live trip exists).
     if (live && (live.status === "dispatched" || live.status === "at_pickup")) return live;
     if (!live && mapTrip && mapTrip.status === "scheduled") return mapTrip;
-    return null;
+    return live ?? mapTrip ?? null;
   }, [live, mapTrip]);
-  const pickupModeKind: "edit" | "new" = editTrip ? "edit" : "new";
+  const pickupModeKind: "edit" | "new" = myStop ? "edit" : "new";
 
   // Is Mark physically in the van? Hide the Pickup button in that case —
   // summoning a van you're already inside is meaningless. Two signals:
@@ -701,14 +726,15 @@ function MapTab({
     return false;
   }, [live, myGps, pos]);
 
-  // Enter pickup mode. In edit-modify mode the pin starts at the existing
-  // trip's recorded pickup so Mark sees what Dio is already heading to.
-  // Otherwise the pin starts at Mark's GPS.
+  // Enter pickup mode. If I already have a stop on this trip
+  // (created_by_token match), start the pin at THAT stop so I can
+  // drag it. Otherwise start at my GPS so the snap-to-me path
+  // creates a fresh pickup at where I am.
   const enterPickup = () => {
     let start: { lat: number; lng: number } | null = null;
-    if (pickupModeKind === "edit" && editTrip?.pickup_lat != null && editTrip.pickup_lng != null) {
-      start = { lat: editTrip.pickup_lat, lng: editTrip.pickup_lng };
-      setEditAddress(editTrip.pickup_address ?? null);
+    if (myStop && myStop.lat != null && myStop.lng != null) {
+      start = { lat: myStop.lat, lng: myStop.lng };
+      setEditAddress(myStop.address ?? null);
     } else if (myGps) {
       start = { lat: myGps.lat, lng: myGps.lng };
       setEditAddress(meAddress ?? null);
@@ -812,10 +838,14 @@ function MapTab({
     };
   }, [inEditMode, editPin?.lat?.toFixed(4), editPin?.lng?.toFixed(4), token]);
 
-  // Commit a pickup change. Two paths depending on mode:
-  // - NEW: /api/quick-pickup (cancels open trips, creates a fresh one)
-  // - EDIT: PATCH the existing trip's pickup_lat/lng + scheduled_at.
-  //   Dio's app sees the change via realtime CDC and re-routes.
+  // Commit a pickup change. Three paths:
+  //   1. MY-STOP MODIFY — I already have a stop on this trip → PATCH
+  //      the stops array (drag/snap moved my pin to a new location).
+  //   2. ADD-MY-STOP — Trip exists but I don't have a stop yet → POST
+  //      a new stop with my token + name; server reruns the optimizer.
+  //   3. CREATE-TRIP — No trip exists yet → /api/quick-pickup creates
+  //      one and adds my pickup as stops[0] in the same call.
+  // Dio's app + Mark's app see the change via realtime CDC and re-route.
   const dispatchPickup = async (offsetMin: number) => {
     if (!editPin || editBusy) return;
     setEditBusy(true);
@@ -823,23 +853,54 @@ function MapTab({
       const when = offsetMin > 0
         ? new Date(Date.now() + offsetMin * 60_000).toISOString()
         : new Date().toISOString();
-      if (pickupModeKind === "edit" && editTrip) {
-        await fetch(`/api/trips/${editTrip.id}`, {
-          method: "PATCH",
+      const finalAddress = editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`;
+      if (myStop && editTrip) {
+        // (1) Modify my stop in place. PUT-replace the whole stops
+        // array so the server can rerun the Mapbox optimizer.
+        const next = stopsArr.map((s) =>
+          s.created_by_token === token
+            ? { ...s, lat: editPin.lat, lng: editPin.lng, address: finalAddress }
+            : s,
+        );
+        await fetch(`/api/trips/${editTrip.id}/stops`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ stops: next }),
+        });
+        // Only sync scheduled_at when the user explicitly chose a time
+        // chip > 0 — modifying location alone shouldn't slide the time.
+        if (offsetMin !== 0 || pickupModeKind === "new") {
+          await fetch(`/api/trips/${editTrip.id}`, {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ scheduled_at: when }),
+          });
+        }
+      } else if (editTrip) {
+        // (2) Add my stop to an existing trip.
+        await fetch(`/api/trips/${editTrip.id}/stops`, {
+          method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            pickup_lat: editPin.lat,
-            pickup_lng: editPin.lng,
-            pickup_address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
-            scheduled_at: when,
+            kind: "stop",
+            lat: editPin.lat,
+            lng: editPin.lng,
+            address: finalAddress,
+            passenger: name,
+            created_by_token: token,
           }),
         });
       } else {
+        // (3) No trip yet — bootstrap one via quick-pickup. That
+        // endpoint now creates the trip AND seeds stops[0] with my
+        // pickup carrying my token + name.
         await postJson(token, "/api/quick-pickup", {
           lat: editPin.lat,
           lng: editPin.lng,
-          address: "My current location",
+          address: finalAddress,
           scheduled_at: when,
+          passenger: name,
+          created_by_token: token,
           notes: offsetMin === 0 ? "Pick me up now" : `Pick me up in ${offsetMin} min`,
         });
       }
@@ -1155,15 +1216,18 @@ function MapTab({
           </button>
         ) : (
           <>
-            {!inVan && (
-              <button
-                onClick={enterPickup}
-                disabled={!myGps && pickupModeKind !== "edit"}
-                className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {pickupModeKind === "edit" ? "Modify" : "Pickup"}
-              </button>
-            )}
+            {/* Pickup button is universal now: always visible, adds my
+                own pickup-stop the first time and modifies it on
+                subsequent taps. Removed the !inVan gate — joining
+                passengers who aren't physically in the van should
+                still be able to add their pickup. */}
+            <button
+              onClick={enterPickup}
+              disabled={!myGps && !myStop}
+              className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {pickupModeKind === "edit" ? "Modify" : "Pickup"}
+            </button>
             {inVan && (
               <button
                 onClick={enterDropoff}

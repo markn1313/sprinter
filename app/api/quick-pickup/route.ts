@@ -28,6 +28,11 @@ export async function POST(req: Request) {
         dropoff_address?: string;
         dropoff_lat?: number;
         dropoff_lng?: number;
+        // Per the universal-Pickup model: the trip is created with a
+        // stops[] entry for the requester's pickup. These describe THAT
+        // stop. Falls back to "Mark" + ctx.token when not provided.
+        passenger?: string;
+        created_by_token?: string;
       }
     | null;
 
@@ -55,10 +60,32 @@ export async function POST(req: Request) {
     else pickupAddress = `${body.lat.toFixed(5)}, ${body.lng.toFixed(5)}`;
   }
 
+  // Universal-Pickup data model: the requester's pickup is now a stop
+  // in stops[], not a special field on the trip. We still dual-write
+  // trip.pickup_* for backward compat with any reader that hasn't been
+  // migrated to read stops; those reads will be cut over in a follow-up.
+  const requesterName = (body.passenger ?? "Mark").trim() || "Mark";
+  const initialStops =
+    typeof body.lat === "number" && typeof body.lng === "number"
+      ? [
+          {
+            id: crypto.randomUUID(),
+            kind: "stop" as const,
+            address: pickupAddress,
+            lat: body.lat,
+            lng: body.lng,
+            passenger: requesterName,
+            created_by_token: body.created_by_token ?? ctx.token,
+            arrived_at: null,
+            added_at: new Date().toISOString(),
+          },
+        ]
+      : [];
+
   const { data: trip, error } = await sb
     .from("trips")
     .insert({
-      passenger_name: "Mark",
+      passenger_name: requesterName,
       pickup_address: pickupAddress,
       pickup_lat: body.lat ?? null,
       pickup_lng: body.lng ?? null,
@@ -69,6 +96,7 @@ export async function POST(req: Request) {
       status: "scheduled",
       notes: body.notes ?? "Pick me up",
       created_by: ctx.token,
+      stops: initialStops,
     })
     .select()
     .single();

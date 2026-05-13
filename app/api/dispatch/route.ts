@@ -58,6 +58,32 @@ export async function POST(req: Request) {
     }
   }
 
+  // Universal-Pickup model: the dispatched pickup is a stop in stops[],
+  // attributed to whoever will be picked up. When we'll mint a passenger
+  // link below, we pre-mint the token so we can stamp it on the stop in
+  // the same insert (avoids a follow-up patch). When the owner is the
+  // passenger (parsed.isOwnerRiding), the stop is attributed to ctx.token.
+  // Dual-write trip.pickup_* for back-compat — Phase 3 cuts readers over.
+  const shouldMint = body.mintGuestLink !== false && !parsed.isOwnerRiding;
+  const guestToken: string | null = shouldMint ? newToken() : null;
+  const pickupStopToken = guestToken ?? ctx.token;
+  const initialStops =
+    pickupGeo
+      ? [
+          {
+            id: crypto.randomUUID(),
+            kind: "stop" as const,
+            address: pickupGeo.display ?? parsed.pickupHint,
+            lat: pickupGeo.lat,
+            lng: pickupGeo.lng,
+            passenger: parsed.passengerName,
+            created_by_token: pickupStopToken,
+            arrived_at: null,
+            added_at: new Date().toISOString(),
+          },
+        ]
+      : [];
+
   const sb = supabaseAdmin();
   const { data: trip, error } = await sb
     .from("trips")
@@ -77,6 +103,7 @@ export async function POST(req: Request) {
       route_distance_meters: distance_m,
       route_duration_seconds: duration_s,
       estimated_minutes: duration_s ? Math.round(duration_s / 60) : null,
+      stops: initialStops,
     })
     .select()
     .single();
@@ -94,10 +121,7 @@ export async function POST(req: Request) {
     },
   });
 
-  let guestToken: string | null = null;
-  const shouldMint = body.mintGuestLink !== false && !parsed.isOwnerRiding;
-  if (shouldMint) {
-    guestToken = newToken();
+  if (guestToken) {
     await sb.from("links").insert({
       token: guestToken,
       role: "passenger",

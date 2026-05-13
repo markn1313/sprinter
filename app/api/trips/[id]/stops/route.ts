@@ -18,6 +18,10 @@ interface Stop {
   // on a stop. Stored here so the stop popup can deep-link into the
   // passenger view (and revoke the old one if Mark renames the passenger).
   passenger_link_token?: string | null;
+  // Whose Pickup-button action created this stop. Maps to a link's
+  // token (Mark's, or a passenger's). Used to find "MY stop" so
+  // tapping Pickup again becomes a modify rather than another add.
+  created_by_token?: string | null;
   arrived_at?: string | null;
   added_at: string;
 }
@@ -41,6 +45,7 @@ export async function POST(
         kind?: "stop" | "pickup" | "dropoff";
         category?: string;
         passenger?: string;
+        created_by_token?: string; // who's Pickup-button created this stop
         index?: number; // position to insert at (0 = first stop). Defaults to end.
       }
     | null;
@@ -71,6 +76,9 @@ export async function POST(
     lat,
     lng,
     passenger: body.passenger ?? null,
+    // Default to the requester's token so the next time they hit
+    // Pickup we can find this stop as "theirs" and modify-in-place.
+    created_by_token: body.created_by_token ?? ctx.token,
     added_at: new Date().toISOString(),
   };
   // Insert at requested index, or append if not specified / out of range
@@ -119,6 +127,7 @@ export async function PUT(
       lng,
       passenger: s.passenger ?? null,
       passenger_link_token: s.passenger_link_token ?? null,
+      created_by_token: s.created_by_token ?? null,
       arrived_at: s.arrived_at ?? null,
       added_at: s.added_at ?? new Date().toISOString(),
     });

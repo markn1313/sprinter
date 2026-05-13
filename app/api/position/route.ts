@@ -173,8 +173,25 @@ export async function GET(req: Request) {
           const t = activeTrip!;
           const now = new Date().toISOString();
 
-          // scheduled → dispatched when the van is moving. Driver took the
-          // wheel and started toward pickup without tapping anything.
+          // Universal-Pickup model: pickups are stops[]. "Pickup" = the
+          // first not-yet-arrived stop. Legacy trips with only
+          // trip.pickup_* fall back to those for compat — the merge
+          // below collapses both into a single "next pickup point"
+          // reference.
+          const stopsArr = Array.isArray(t.stops) ? t.stops : [];
+          const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
+          const firstPendingStop = stopsArr.find(
+            (s) => !s.arrived_at && s.lat != null && s.lng != null,
+          );
+          const legacyPickup =
+            !hasAnyStop && t.pickup_lat != null && t.pickup_lng != null
+              ? { lat: t.pickup_lat, lng: t.pickup_lng }
+              : null;
+          const nextPickup = firstPendingStop
+            ? { lat: firstPendingStop.lat as number, lng: firstPendingStop.lng as number }
+            : legacyPickup;
+
+          // scheduled → dispatched when the van is moving.
           if (t.status === "scheduled" && speed > DEPART_MPH) {
             await sb
               .from("trips")
@@ -184,12 +201,11 @@ export async function GET(req: Request) {
             logTripEvent({ trip_id: t.id, kind: "auto_dispatched", payload: { reason: "speed>" + DEPART_MPH } });
           }
 
-          // dispatched → at_pickup when within 100m of pickup
+          // dispatched → at_pickup when within 100m of the next pickup point.
           if (
             t.status === "dispatched" &&
-            t.pickup_lat != null &&
-            t.pickup_lng != null &&
-            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) < GEOFENCE_M
+            nextPickup &&
+            haversineM(pos.lat, pos.lng, nextPickup.lat, nextPickup.lng) < GEOFENCE_M
           ) {
             await sb
               .from("trips")
@@ -197,17 +213,23 @@ export async function GET(req: Request) {
               .eq("id", t.id)
               .eq("status", "dispatched");
             logTripEvent({ trip_id: t.id, kind: "auto_at_pickup", payload: { reason: "geofence" } });
+            // Stamp the stop as arrived too so subsequent ticks advance
+            // to the NEXT pending pickup.
+            if (firstPendingStop) {
+              const updated = stopsArr.map((s) =>
+                s.id === firstPendingStop.id ? { ...s, arrived_at: now } : s,
+              );
+              await sb.from("trips").update({ stops: updated }).eq("id", t.id);
+            }
           }
 
-          // at_pickup → onboard once the van moves away from pickup with
-          // speed (departure detection — passenger is in the van, driver
-          // pulled out).
+          // at_pickup → onboard once the van moves away from the just-
+          // boarded pickup with speed.
           if (
             t.status === "at_pickup" &&
-            t.pickup_lat != null &&
-            t.pickup_lng != null &&
+            nextPickup &&
             speed > DEPART_MPH &&
-            haversineM(pos.lat, pos.lng, t.pickup_lat, t.pickup_lng) > DEPART_M
+            haversineM(pos.lat, pos.lng, nextPickup.lat, nextPickup.lng) > DEPART_M
           ) {
             await sb
               .from("trips")
@@ -217,28 +239,28 @@ export async function GET(req: Request) {
             logTripEvent({ trip_id: t.id, kind: "auto_onboard", payload: { reason: "departed pickup" } });
           }
 
-          // Multi-stop: while onboard, mark intermediate stops as arrived
-          // when the van enters the 100m geofence. Stops are stored as a
-          // JSON array on the trip row; we mutate in place and PATCH the
-          // whole array back.
-          if (t.status === "onboard" && Array.isArray(t.stops) && t.stops.length > 0) {
-            const stops = t.stops;
+          // Multi-stop / multi-pickup: while onboard, mark any pending
+          // stop as arrived when the van enters the 100m geofence. This
+          // covers BOTH errand stops (no passenger) and additional
+          // pickups (added by joining friends).
+          if (t.status === "onboard" && stopsArr.length > 0) {
+            const updated = stopsArr.slice();
             let dirty = false;
-            for (const s of stops) {
+            for (let i = 0; i < updated.length; i++) {
+              const s = updated[i];
               if (
-                s.kind === "stop" &&
                 !s.arrived_at &&
                 s.lat != null &&
                 s.lng != null &&
-                haversineM(pos.lat, pos.lng, s.lat, s.lng) < GEOFENCE_M
+                haversineM(pos.lat, pos.lng, s.lat as number, s.lng as number) < GEOFENCE_M
               ) {
-                s.arrived_at = now;
+                updated[i] = { ...s, arrived_at: now };
                 dirty = true;
                 logTripEvent({ trip_id: t.id, kind: "auto_at_stop", payload: { stop_id: s.id, address: s.address } });
               }
             }
             if (dirty) {
-              await sb.from("trips").update({ stops }).eq("id", t.id);
+              await sb.from("trips").update({ stops: updated }).eq("id", t.id);
             }
           }
 

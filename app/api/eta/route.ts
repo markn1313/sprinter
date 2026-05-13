@@ -183,40 +183,52 @@ export async function GET(req: Request) {
 
   const upcoming: Array<{ kind: "pickup" | "stop" | "dropoff"; lat: number; lng: number; label: string }> = [];
 
-  // Build the upcoming-waypoint sequence based on trip status
-  // - scheduled / dispatched / at_pickup → start with pickup (if not yet there), then stops, then dropoff
-  // - onboard → skip pickup; stops + dropoff
-  // - at_dropoff / complete → just dropoff
-  let includePickup = t.status === "scheduled" || t.status === "dispatched";
+  // Universal-Pickup data model: all pickups live in stops[]. Each stop
+  // that hasn't been visited yet (arrived_at == null) is a future
+  // waypoint. Once the van has driven past a stop (arrived_at set), we
+  // drop it from upcoming. The legacy trip.pickup_* fields are merged
+  // in only as a fallback for trips dispatched before the migration
+  // (no stops[] entry) — those get rendered as an implicit first stop.
+  const stopsRaw = (t.stops as (StopRow & { arrived_at?: string | null })[] | null) ?? [];
+  const hasAnyStop = stopsRaw.some((s) => s.lat != null && s.lng != null);
 
-  // "Take me home" / Quick-Dispatch / pick-me-up flows write pickup_address as
-  // the sentinel "My current location" with the van's lat/lng at dispatch.
-  // Mark is already in the van — there is no pickup leg to drive. The trip
-  // never auto-advances out of `scheduled`, so without this guard the route
-  // doubles back: van NOW → pickup (where van WAS at dispatch) → dropoff.
-  // Once the van has moved >400 m away from the recorded pickup point, drop
-  // pickup so the route, ETA, and map-fit reflect "current location → dropoff."
-  if (includePickup && t.pickup_lat != null && t.pickup_lng != null && t.pickup_address) {
+  // Pre-migration trips wrote only trip.pickup_*; treat as one implicit
+  // stop. Sentinel-pickup ("My current location") is dropped once the
+  // van is >400m away so the route doesn't loop back to the dispatch
+  // origin once Mark has clearly departed.
+  let includeLegacyPickup = !hasAnyStop && t.pickup_lat != null && t.pickup_lng != null;
+  if (includeLegacyPickup && t.pickup_address) {
     const sentinel = /current\s+location|my\s+location|mark.?s\s+location/i.test(t.pickup_address);
     if (sentinel) {
       const R = 6_371_000;
       const toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad(t.pickup_lat - origin.lat);
-      const dLng = toRad(t.pickup_lng - origin.lng);
+      const dLat = toRad((t.pickup_lat ?? 0) - origin.lat);
+      const dLng = toRad((t.pickup_lng ?? 0) - origin.lng);
       const a =
         Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(origin.lat)) * Math.cos(toRad(t.pickup_lat)) * Math.sin(dLng / 2) ** 2;
+        Math.cos(toRad(origin.lat)) * Math.cos(toRad(t.pickup_lat ?? 0)) * Math.sin(dLng / 2) ** 2;
       const distM = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (distM > 400) includePickup = false;
+      if (distM > 400) includeLegacyPickup = false;
     }
   }
-  if (includePickup && t.pickup_lat != null && t.pickup_lng != null) {
+  // Same drop-past-pickup logic for onboard / at_dropoff states.
+  if (t.status === "onboard" || t.status === "at_dropoff" || t.status === "complete") {
+    includeLegacyPickup = false;
+  }
+  if (includeLegacyPickup && t.pickup_lat != null && t.pickup_lng != null) {
     upcoming.push({ kind: "pickup", lat: t.pickup_lat, lng: t.pickup_lng, label: t.pickup_address ?? "Pickup" });
   }
-  const stops = (t.stops as StopRow[] | null) ?? [];
-  stops.forEach((s) => {
-    if (s.lat != null && s.lng != null) upcoming.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address });
+
+  // Pending stops (not arrived yet). Mark a stop with kind="pickup" so
+  // EtaCard/PIN_HTML can render a teardrop pickup glyph for the first
+  // one; later stops stay "stop". Skipping arrived stops keeps the van
+  // from looping back once it's passed a pickup.
+  stopsRaw.forEach((s, idx) => {
+    if (s.lat == null || s.lng == null) return;
+    if (s.arrived_at) return;
+    upcoming.push({ kind: idx === 0 ? "pickup" : "stop", lat: s.lat, lng: s.lng, label: s.address });
   });
+
   if (t.dropoff_lat != null && t.dropoff_lng != null) {
     upcoming.push({ kind: "dropoff", lat: t.dropoff_lat, lng: t.dropoff_lng, label: t.dropoff_address ?? "Dropoff" });
   }
