@@ -400,18 +400,20 @@ function MapTab({
       stopsArr.forEach((s, i) => {
         if (s.lat != null && s.lng != null) {
           const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
-          // First stop on a scheduled trip is the lead pickup — render
-          // it as a violet teardrop "pending pickup" so it visually
-          // matches what Mark expects pre-dispatch.
-          const isFirstPickupSlot = i === 0;
+          // Option A: stops with a `passenger` field are pickups, the
+          // rest are errand waypoints. Render the pickup ones as the
+          // violet pending-teardrop on scheduled trips (pre-dispatch)
+          // so Mark can see WHO is being fetched; errands stay as
+          // numbered stop pins. Survives Mapbox optimizer reordering.
+          const isPickup = !!sx.passenger;
           out.push({
-            kind: isFirstPickupSlot ? "pickup" : "stop",
+            kind: isPickup ? "pickup" : "stop",
             id: s.id,
             lat: s.lat,
             lng: s.lng,
             label: s.address,
             index: i + 1,
-            ...(isFirstPickupSlot ? { pending: true } : {}),
+            ...(isPickup ? { pending: true } : {}),
             ...(sx.passenger ? { passenger: sx.passenger } : {}),
             ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
           });

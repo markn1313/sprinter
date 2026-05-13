@@ -219,14 +219,17 @@ export async function GET(req: Request) {
     upcoming.push({ kind: "pickup", lat: t.pickup_lat, lng: t.pickup_lng, label: t.pickup_address ?? "Pickup" });
   }
 
-  // Pending stops (not arrived yet). Mark a stop with kind="pickup" so
-  // EtaCard/PIN_HTML can render a teardrop pickup glyph for the first
-  // one; later stops stay "stop". Skipping arrived stops keeps the van
-  // from looping back once it's passed a pickup.
-  stopsRaw.forEach((s, idx) => {
+  // Pending stops (not arrived yet). A stop with a `passenger` field
+  // is someone's pickup → render as kind="pickup" (teardrop glyph in
+  // the UI). Stops without a passenger are errand waypoints — render
+  // as plain numbered stops. This holds even after the Mapbox
+  // optimizer reorders the array, which positional logic (idx === 0)
+  // would have gotten wrong.
+  stopsRaw.forEach((s) => {
     if (s.lat == null || s.lng == null) return;
     if (s.arrived_at) return;
-    upcoming.push({ kind: idx === 0 ? "pickup" : "stop", lat: s.lat, lng: s.lng, label: s.address });
+    const isPickup = !!(s as unknown as { passenger?: string | null }).passenger;
+    upcoming.push({ kind: isPickup ? "pickup" : "stop", lat: s.lat, lng: s.lng, label: s.address });
   });
 
   if (t.dropoff_lat != null && t.dropoff_lng != null) {
