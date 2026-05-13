@@ -1081,11 +1081,6 @@ function MapTab({
           onClick={() => focus("auto")}
           title="Auto-fit"
         />
-        {/* Share — sits with the map-focus icons so all trip-action
-            chips live in one column. h-10 w-10 to match. */}
-        {live && (
-          <ShareTripButton token={token} tripId={live.id} compact />
-        )}
         {/* "Snap to me" — replaces the old external-Google-Maps link,
             which was misleading (the Navigation icon reads as 'locate
             me' everywhere else in iOS) and not actually useful since
@@ -1109,6 +1104,11 @@ function MapTab({
             }}
             title={inEditMode ? "Snap pickup to my location" : "Center on me"}
           />
+        )}
+        {/* Share — sits below the snap-to-me icon so all trip-action
+            chips live in one column. h-10 w-10 to match. */}
+        {live && (
+          <ShareTripButton token={token} tripId={live.id} compact />
         )}
       </div>
 
