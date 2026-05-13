@@ -80,23 +80,34 @@ export default function EtaCard({
           )}
           <AddressLine label={label} compact={compact} addrClass={sizes.addr} />
         </div>
+        {/* Compact mode skips the DISTANCE / TIME / ARRIVAL header row
+            on each stat — the units (mi / min / PM) already tell you
+            what each number is, so the headers were pure overhead. This
+            also shrinks each column from "DISTANCE" width to the number
+            width, freeing horizontal room for the address. */}
         <div>
-          <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Distance</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
+          {!compact && (
+            <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Distance</div>
+          )}
+          <div className={`${compact ? "" : "mt-0.5"} flex items-baseline gap-1`}>
             <span className={`font-mono ${sizes.statNum} font-bold tabular-nums leading-none text-zinc-100`}>{miles}</span>
             <span className={`${sizes.statUnit} text-zinc-400`}>mi</span>
           </div>
         </div>
         <div>
-          <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Time</div>
-          <div className="mt-0.5 flex items-baseline gap-1">
+          {!compact && (
+            <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Time</div>
+          )}
+          <div className={`${compact ? "" : "mt-0.5"} flex items-baseline gap-1`}>
             <span className={`font-mono ${sizes.statNum} font-bold tabular-nums leading-none ${primary ? "text-emerald-300" : "text-blue-300"}`}>{minutes}</span>
             <span className={`${sizes.statUnit} text-zinc-400`}>min</span>
           </div>
         </div>
         <div className="text-right">
-          <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Arrival</div>
-          <div className={`mt-0.5 font-mono ${sizes.arrival} font-bold tabular-nums leading-none text-zinc-100`}>{arrival}</div>
+          {!compact && (
+            <div className={`${sizes.statLabel} uppercase tracking-widest text-zinc-400 leading-none`}>Arrival</div>
+          )}
+          <div className={`${compact ? "" : "mt-0.5"} font-mono ${sizes.arrival} font-bold tabular-nums leading-none text-zinc-100`}>{arrival}</div>
         </div>
       </div>
     </div>
