@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
-import { newToken, requireMark } from "@/lib/auth";
+import { newToken, requireTripActor } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 
 // Mint (or reuse) a passenger link for an existing trip and pin it on the
 // trip row. Idempotent: if the trip already has a non-revoked, non-expired
 // passenger token, we just return it instead of creating another one.
+//
+// Mark OR the trip's passenger may invite — lets a passenger forward the
+// tracker to whoever's meeting them at the destination.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -12,7 +15,7 @@ export async function POST(
   const { id } = await params;
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await requireMark(token);
+  const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const sb = supabaseAdmin();

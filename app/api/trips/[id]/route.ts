@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireMark } from "@/lib/auth";
+import { requireMark, requireTripActor } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
 import { logTripEvent } from "@/lib/log";
@@ -11,7 +11,11 @@ export async function PATCH(
   const { id } = await params;
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await requireMark(token);
+  // Trip-actor (Mark OR the passenger whose token is tied to THIS trip)
+  // may edit pickup/dropoff/scheduled_at — single-trip-mode means there
+  // is at most one trip in flight at a time and its passenger is a
+  // legitimate co-controller of the trip they're riding on.
+  const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const body = (await req.json().catch(() => null)) as

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadSession } from "@/lib/auth";
+import { requireTripActor } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
 import { optimizeStops } from "@/lib/routing";
@@ -29,11 +29,9 @@ export async function POST(
   const { id } = await params;
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await loadSession(token);
+  // Trip-actor (Mark OR THIS trip's passenger) may add stops.
+  const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (ctx.role === "passenger") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
 
   const body = (await req.json().catch(() => null)) as
     | {
@@ -92,9 +90,8 @@ export async function PUT(
   const { id } = await params;
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await loadSession(token);
+  const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (ctx.role === "passenger") return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const body = (await req.json().catch(() => null)) as { stops?: Stop[] } | null;
   if (!body || !Array.isArray(body.stops)) {
@@ -191,9 +188,8 @@ export async function DELETE(
   const { id } = await params;
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await loadSession(token);
+  const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (ctx.role === "passenger") return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const url = new URL(req.url);
   const stopId = url.searchParams.get("stop");

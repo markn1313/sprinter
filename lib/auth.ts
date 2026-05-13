@@ -66,3 +66,26 @@ export async function requireDioOrMark(token: string): Promise<SessionContext | 
   if (ctx.role !== "mark" && ctx.role !== "dio") return null;
   return ctx;
 }
+
+// Authorization predicate for trip-mutation endpoints (edit pickup/dropoff,
+// add/remove stops, mint stop-passenger links, invite-guest, etc).
+//
+// Mark = always allowed.
+// Passenger = allowed when their token's trip_id matches the trip being acted on.
+// Anyone else (Dio, expired, mismatched-trip passenger) = rejected.
+//
+// Single-trip-mode means there is at most one active trip at a time. A stale
+// passenger token from a completed trip will still resolve here as long as the
+// link itself hasn't expired (16h window) AND the requested trip_id matches.
+// Callers can layer their own status check on top if they want to forbid
+// edits to a completed/cancelled trip.
+export async function requireTripActor(
+  token: string,
+  tripId: string,
+): Promise<SessionContext | null> {
+  const ctx = await loadSession(token);
+  if (!ctx) return null;
+  if (ctx.role === "mark") return ctx;
+  if (ctx.role === "passenger" && ctx.trip_id === tripId) return ctx;
+  return null;
+}

@@ -43,7 +43,25 @@ import {
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
 
-export default function MarkApp({ token, name }: { token: string; name: string }) {
+// Same app shell serves Mark and passengers. Role-aware bits:
+//   - Settings tab on Mark = full controls (link minting, Bouncie status,
+//     driver management). On passenger = just the push-notifications
+//     toggle (everything else is owner-only).
+//   - Trip-write actions (pickup edit, stop add/remove, invite-guest) are
+//     gated server-side via requireTripActor — both roles can edit the
+//     single in-flight trip, neither can affect anything else.
+// Single-trip-mode means there is no other-trip / your-trip distinction:
+// at any moment there is one trip and both Mark + that trip's passenger
+// are co-controllers of it.
+export default function MarkApp({
+  token,
+  name,
+  role = "mark",
+}: {
+  token: string;
+  name: string;
+  role?: "mark" | "passenger";
+}) {
   const { pos } = usePosition(token, 8000);
   const { trips, refresh } = useTrips(token, 5000);
   // Restore tab + open trip on refresh so reload doesn't dump us back to the map.
@@ -106,14 +124,21 @@ export default function MarkApp({ token, name }: { token: string; name: string }
       </div>
       <div className={tab === "settings" ? "flex-1 overflow-y-auto" : "hidden"}>
         <ScrollableTab>
-          <SettingsTab token={token} origin={origin} />
+          <SettingsTab token={token} origin={origin} role={role} />
         </ScrollableTab>
       </div>
 
       <nav className="z-40 border-t border-zinc-900 bg-zinc-950/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl">
           <TabButton active={tab === "map"} onClick={() => setTab("map")} icon={<MapIcon size={20} />} label="Map" />
-          <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
+          {/* Driver chat = Mark <-> Dio coordination. Passengers don't
+              have a role-aligned identity in that thread, so hide the
+              tab for them. They have Help (cabin assistant) for
+              in-cabin questions; urgent driver coordination can happen
+              out-of-band. */}
+          {role === "mark" && (
+            <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageCircle size={20} />} label="Chat" badge={unreadDriver} />
+          )}
           <TabButton active={tab === "help"} onClick={() => setTab("help")} icon={<HelpCircle size={20} />} label="Help" />
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={20} />} label="Settings" />
         </div>
@@ -1604,7 +1629,26 @@ function getGps(): Promise<{ lat: number; lng: number }> {
   });
 }
 
-function SettingsTab({ token, origin }: { token: string; origin: string }) {
+function SettingsTab({
+  token,
+  origin,
+  role,
+}: {
+  token: string;
+  origin: string;
+  role: "mark" | "passenger";
+}) {
+  // Passengers see ONLY the push-notifications toggle. Everything else
+  // (insights, Bouncie credentials, link minting, Dio status editor) is
+  // owner-only. Keeps the surface identical between roles otherwise so
+  // the same component serves both apps.
+  if (role === "passenger") {
+    return (
+      <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
+        <PushToggle token={token} />
+      </main>
+    );
+  }
   return (
     <main className="mx-auto max-w-3xl space-y-3 px-3 pb-6 pt-3">
       <InsightsCard token={token} />
