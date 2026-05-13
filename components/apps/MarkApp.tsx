@@ -16,7 +16,6 @@ import TripRecapCard from "@/components/TripRecapCard";
 import LeaveByCard from "@/components/LeaveByCard";
 import FuelAlertCard from "@/components/FuelAlertCard";
 import EtaCard from "@/components/EtaCard";
-import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
 import SmartStop from "@/components/SmartStop";
@@ -1748,10 +1747,6 @@ function SettingsTab({
       <PushToggle token={token} />
       <BouncieConnectCard token={token} />
       <LinkGenerator token={token} origin={origin} />
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4">
-        <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Driver status</div>
-        <DioStatusBar token={token} editable={true} />
-      </div>
     </main>
   );
 }

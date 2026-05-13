@@ -9,15 +9,6 @@ export type TripStatus =
   | "complete"
   | "cancelled";
 
-export type DioStatusEmoji =
-  | "driving"
-  | "idle"
-  | "fueling"
-  | "lunch"
-  | "parked"
-  | "traffic"
-  | "off";
-
 export type IssueKind =
   | "dent"
   | "noise"
@@ -71,12 +62,6 @@ export interface VanPosition {
   battery_v: number | null;
   mileage: number | null;
   ignition: boolean;
-  updated_at: string;
-}
-
-export interface DioStatus {
-  emoji: DioStatusEmoji;
-  label: string;
   updated_at: string;
 }
 

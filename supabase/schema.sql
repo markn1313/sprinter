@@ -70,15 +70,6 @@ create table if not exists van_position (
 
 insert into van_position (id) values (1) on conflict (id) do nothing;
 
-create table if not exists dio_status (
-  id integer primary key check (id = 1),
-  emoji text not null default 'idle',
-  label text not null default 'Idle',
-  updated_at timestamptz not null default now()
-);
-
-insert into dio_status (id) values (1) on conflict (id) do nothing;
-
 create table if not exists dio_settings (
   id integer primary key check (id = 1),
   hourly_rate_cents integer not null default 3500,
@@ -126,5 +117,4 @@ insert into bouncie_credentials (id) values (1) on conflict (id) do nothing;
 
 -- Realtime: enable for live dashboards
 alter publication supabase_realtime add table van_position;
-alter publication supabase_realtime add table dio_status;
 alter publication supabase_realtime add table trips;
