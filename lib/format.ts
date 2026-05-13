@@ -151,16 +151,6 @@ export function compactAddr(addr: string | null | undefined): string {
   return s;
 }
 
-// Drop the city when even the abbreviated form still overflows. Keeps
-// the leading "<number> <street>" — the only bit Mark needs to recognize
-// where he's going.
-export function compactAddrNoCity(addr: string | null | undefined): string {
-  if (!addr) return "";
-  const c = compactAddr(addr);
-  const idx = c.indexOf(",");
-  return idx > 0 ? c.slice(0, idx).trim() : c;
-}
-
 export function durationMinutes(startIso: string | null, endIso: string | null = null): number | null {
   if (!startIso) return null;
   const start = new Date(startIso).getTime();
