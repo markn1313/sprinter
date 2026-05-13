@@ -22,7 +22,13 @@ export interface DestEntry {
 export interface InsightsData {
   today: InsightStats;
   week: InsightStats;
+  month: InsightStats;
   top_destinations: DestEntry[];
+  fuel?: {
+    price_per_gal: number;
+    source: "eia" | "fallback" | "cache_stale" | "manual";
+    effective_date: string | null;
+  };
 }
 
 export function useInsights(token: string, intervalMs = 60_000) {

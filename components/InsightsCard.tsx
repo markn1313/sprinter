@@ -18,13 +18,21 @@ export default function InsightsCard({ token }: { token: string }) {
     <div className="space-y-3">
       <StatBlock label="Last 24h" stats={data.today} accent="emerald" />
       <StatBlock label="Last 7 days" stats={data.week} accent="blue" />
+      <StatBlock label="Last 30 days" stats={data.month} accent="violet" />
+      {data.fuel && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-500">
+          Diesel pricing: ${data.fuel.price_per_gal.toFixed(2)}/gal (CA retail
+          {data.fuel.effective_date ? `, week of ${data.fuel.effective_date}` : ""},
+          {data.fuel.source === "eia" ? " EIA" : data.fuel.source === "cache_stale" ? " EIA cached" : data.fuel.source === "manual" ? " manual" : " fallback"})
+        </div>
+      )}
     </div>
   );
 }
 
-function StatBlock({ label, stats, accent }: { label: string; stats: InsightStats; accent: "emerald" | "blue" }) {
-  const accentText = accent === "emerald" ? "text-emerald-300" : "text-blue-300";
-  const accentBorder = accent === "emerald" ? "border-emerald-700/40" : "border-blue-700/40";
+function StatBlock({ label, stats, accent }: { label: string; stats: InsightStats; accent: "emerald" | "blue" | "violet" }) {
+  const accentText = accent === "emerald" ? "text-emerald-300" : accent === "blue" ? "text-blue-300" : "text-violet-300";
+  const accentBorder = accent === "emerald" ? "border-emerald-700/40" : accent === "blue" ? "border-blue-700/40" : "border-violet-700/40";
   return (
     <div className={`rounded-2xl border ${accentBorder} bg-zinc-950/80 p-4`}>
       <div className="text-xs uppercase tracking-wider text-zinc-500">{label}</div>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
+import { refreshDieselPrice } from "@/lib/fuel-price";
 
 export const dynamic = "force-dynamic";
 
@@ -106,11 +107,17 @@ export async function GET(req: Request) {
     .is("acknowledged_at", null)
     .select("id");
 
+  // 4) Refresh CA diesel retail price from EIA so insights doesn't
+  // have to do the EIA round-trip on the user-facing request path.
+  // EIA publishes weekly but a daily refresh is cheap insurance.
+  const fuel = await refreshDieselPrice();
+
   return NextResponse.json({
     ok: true,
     at: nowIso,
     cancelled_pre_onboard: preStale.length,
     cancelled_mid_trip: midStale.length,
     cabin_requests_acked: ackedCabin?.length ?? 0,
+    fuel_price: { price: fuel.price, source: fuel.source, effective_date: fuel.effective_date },
   });
 }

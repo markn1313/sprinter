@@ -2,28 +2,25 @@ import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchBouncieTrips, type BouncieTrip } from "@/lib/bouncie";
+import { getDieselPrice } from "@/lib/fuel-price";
 
 export const dynamic = "force-dynamic";
 
 // Driving insights for the settings card. Numbers are pulled DIRECTLY
 // from Bouncie's /v1/trips endpoint — they're already authoritative
 // per-trip metrics (distance, totalIdleDuration, fuelConsumed,
-// averageSpeed) computed from the ECU + odometer. We were previously
-// approximating these from raw vehicle_positions samples, which was
-// strictly less accurate AND brittle to polling-rate changes. Now:
+// averageSpeed) computed from the ECU + odometer.
 //
 //   miles            sum(distance) over Bouncie trips in window
 //   driving_minutes  sum((endTime - startTime) - totalIdleDuration)
 //   idle_minutes     sum(totalIdleDuration)
 //   avg_speed_mph    distance-weighted avg of averageSpeed
-//   fuel_cost        sum(fuelConsumed) × $/gal (no MPG estimation
-//                    needed — Bouncie reports actual gallons used)
+//   fuel_cost        sum(fuelConsumed) × current CA diesel $/gal
+//                    (DB-cached price from EIA, see lib/fuel-price.ts)
 //
-// Bouncie's /v1/trips has a 7-day max span per request. "Today" and
-// "This week" both fit; we still pass tomorrow's date as ends-before
-// so trips that just ended are included.
-
-const FUEL_PRICE_PER_GAL = 5; // CA diesel ballpark; tune as needed
+// Bouncie's /v1/trips has a 7-day max span per request. 24h + 7-day
+// windows each fit in one call; the 30-day window is built from 5
+// parallel weekly calls and merged.
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -37,7 +34,7 @@ interface WindowAgg {
   fuel_cost_dollars: number;
 }
 
-function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
+function aggregateBouncieTrips(trips: BouncieTrip[], pricePerGal: number): WindowAgg {
   if (trips.length === 0) {
     return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0 };
   }
@@ -71,8 +68,37 @@ function aggregateBouncieTrips(trips: BouncieTrip[]): WindowAgg {
     driving_minutes: Math.round(drivingSec / 60),
     idle_minutes: Math.round(idleSec / 60),
     avg_speed_mph: speedWeight > 0 ? +(speedWeighted / speedWeight).toFixed(1) : 0,
-    fuel_cost_dollars: +(fuelGal * FUEL_PRICE_PER_GAL).toFixed(2),
+    fuel_cost_dollars: +(fuelGal * pricePerGal).toFixed(2),
   };
+}
+
+// Fetch trips covering an arbitrary span by issuing parallel ≤7-day
+// Bouncie calls (their hard per-request cap) and merging the results.
+// Used for the 30-day window; the 24h and 7d windows fit in one call.
+async function fetchTripsOverSpan(spanDays: number, anchor: Date): Promise<BouncieTrip[]> {
+  const tomorrow = new Date(anchor.getTime() + 86_400_000);
+  const windowStart = new Date(anchor.getTime() - spanDays * 86_400_000);
+  const buckets: { startsAfter: string; endsBefore: string }[] = [];
+  let cursorEnd = tomorrow;
+  while (cursorEnd > windowStart) {
+    const start = new Date(Math.max(windowStart.getTime(), cursorEnd.getTime() - 7 * 86_400_000));
+    buckets.push({ startsAfter: ymd(start), endsBefore: ymd(cursorEnd) });
+    cursorEnd = start;
+  }
+  const results = await Promise.all(buckets.map((b) => fetchBouncieTrips(b)));
+  // De-dup by transactionId — Bouncie won't return the same trip in two
+  // adjacent windows, but be defensive in case start/end boundaries
+  // overlap on the same date.
+  const seen = new Set<string>();
+  const merged: BouncieTrip[] = [];
+  for (const batch of results) {
+    for (const t of batch ?? []) {
+      if (seen.has(t.transactionId)) continue;
+      seen.add(t.transactionId);
+      merged.push(t);
+    }
+  }
+  return merged;
 }
 
 export async function GET(req: Request) {
@@ -84,23 +110,23 @@ export async function GET(req: Request) {
   const sb = supabaseAdmin();
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 86_400_000);
-  // Rolling windows anchored to NOW (not calendar day boundaries).
-  // Bouncie's /v1/trips takes ymd dates only, so we over-query by
-  // ~one calendar day on each side and filter precisely by endTime.
+  // Rolling cutoffs anchored to NOW. Bouncie's /v1/trips takes ymd
+  // dates only, so we over-query and filter precisely by endTime.
   const cutoff24h = new Date(now.getTime() - 24 * 3600_000);
   const cutoff7d = new Date(now.getTime() - 7 * 86_400_000);
-  const startDate24h = new Date(cutoff24h.getTime() - 86_400_000); // pad one day back so trips crossing the cutoff are included
-  const startDate7d = new Date(tomorrow.getTime() - 7 * 86_400_000); // 7-day Bouncie cap; covers everything in cutoff7d window
+  const cutoff30d = new Date(now.getTime() - 30 * 86_400_000);
 
-  const [last24hRaw, last7dRaw] = await Promise.all([
-    fetchBouncieTrips({
-      startsAfter: ymd(startDate24h),
-      endsBefore: ymd(tomorrow),
-    }),
-    fetchBouncieTrips({
-      startsAfter: ymd(startDate7d),
-      endsBefore: ymd(tomorrow),
-    }),
+  // Run the three Bouncie windows + the price lookup in parallel.
+  // 24h and 7d fit in a single Bouncie call each; the 30-day window
+  // builds from 5 parallel weekly calls inside fetchTripsOverSpan.
+  const startDate24h = new Date(cutoff24h.getTime() - 86_400_000);
+  const startDate7d = new Date(tomorrow.getTime() - 7 * 86_400_000);
+
+  const [last24hRaw, last7dRaw, last30dRaw, fuel] = await Promise.all([
+    fetchBouncieTrips({ startsAfter: ymd(startDate24h), endsBefore: ymd(tomorrow) }),
+    fetchBouncieTrips({ startsAfter: ymd(startDate7d), endsBefore: ymd(tomorrow) }),
+    fetchTripsOverSpan(30, now),
+    getDieselPrice(),
   ]);
 
   // Filter to trips whose endTime falls within the rolling window.
@@ -112,18 +138,20 @@ export async function GET(req: Request) {
   };
   const last24hTrips = (last24hRaw ?? []).filter(within(cutoff24h.getTime()));
   const last7dTrips = (last7dRaw ?? []).filter(within(cutoff7d.getTime()));
+  const last30dTrips = last30dRaw.filter(within(cutoff30d.getTime()));
 
-  const today = aggregateBouncieTrips(last24hTrips);
-  const week = aggregateBouncieTrips(last7dTrips);
+  const today = aggregateBouncieTrips(last24hTrips, fuel.price);
+  const week = aggregateBouncieTrips(last7dTrips, fuel.price);
+  const month = aggregateBouncieTrips(last30dTrips, fuel.price);
 
   // Top destinations from trip history (any status — every address
   // sent to is fair game for the frequent-destinations strip).
-  const month = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+  const destSince = new Date(now.getTime() - 30 * 86_400_000).toISOString();
   const [{ data: allTrips }, { data: hiddenRows }] = await Promise.all([
     sb
       .from("trips")
       .select("pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
-      .gte("scheduled_at", month)
+      .gte("scheduled_at", destSince)
       .order("scheduled_at", { ascending: false })
       .limit(300),
     sb.from("hidden_destinations").select("address_key"),
@@ -168,7 +196,13 @@ export async function GET(req: Request) {
   return NextResponse.json({
     today,
     week,
+    month,
     top_destinations: topDestinations,
+    fuel: {
+      price_per_gal: +fuel.price.toFixed(3),
+      source: fuel.source,
+      effective_date: fuel.effective_date,
+    },
     source: "bouncie_trips_api",
   });
 }
