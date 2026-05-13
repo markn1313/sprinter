@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { loadSession } from "@/lib/auth";
 import { getVanPosition } from "@/lib/bouncie";
 import { supabaseAdmin } from "@/lib/supabase";
-import { logVehiclePosition, logTripEvent } from "@/lib/log";
+import { logTripEvent } from "@/lib/log";
 import { deriveHeading } from "@/lib/bearing";
 import { fuseFromPhone } from "@/lib/fuse-position";
 
@@ -152,17 +152,10 @@ export async function GET(req: Request) {
     } catch {
       // ignore
     }
-    logVehiclePosition({
-      source: "bouncie",
-      lat: pos.lat,
-      lng: pos.lng,
-      heading: pos.heading,
-      speed_mph: pos.speed_mph,
-      fuel_pct: pos.fuel_pct,
-      ignition: pos.ignition,
-      mileage: pos.mileage,
-      trip_id: activeTrip?.id,
-    });
+    // No vehicle_positions write here — the Bouncie webhook already
+    // captured this sample when the dongle reported it. Writing again on
+    // every client poll would duplicate every Bouncie sample 5-10× and
+    // bloat the timeseries with no information gain.
 
     // Auto-advance based on geofence (best-effort, don't block response)
     if (activeTrip) {

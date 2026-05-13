@@ -24,15 +24,17 @@ export const dynamic = "force-dynamic";
 //   3. Cabin requests unacknowledged for more than CABIN_STALE_MINUTES.
 //      Don't want them blinking on Dio's screen forever.
 //
-//   4. vehicle_positions older than POSITIONS_RETENTION_DAYS. The
-//      timeseries is append-only and grows ~hundreds of rows / hour
-//      when Bouncie's webhook is active; prune to keep Supabase
-//      storage and realtime payload sizes sane.
+// vehicle_positions are kept INDEFINITELY by design — once we
+// throttled the writes (skip near-duplicate samples in the webhook +
+// dropped /api/position's duplicate write entirely), the table grows
+// at ~10k rows/day instead of ~159k, which means even 10 years of
+// data fits inside the 8 GB Supabase Pro allowance for $0 extra.
+// Keeping every Bouncie + phone GPS sample lets Mark reconstruct ANY
+// trip's exact path + speed + fuel curve at any time in the future.
 
 const PRE_STALE_HOURS = 2;
 const MID_STALE_HOURS = 6;
 const CABIN_STALE_MINUTES = 30;
-const POSITIONS_RETENTION_DAYS = 30;
 
 interface StaleTrip {
   id: string;
@@ -55,7 +57,6 @@ export async function GET(req: Request) {
   const preCutoff = new Date(now.getTime() - PRE_STALE_HOURS * 3600_000).toISOString();
   const midCutoff = new Date(now.getTime() - MID_STALE_HOURS * 3600_000).toISOString();
   const cabinCutoff = new Date(now.getTime() - CABIN_STALE_MINUTES * 60_000).toISOString();
-  const positionsCutoff = new Date(now.getTime() - POSITIONS_RETENTION_DAYS * 86400_000).toISOString();
 
   // 1) Stale pre-onboard trips
   const { data: pre } = await sb
@@ -105,19 +106,11 @@ export async function GET(req: Request) {
     .is("acknowledged_at", null)
     .select("id");
 
-  // 4) Prune old vehicle_positions. Supabase doesn't return a count
-  // by default; we just delete and report based on rowsdeleted.
-  const { count: prunedPositions } = await sb
-    .from("vehicle_positions")
-    .delete({ count: "exact" })
-    .lt("recorded_at", positionsCutoff);
-
   return NextResponse.json({
     ok: true,
     at: nowIso,
     cancelled_pre_onboard: preStale.length,
     cancelled_mid_trip: midStale.length,
     cabin_requests_acked: ackedCabin?.length ?? 0,
-    positions_pruned: prunedPositions ?? 0,
   });
 }

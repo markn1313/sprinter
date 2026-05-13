@@ -161,7 +161,76 @@ export async function POST(req: Request) {
   // we can't write, log it and still return 200 so Bouncie keeps sending.
   try {
     const sb = supabaseAdmin();
-    const rows = samples.map((s) => ({
+
+    // Throttle the bulk insert — Bouncie often sends ~10s blocks of
+    // sub-second-spaced samples. Storing every one of them blows up
+    // vehicle_positions with redundant data that has no reconstruction
+    // value. Walk the batch in time order and keep a sample only when
+    // it meaningfully differs from the previous KEPT sample (5m move
+    // OR 1mph speed change OR 0.5pp fuel change OR 3s gap).
+    const ordered = samples.slice().sort(
+      (a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime(),
+    );
+    // Anchor the throttle against the latest Bouncie row already in
+    // the DB so back-to-back webhook deliveries don't sneak duplicates
+    // across batch boundaries.
+    const { data: lastStored } = await sb
+      .from("vehicle_positions")
+      .select("lat,lng,speed_mph,fuel_pct,recorded_at")
+      .eq("source", "bouncie")
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6_371_000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    type PrevShape = { lat: number; lng: number; speed_mph: number | null; fuel_pct: number | null; recorded_at: string } | null;
+    let prev: PrevShape = lastStored
+      ? {
+          lat: lastStored.lat as number,
+          lng: lastStored.lng as number,
+          speed_mph: lastStored.speed_mph as number | null,
+          fuel_pct: lastStored.fuel_pct as number | null,
+          recorded_at: lastStored.recorded_at as string,
+        }
+      : null;
+    const kept: typeof ordered = [];
+    for (const s of ordered) {
+      if (s.lat == null || s.lng == null) continue;
+      if (!prev) {
+        kept.push(s);
+        prev = { lat: s.lat, lng: s.lng, speed_mph: s.speed_mph, fuel_pct: s.fuel_pct, recorded_at: s.recorded_at };
+        continue;
+      }
+      const ageMs = new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime();
+      const movedM = haversineM(prev.lat, prev.lng, s.lat, s.lng);
+      const dSpeed = Math.abs((s.speed_mph ?? 0) - (prev.speed_mph ?? 0));
+      const dFuel = Math.abs((s.fuel_pct ?? 0) - (prev.fuel_pct ?? 0));
+      if (ageMs >= 3000 || movedM >= 5 || dSpeed >= 1 || dFuel >= 0.005) {
+        kept.push(s);
+        prev = { lat: s.lat, lng: s.lng, speed_mph: s.speed_mph, fuel_pct: s.fuel_pct, recorded_at: s.recorded_at };
+      }
+    }
+
+    // Look up the active trip once and tag every kept row so per-trip
+    // reconstruction queries can filter without time-window guessing.
+    const { data: activeTrip } = await sb
+      .from("trips")
+      .select("id")
+      .in("status", ["scheduled", "dispatched", "at_pickup", "onboard", "at_dropoff"])
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const tripId = (activeTrip?.id as string | null) ?? null;
+
+    const rows = kept.map((s) => ({
       source: "bouncie" as const,
       lat: s.lat,
       lng: s.lng,
@@ -171,8 +240,11 @@ export async function POST(req: Request) {
       mileage: s.mileage,
       ignition: s.ignition,
       recorded_at: s.recorded_at,
+      trip_id: tripId,
     }));
-    await sb.from("vehicle_positions").insert(rows);
+    if (rows.length > 0) {
+      await sb.from("vehicle_positions").insert(rows);
+    }
 
     const latest = samples.reduce((a, b) => (a.recorded_at > b.recorded_at ? a : b));
     await sb
