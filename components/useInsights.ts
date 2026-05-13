@@ -9,6 +9,9 @@ export interface InsightStats {
   idle_minutes: number;
   avg_speed_mph: number;
   fuel_cost_dollars: number;
+  // Per-window diesel rate applied to fuel_cost. Latest EIA value
+  // for the 24h window; average over the window for 7d / 30d.
+  fuel_price_per_gal: number;
 }
 
 export interface DestEntry {

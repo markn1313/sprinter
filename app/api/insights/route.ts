@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchBouncieTrips, type BouncieTrip } from "@/lib/bouncie";
-import { getDieselPrice } from "@/lib/fuel-price";
+import { getDieselPrice, getAvgDieselPrice } from "@/lib/fuel-price";
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +32,16 @@ interface WindowAgg {
   idle_minutes: number;
   avg_speed_mph: number;
   fuel_cost_dollars: number;
+  // Per-window diesel rate applied to fuel_cost — for "Last 24h"
+  // this is the latest EIA datapoint, for "Last 7 days" / "Last 30
+  // days" it's the average over the window. Exposed so the UI can
+  // show "@ $X.XX/gal" beside each box's fuel total.
+  fuel_price_per_gal: number;
 }
 
 function aggregateBouncieTrips(trips: BouncieTrip[], pricePerGal: number): WindowAgg {
   if (trips.length === 0) {
-    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0 };
+    return { miles: 0, driving_minutes: 0, idle_minutes: 0, avg_speed_mph: 0, fuel_cost_dollars: 0, fuel_price_per_gal: +pricePerGal.toFixed(3) };
   }
   let miles = 0;
   let idleSec = 0;
@@ -69,6 +74,7 @@ function aggregateBouncieTrips(trips: BouncieTrip[], pricePerGal: number): Windo
     idle_minutes: Math.round(idleSec / 60),
     avg_speed_mph: speedWeight > 0 ? +(speedWeighted / speedWeight).toFixed(1) : 0,
     fuel_cost_dollars: +(fuelGal * pricePerGal).toFixed(2),
+    fuel_price_per_gal: +pricePerGal.toFixed(3),
   };
 }
 
@@ -122,11 +128,16 @@ export async function GET(req: Request) {
   const startDate24h = new Date(cutoff24h.getTime() - 86_400_000);
   const startDate7d = new Date(tomorrow.getTime() - 7 * 86_400_000);
 
-  const [last24hRaw, last7dRaw, last30dRaw, fuel] = await Promise.all([
+  const [last24hRaw, last7dRaw, last30dRaw, fuel24h, fuel7d, fuel30d] = await Promise.all([
     fetchBouncieTrips({ startsAfter: ymd(startDate24h), endsBefore: ymd(tomorrow) }),
     fetchBouncieTrips({ startsAfter: ymd(startDate7d), endsBefore: ymd(tomorrow) }),
     fetchTripsOverSpan(30, now),
+    // 24h price = most recent EIA datapoint (EIA is weekly, so
+    // there's never more than one within 24h).
     getDieselPrice(),
+    // 7d / 30d averages over their respective windows.
+    getAvgDieselPrice(7),
+    getAvgDieselPrice(30),
   ]);
 
   // Filter to trips whose endTime falls within the rolling window.
@@ -140,9 +151,9 @@ export async function GET(req: Request) {
   const last7dTrips = (last7dRaw ?? []).filter(within(cutoff7d.getTime()));
   const last30dTrips = last30dRaw.filter(within(cutoff30d.getTime()));
 
-  const today = aggregateBouncieTrips(last24hTrips, fuel.price);
-  const week = aggregateBouncieTrips(last7dTrips, fuel.price);
-  const month = aggregateBouncieTrips(last30dTrips, fuel.price);
+  const today = aggregateBouncieTrips(last24hTrips, fuel24h.price);
+  const week = aggregateBouncieTrips(last7dTrips, fuel7d.price);
+  const month = aggregateBouncieTrips(last30dTrips, fuel30d.price);
 
   // Top destinations from trip history (any status — every address
   // sent to is fair game for the frequent-destinations strip).
@@ -199,9 +210,12 @@ export async function GET(req: Request) {
     month,
     top_destinations: topDestinations,
     fuel: {
-      price_per_gal: +fuel.price.toFixed(3),
-      source: fuel.source,
-      effective_date: fuel.effective_date,
+      // Backwards-compatible top-level fuel block — represents the
+      // "current" rate (Last 24h). Each window also carries its own
+      // fuel_price_per_gal for per-window averages (see WindowAgg).
+      price_per_gal: +fuel24h.price.toFixed(3),
+      source: fuel24h.source,
+      effective_date: fuel24h.effective_date,
     },
     source: "bouncie_trips_api",
   });

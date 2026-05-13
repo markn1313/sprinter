@@ -17,13 +17,13 @@ export default function InsightsCard({ token }: { token: string }) {
   const fuel = data.fuel ?? null;
   return (
     <div className="space-y-3">
-      <StatBlock label="Last 24h" stats={data.today} fuel={fuel} accent="emerald" />
-      <StatBlock label="Last 7 days" stats={data.week} fuel={fuel} accent="blue" />
-      <StatBlock label="Last 30 days" stats={data.month} fuel={fuel} accent="violet" />
+      <StatBlock label="Last 24h" stats={data.today} accent="emerald" />
+      <StatBlock label="Last 7 days" stats={data.week} accent="blue" />
+      <StatBlock label="Last 30 days" stats={data.month} accent="violet" />
       {fuel && (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[11px] text-zinc-500">
           Diesel pricing source: CA retail
-          {fuel.effective_date ? `, week of ${fuel.effective_date}` : ""},
+          {fuel.effective_date ? `, latest week of ${fuel.effective_date}` : ""},
           {fuel.source === "eia" ? " EIA" : fuel.source === "cache_stale" ? " EIA cached" : fuel.source === "manual" ? " manual" : " fallback"}
         </div>
       )}
@@ -31,21 +31,13 @@ export default function InsightsCard({ token }: { token: string }) {
   );
 }
 
-interface FuelMeta {
-  price_per_gal: number;
-  source: "eia" | "fallback" | "cache_stale" | "manual";
-  effective_date: string | null;
-}
-
 function StatBlock({
   label,
   stats,
-  fuel,
   accent,
 }: {
   label: string;
   stats: InsightStats;
-  fuel: FuelMeta | null;
   accent: "emerald" | "blue" | "violet";
 }) {
   const accentText = accent === "emerald" ? "text-emerald-300" : accent === "blue" ? "text-blue-300" : "text-violet-300";
@@ -79,11 +71,9 @@ function StatBlock({
           label="Fuel"
           value={`$${stats.fuel_cost_dollars}`}
           accent={accentText}
-          // Surface the per-gallon price right beneath the total so
-          // it's clear which rate produced this cost — same source
-          // for all three windows, but rendered per-box per Mark's
-          // request. Skipped when fuel meta is absent (older API).
-          sub={fuel ? `@ $${fuel.price_per_gal.toFixed(2)}/gal` : undefined}
+          // Per-window diesel rate. 24h = latest EIA datapoint; 7d /
+          // 30d = average of weekly EIA datapoints in the window.
+          sub={`@ $${stats.fuel_price_per_gal.toFixed(2)}/gal`}
         />
         {stats.idle_minutes > 0 && (
           <Cell
@@ -123,7 +113,7 @@ function Cell({
         <span className={`font-mono text-lg font-bold tabular-nums ${accent}`}>{value}</span>
         {unit && <span className="text-[10px] text-zinc-500">{unit}</span>}
       </div>
-      {sub && <div className="text-[10px] text-zinc-500 tabular-nums">{sub}</div>}
+      {sub && <div className="text-xs font-medium text-zinc-400 tabular-nums">{sub}</div>}
     </div>
   );
 }
