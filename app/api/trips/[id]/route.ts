@@ -3,6 +3,7 @@ import { requireMark, requireTripActor } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
 import { logTripEvent } from "@/lib/log";
+import { notifyDriverPlanChange } from "@/lib/push";
 
 export async function PATCH(
   req: Request,
@@ -93,6 +94,22 @@ export async function PATCH(
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   logTripEvent({ trip_id: id, kind: "edited", actor_token: ctx.token, payload: body as Record<string, unknown> });
+
+  // Only push the driver when the change affects WHERE he's driving.
+  // Edits to scheduled_at / notes / passenger_name aren't worth a
+  // notification — they don't change his next destination.
+  const movedPickup = body.pickup_lat !== undefined || body.pickup_lng !== undefined || body.pickup_address !== undefined;
+  const movedDropoff = body.dropoff_lat !== undefined || body.dropoff_lng !== undefined || body.dropoff_address !== undefined;
+  if (movedPickup || movedDropoff) {
+    const what = movedPickup && movedDropoff ? "Pickup and dropoff updated" : movedPickup ? "Pickup moved" : "Dropoff moved";
+    const where = movedPickup
+      ? (update.pickup_address as string | undefined) ?? data?.pickup_address
+      : (update.dropoff_address as string | undefined) ?? data?.dropoff_address;
+    void notifyDriverPlanChange({
+      title: what,
+      body: where ?? "Open the app for the new address",
+    });
+  }
   return NextResponse.json({ trip: data });
 }
 

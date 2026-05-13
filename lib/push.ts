@@ -77,3 +77,16 @@ export async function sendPushToTripPassenger(
     .maybeSingle();
   if (trip?.passenger_link_token) await sendPushToToken(trip.passenger_link_token, payload);
 }
+
+// Notify the driver that the trip plan has changed — new trip
+// dispatched, pickup/dropoff coords moved, stops added/removed.
+// Mark / passengers see these changes live on their map, but Dio is
+// usually heads-down in Google Maps and needs a push to know to look.
+// Tag is shared so multiple plan-change events within a short window
+// collapse to a single notification on the device.
+export async function notifyDriverPlanChange(payload: {
+  title: string;
+  body: string;
+}): Promise<void> {
+  await sendPushToRole("dio", { ...payload, tag: "trip-plan-change" });
+}

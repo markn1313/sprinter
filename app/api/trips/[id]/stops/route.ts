@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { geocode } from "@/lib/geocode";
 import { optimizeStops } from "@/lib/routing";
 import { logTripEvent } from "@/lib/log";
+import { notifyDriverPlanChange } from "@/lib/push";
 
 interface Stop {
   id: string;
@@ -87,6 +88,10 @@ export async function POST(
   const { error } = await sb.from("trips").update({ stops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   logTripEvent({ trip_id: id, kind: "stop_added", actor_token: ctx.token, payload: { stop: newStop } });
+  void notifyDriverPlanChange({
+    title: newStop.passenger ? `Pickup added: ${newStop.passenger}` : "Stop added",
+    body: newStop.address,
+  });
   return NextResponse.json({ stop: newStop });
 }
 
@@ -187,6 +192,16 @@ export async function PUT(
     actor_token: ctx.token,
     payload: { stops: next, optimized: next !== filled },
   });
+  // Stops replaced wholesale — driver's next destination almost
+  // certainly just changed. Title-case the first pending stop so the
+  // lock-screen banner is meaningful.
+  const firstPending = next.find((s) => !s.arrived_at && s.lat != null && s.lng != null);
+  if (firstPending) {
+    void notifyDriverPlanChange({
+      title: firstPending.passenger ? `Next pickup: ${firstPending.passenger}` : "Stops updated",
+      body: firstPending.address,
+    });
+  }
   return NextResponse.json({ stops: next });
 }
 
@@ -206,9 +221,15 @@ export async function DELETE(
 
   const sb = supabaseAdmin();
   const { data: trip } = await sb.from("trips").select("stops").eq("id", id).single();
-  const stops: Stop[] = ((trip?.stops as Stop[] | undefined) ?? []).filter((s) => s.id !== stopId);
+  const prevStops = (trip?.stops as Stop[] | undefined) ?? [];
+  const removed = prevStops.find((s) => s.id === stopId);
+  const stops: Stop[] = prevStops.filter((s) => s.id !== stopId);
   const { error } = await sb.from("trips").update({ stops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   logTripEvent({ trip_id: id, kind: "stop_removed", actor_token: ctx.token, payload: { stop_id: stopId } });
+  void notifyDriverPlanChange({
+    title: removed?.passenger ? `Pickup removed: ${removed.passenger}` : "Stop removed",
+    body: removed?.address ?? "Trip route updated",
+  });
   return NextResponse.json({ ok: true });
 }

@@ -7,6 +7,7 @@ import { route, Waypoint, STOP_WAIT_SECONDS } from "@/lib/routing";
 import { getVanPosition } from "@/lib/bouncie";
 import { logTripEvent } from "@/lib/log";
 import { cancelOpenTrips } from "@/lib/single-trip";
+import { notifyDriverPlanChange } from "@/lib/push";
 
 export async function POST(req: Request) {
   const auth = req.headers.get("authorization");
@@ -133,6 +134,14 @@ export async function POST(req: Request) {
     });
     await sb.from("trips").update({ passenger_link_token: guestToken }).eq("id", trip.id);
   }
+
+  // Wake Dio — he's probably heads-down in Google Maps. Title/body
+  // optimised for the lock-screen banner so he can decide whether to
+  // tap without unlocking.
+  void notifyDriverPlanChange({
+    title: "New trip",
+    body: `${parsed.passengerName} — pickup ${pickupGeo?.display ?? parsed.pickupHint}`,
+  });
 
   return NextResponse.json({ trip, parsed, guestToken });
 }

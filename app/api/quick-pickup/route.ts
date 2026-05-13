@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { logTripEvent } from "@/lib/log";
 import { cancelOpenTrips } from "@/lib/single-trip";
 import { reverseGeocode } from "@/lib/geocode";
+import { notifyDriverPlanChange } from "@/lib/push";
 
 // Sentinel strings the client sends when the user taps a "pick me up here"
 // or "take me home" button — we reverse-geocode the lat/lng to a real
@@ -120,6 +121,11 @@ export async function POST(req: Request) {
   // "You" pin teleport to the pickup, hides the walk line, and breaks
   // the van→me ETA card. Mark's actual GPS is reported by the browser
   // geolocation watcher via POST /api/mark-location on its own cadence.
+
+  void notifyDriverPlanChange({
+    title: "Pickup request",
+    body: `${requesterName} — pickup ${pickupAddress}`,
+  });
 
   return NextResponse.json({ trip });
 }

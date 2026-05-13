@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trip } from "@/lib/types";
 import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
@@ -107,6 +107,21 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
     });
   }, [showScheduledPickupTime, trip.scheduled_at]);
 
+  // Live "are we on track?" indicator. Compares the trip's committed
+  // time against Mapbox's current ETA. Updates every ETA poll. Green
+  // when on-time or early, red when late. Only shown on the primary
+  // pickup, alongside the scheduled time.
+  const minutesAvailable = eta?.eta_minutes ?? eta?.to_next?.eta_minutes ?? null;
+  const lateness = useMemo<{ tone: "early" | "on" | "late"; label: string } | null>(() => {
+    if (!showScheduledPickupTime || !trip.scheduled_at || minutesAvailable == null) return null;
+    const computedArrivalMs = Date.now() + minutesAvailable * 60_000;
+    const scheduledMs = new Date(trip.scheduled_at).getTime();
+    const deltaMin = Math.round((computedArrivalMs - scheduledMs) / 60_000);
+    if (Math.abs(deltaMin) <= 2) return { tone: "on", label: "On time" };
+    if (deltaMin < 0) return { tone: "early", label: `${Math.abs(deltaMin)} min early` };
+    return { tone: "late", label: `${deltaMin} min late` };
+  }, [showScheduledPickupTime, trip.scheduled_at, minutesAvailable]);
+
   const typeLabel = kind === "pickup" ? "Pickup" : kind === "dropoff" ? "Dropoff" : "Stop";
   const typeTint = kind === "pickup" ? "text-amber-300" : "text-blue-300";
 
@@ -120,8 +135,21 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
         {scheduledTime && (
           <div className="mt-4">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500">Be there at</div>
-            <div className="font-mono text-4xl font-bold tabular-nums leading-none text-emerald-300">
-              {scheduledTime}
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <div className="font-mono text-4xl font-bold tabular-nums leading-none text-emerald-300">
+                {scheduledTime}
+              </div>
+              {lateness && (
+                <div
+                  className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wider ${
+                    lateness.tone === "late"
+                      ? "bg-red-600 text-white"
+                      : "bg-emerald-700 text-emerald-100"
+                  }`}
+                >
+                  {lateness.label}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -259,6 +287,42 @@ function Alerts({ token }: { token: string }) {
   }, [loadChat, loadCabin]);
   useRealtime({ table: "messages", onChange: loadChat });
   useRealtime({ table: "cabin_requests", onChange: loadCabin });
+
+  // When Dio swipes back from Google Maps / lock screen into the app,
+  // refetch immediately so the alerts list isn't lagged by the 8s poll
+  // interval. Push notifications wake him up; this catches state any
+  // time the tab regains visibility (foreground, unlock, app switch).
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        loadChat();
+        loadCabin();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [loadChat, loadCabin]);
+
+  // Vibrate when a new alert lands while the tab is foregrounded.
+  // iOS Safari doesn't support navigator.vibrate yet — silent no-op
+  // there. Android Chrome PWAs do.
+  const lastAlertCountRef = useRef(0);
+  useEffect(() => {
+    const count = chat.filter((m) => m.sender_role !== "dio" && !acked.has(m.id)).length + cabin.length;
+    if (count > lastAlertCountRef.current && typeof navigator !== "undefined") {
+      try {
+        (navigator as Navigator & { vibrate?: (p: number | number[]) => boolean }).vibrate?.([60, 40, 60]);
+      } catch {
+        // ignore
+      }
+    }
+    lastAlertCountRef.current = count;
+  }, [chat, cabin, acked]);
 
   const ackCabin = async (id: string) => {
     setCabin((prev) => prev.filter((r) => r.id !== id));
