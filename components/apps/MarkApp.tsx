@@ -25,7 +25,6 @@ import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { encodePolyline } from "@/lib/routing";
-import { googleMapsMultiStop, googleMapsTo } from "@/lib/maps-link";
 import CabinChat from "@/components/CabinChat";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
@@ -970,20 +969,6 @@ function MapTab({
     }
   };
 
-  const navUrl = useMemo(() => {
-    if (!mapTrip) return null;
-    const wp: Array<{ lat: number; lng: number; label?: string }> = [];
-    if (mapTrip.pickup_lat != null && mapTrip.pickup_lng != null) wp.push({ lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng });
-    stopsArr.forEach((s) => {
-      if (s.lat != null && s.lng != null) wp.push({ lat: s.lat, lng: s.lng });
-    });
-    if (mapTrip.dropoff_lat != null && mapTrip.dropoff_lng != null)
-      wp.push({ lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
-    if (wp.length === 0) return null;
-    if (wp.length === 1) return googleMapsTo(wp[0].lat, wp[0].lng);
-    return googleMapsMultiStop(wp);
-  }, [mapTrip, stopsArr]);
-
   return (
     <div className="relative h-full w-full overflow-hidden">
       <ClientMap
@@ -1096,24 +1081,34 @@ function MapTab({
           onClick={() => focus("auto")}
           title="Auto-fit"
         />
-        {/* Share + Maps — moved here from the right column so the vital
-            chips (fuel/range/speed) stand alone, and so these trip-action
-            chips sit alongside the map-focus buttons (also trip-context).
-            Same h-10 w-10 dimensions as FocusBtn for visual rhythm. */}
+        {/* Share — sits with the map-focus icons so all trip-action
+            chips live in one column. h-10 w-10 to match. */}
         {live && (
           <ShareTripButton token={token} tripId={live.id} compact />
         )}
-        {live && navUrl && (
-          <a
-            href={navUrl}
-            target="_blank"
-            rel="noreferrer"
-            title="Open in Google Maps"
-            aria-label="Maps"
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-700/60 bg-zinc-950/85 text-emerald-300 backdrop-blur hover:bg-zinc-900 active:scale-95"
-          >
-            <Navigation size={16} />
-          </a>
+        {/* "Snap to me" — replaces the old external-Google-Maps link,
+            which was misleading (the Navigation icon reads as 'locate
+            me' everywhere else in iOS) and not actually useful since
+            Mark drives with built-in nav. Two behaviors:
+              • In edit mode (pickup / dropoff / stop): SNAP the
+                violet pin to Mark's current GPS. "Pick me up here" =
+                one tap.
+              • Otherwise: recenter the camera on Mark.
+            Hidden when myGps is unknown — no point offering "snap to
+            me" before the browser geolocation watcher has reported. */}
+        {myGps && (
+          <FocusBtn
+            label={<Navigation size={16} />}
+            onClick={() => {
+              if (inEditMode) {
+                setEditPin({ lat: myGps.lat, lng: myGps.lng });
+                setEditAddress(meAddress ?? null);
+              }
+              setFocusMode("me");
+              setFocusKey((k) => k + 1);
+            }}
+            title={inEditMode ? "Snap pickup to my location" : "Center on me"}
+          />
         )}
       </div>
 
@@ -1389,19 +1384,10 @@ function MapTab({
           <VoiceCabin token={token} tripId={live.id} />
         </div>
       )}
-      {/* Maps fallback — only shows when there's a live trip without an
-          ETA yet. When there's no live trip we don't need a standalone
-          Maps button — the Van-to-you bottom card is the focus. */}
-      {live && !eta && navUrl && (
-        <a
-          href={navUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="absolute right-3 bottom-3 z-30 inline-flex items-center gap-2 rounded-2xl bg-zinc-950/85 px-3 py-2.5 text-sm font-semibold text-emerald-300 backdrop-blur ring-1 ring-emerald-700/60"
-        >
-          <Navigation size={14} /> Maps
-        </a>
-      )}
+      {/* External-Maps fallback removed — Mark's app doesn't need to
+          deep-link out to Google Maps. He drives with built-in nav,
+          and the in-app Van→destination view is the always-available
+          context for waiting passengers. */}
 
       {/* Bottom sheets */}
       {sheet === "dispatch" && <DispatchSheet token={token} onClose={() => setSheet("none")} onDispatched={() => { setSheet("none"); refresh(); }} />}
