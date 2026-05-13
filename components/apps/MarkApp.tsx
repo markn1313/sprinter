@@ -16,7 +16,6 @@ import TripRecapCard from "@/components/TripRecapCard";
 import LeaveByCard from "@/components/LeaveByCard";
 import FuelAlertCard from "@/components/FuelAlertCard";
 import EtaCard from "@/components/EtaCard";
-import VoiceCabin from "@/components/VoiceCabin";
 import DioStatusBar from "@/components/DioStatusBar";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
@@ -1378,12 +1377,10 @@ function MapTab({
         </div>
       )}
 
-      {/* Floating voice cabin button — hold to speak. Live trip only. */}
-      {live && (
-        <div className="absolute right-3 bottom-24 z-30">
-          <VoiceCabin token={token} tripId={live.id} />
-        </div>
-      )}
+      {/* Voice-cabin button retired — climate is one-tap on the right
+          column already, and music / quiet / restroom voice-only commands
+          were faster to just say out loud to Dio. Removing the float
+          frees the bottom-right corner of the map. */}
       {/* External-Maps fallback removed — Mark's app doesn't need to
           deep-link out to Google Maps. He drives with built-in nav,
           and the in-app Van→destination view is the always-available
