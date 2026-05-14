@@ -1106,9 +1106,13 @@ function MapTab({
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
+        // Pin-tap popups are intentionally NOT wired here. The trip
+        // card is the one place to remove / invite a passenger /
+        // reorder stops — the map is for viewing only. The single
+        // exception is `onPinDragEnd`, which lets Mark drag a pin
+        // geographically to nudge its location; that's an interaction
+        // the list can't replicate.
         onPinDragEnd={mapTrip || inEditMode ? handlePinDrag : undefined}
-        onPinRemove={mapTrip && !inEditMode ? removeStopPin : undefined}
-        onPinPassengerSave={mapTrip && !inEditMode ? savePinPassenger : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={45}
