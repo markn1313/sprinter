@@ -67,7 +67,11 @@ export async function POST(
   }
 
   const sb = supabaseAdmin();
-  const { data: trip } = await sb.from("trips").select("stops").eq("id", id).single();
+  const { data: trip } = await sb
+    .from("trips")
+    .select("stops, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng")
+    .eq("id", id)
+    .single();
   const stops: Stop[] = (trip?.stops as Stop[] | undefined) ?? [];
   const newStop: Stop = {
     id: crypto.randomUUID(),
@@ -82,17 +86,79 @@ export async function POST(
     created_by_token: body.created_by_token ?? ctx.token,
     added_at: new Date().toISOString(),
   };
-  // Insert at requested index, or append if not specified / out of range
-  const idx = typeof body.index === "number" ? Math.max(0, Math.min(stops.length, body.index)) : stops.length;
+  // Explicit index → respect caller's chosen position. No explicit
+  // index → append, then auto-optimize the pending stops via Mapbox
+  // Optimized Trips. Mark's UI just adds a stop; he doesn't think
+  // about visit order — the server figures it out so Newport →
+  // Magnolia → De La Nonna stays in the order that minimizes total
+  // drive distance.
+  const explicitIndex = typeof body.index === "number";
+  const idx = explicitIndex ? Math.max(0, Math.min(stops.length, body.index!)) : stops.length;
   stops.splice(idx, 0, newStop);
-  const { error } = await sb.from("trips").update({ stops }).eq("id", id);
+
+  let finalStops: Stop[] = stops;
+  if (
+    !explicitIndex &&
+    newStop.kind === "stop" &&
+    trip?.pickup_lat != null &&
+    trip?.pickup_lng != null &&
+    trip?.dropoff_lat != null &&
+    trip?.dropoff_lng != null
+  ) {
+    const arrivedStops = stops.filter((s) => s.arrived_at != null);
+    const pendingStops = stops.filter(
+      (s) => s.arrived_at == null && s.lat != null && s.lng != null,
+    );
+    if (pendingStops.length >= 2) {
+      // Mapbox source=first pins start, destination=last pins end. We
+      // anchor the start to wherever the van is in the planned sequence
+      // (last arrived stop if any, else trip pickup) — that way mid-trip
+      // adds optimize relative to current progress, not the original
+      // pickup that's already in the rearview.
+      const startPoint =
+        arrivedStops.length > 0
+          ? {
+              lat: arrivedStops[arrivedStops.length - 1].lat as number,
+              lng: arrivedStops[arrivedStops.length - 1].lng as number,
+            }
+          : { lat: trip.pickup_lat as number, lng: trip.pickup_lng as number };
+      const optimized = await optimizeStops(
+        startPoint,
+        { lat: trip.dropoff_lat as number, lng: trip.dropoff_lng as number },
+        pendingStops.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
+      );
+      if (optimized) {
+        const remaining = pendingStops.slice();
+        const reordered: Stop[] = [];
+        for (const wp of optimized) {
+          const i = remaining.findIndex(
+            (s) =>
+              Math.abs((s.lat as number) - wp.lat) < 1e-6 &&
+              Math.abs((s.lng as number) - wp.lng) < 1e-6,
+          );
+          if (i >= 0) {
+            reordered.push(remaining[i]);
+            remaining.splice(i, 1);
+          }
+        }
+        finalStops = [...arrivedStops, ...reordered, ...remaining];
+      }
+    }
+  }
+
+  const { error } = await sb.from("trips").update({ stops: finalStops }).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  logTripEvent({ trip_id: id, kind: "stop_added", actor_token: ctx.token, payload: { stop: newStop } });
+  logTripEvent({
+    trip_id: id,
+    kind: "stop_added",
+    actor_token: ctx.token,
+    payload: { stop: newStop, optimized: finalStops !== stops },
+  });
   void notifyDriverPlanChange({
     title: newStop.passenger ? `Pickup added: ${newStop.passenger}` : "Stop added",
     body: newStop.address,
   });
-  return NextResponse.json({ stop: newStop });
+  return NextResponse.json({ stop: newStop, stops: finalStops });
 }
 
 // PUT replaces the entire stops array atomically — used by trip-detail "Update driver"
@@ -106,10 +172,17 @@ export async function PUT(
   const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const body = (await req.json().catch(() => null)) as { stops?: Stop[] } | null;
+  const body = (await req.json().catch(() => null)) as
+    | { stops?: Stop[]; optimize?: boolean }
+    | null;
   if (!body || !Array.isArray(body.stops)) {
     return NextResponse.json({ error: "missing stops array" }, { status: 400 });
   }
+  // Default: auto-optimize (TripDetailApp's "Update driver" path
+  // wants the route minimized). Manual reorder UI (the up/down + Flag
+  // buttons in TripSheet) passes optimize=false because Mark just
+  // explicitly chose the order and the optimizer would clobber it.
+  const shouldOptimize = body.optimize !== false;
 
   // Geocode any stops missing lat/lng
   const sb = supabaseAdmin();
@@ -151,6 +224,7 @@ export async function PUT(
     .eq("id", id)
     .maybeSingle();
   if (
+    shouldOptimize &&
     trip?.pickup_lat != null &&
     trip?.pickup_lng != null &&
     trip?.dropoff_lat != null &&

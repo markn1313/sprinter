@@ -38,6 +38,9 @@ import {
   MessageCircle,
   HelpCircle,
   Fuel,
+  ChevronUp,
+  ChevronDown,
+  Flag,
 } from "lucide-react";
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
@@ -1677,7 +1680,7 @@ function TripSheet({
 }: {
   token: string;
   trip: Trip;
-  stops: Array<{ id: string; address: string }>;
+  stops: Array<{ id: string; address: string; lat?: number | null; lng?: number | null; arrived_at?: string | null }>;
   onClose: () => void;
   refresh: () => void;
 }) {
@@ -1689,6 +1692,86 @@ function TripSheet({
       lng: r.lng,
     });
     refresh();
+  };
+
+  const [reorderBusy, setReorderBusy] = useState(false);
+
+  // Swap two stops in the stops[] array. Pending stops only — arrived
+  // stops stay pinned in chronological order at the front.
+  const moveStop = async (stopId: string, dir: "up" | "down") => {
+    if (reorderBusy) return;
+    const idx = stops.findIndex((s) => s.id === stopId);
+    if (idx < 0) return;
+    // Can't move arrived stops. Can't cross the arrived/pending boundary.
+    const firstPending = stops.findIndex((s) => !s.arrived_at);
+    if (idx < firstPending) return;
+    const target = dir === "up" ? idx - 1 : idx + 1;
+    if (target < firstPending || target >= stops.length) return;
+    const next = stops.slice();
+    [next[idx], next[target]] = [next[target], next[idx]];
+    setReorderBusy(true);
+    try {
+      await fetch(`/api/trips/${trip.id}/stops`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ stops: next, optimize: false }),
+      });
+      refresh();
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
+  // Promote a pending stop to be the trip's final destination. The
+  // current dropoff is demoted to an intermediate stop (slotted where
+  // the promoted stop was). Common path: Mark adds a destination after
+  // setting an earlier one — the new one should be the end of the trip.
+  const promoteToDropoff = async (stopId: string) => {
+    if (reorderBusy) return;
+    const stop = stops.find((s) => s.id === stopId);
+    if (!stop || stop.lat == null || stop.lng == null) return;
+    setReorderBusy(true);
+    try {
+      // Build the new stops[]: replace this stop with the current
+      // dropoff (demoted to kind=stop). Then PATCH the trip's dropoff
+      // to the promoted stop's coords.
+      const nextStops = stops.map((s) =>
+        s.id === stopId && trip.dropoff_lat != null && trip.dropoff_lng != null
+          ? {
+              ...s,
+              address: trip.dropoff_address ?? s.address,
+              lat: trip.dropoff_lat,
+              lng: trip.dropoff_lng,
+            }
+          : s,
+      );
+      await fetch(`/api/trips/${trip.id}/stops`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ stops: nextStops, optimize: false }),
+      });
+      await fetch(`/api/trips/${trip.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          dropoff_address: stop.address,
+          dropoff_lat: stop.lat,
+          dropoff_lng: stop.lng,
+        }),
+      });
+      refresh();
+    } finally {
+      setReorderBusy(false);
+    }
   };
 
   // Manual cancel escape hatch — for stuck/test trips that the cron
@@ -1716,13 +1799,50 @@ function TripSheet({
   return (
     <Sheet title={`Trip · ${statusLabel(trip.status)}`} onClose={onClose}>
       <div className="text-base font-semibold text-zinc-100">{trip.passenger_name}</div>
-      <div className="mt-1 space-y-0.5 text-sm text-zinc-400">
+      <div className="mt-1 space-y-1 text-sm text-zinc-400">
         {trip.pickup_address && <div>📍 {trip.pickup_address}</div>}
-        {stops.map((s, i) => (
-          <div key={s.id}>
-            {i + 1}. {s.address}
-          </div>
-        ))}
+        {stops.map((s, i) => {
+          const firstPending = stops.findIndex((x) => !x.arrived_at);
+          const isPending = !s.arrived_at;
+          const canUp = isPending && i > firstPending;
+          const canDown = isPending && i < stops.length - 1;
+          return (
+            <div key={s.id} className="flex items-center gap-1.5">
+              <span className="flex-1">
+                {s.arrived_at ? "✓" : `${i + 1}.`} {s.address}
+              </span>
+              {isPending && (
+                <>
+                  <button
+                    onClick={() => moveStop(s.id, "up")}
+                    disabled={!canUp || reorderBusy}
+                    className="rounded p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-25"
+                    aria-label="Move up"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => moveStop(s.id, "down")}
+                    disabled={!canDown || reorderBusy}
+                    className="rounded p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-25"
+                    aria-label="Move down"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  <button
+                    onClick={() => promoteToDropoff(s.id)}
+                    disabled={reorderBusy}
+                    className="rounded p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-25"
+                    aria-label="Make this the final destination"
+                    title="Make this the final destination"
+                  >
+                    <Flag size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
         {trip.dropoff_address && <div>🏁 {trip.dropoff_address}</div>}
       </div>
       <div className="mt-4 space-y-2">
