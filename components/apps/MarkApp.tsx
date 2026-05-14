@@ -1375,6 +1375,23 @@ function MapTab({
             <div className="mt-0.5 truncate text-base font-semibold text-zinc-100 leading-tight">
               {editAddress ?? (editPin ? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}` : "Locating…")}
             </div>
+            {/* Address-input → pin snap. Type a location, tap an
+                autocomplete result, the violet pin jumps to those
+                coords and editAddress updates. Reverse-geocode +
+                route-preview effects automatically refresh because
+                they're keyed on editPin coords. */}
+            <div className="mt-2">
+              <AddressAutocomplete
+                token={token}
+                placeholder="Or type an address"
+                onSelect={(r) => {
+                  setEditPin({ lat: r.lat, lng: r.lng });
+                  setEditAddress(r.display);
+                  setFocusMode("me");
+                  setFocusKey((k) => k + 1);
+                }}
+              />
+            </div>
             {(editRoute.eta_minutes != null || (pickupMode && pickupModeKind === "edit" && editTrip?.scheduled_at)) && (
               <div className="mt-1 flex items-baseline justify-between gap-3 text-sm text-zinc-300">
                 <div>
