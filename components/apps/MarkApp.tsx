@@ -18,7 +18,6 @@ import FuelAlertCard from "@/components/FuelAlertCard";
 import EtaCard from "@/components/EtaCard";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
-import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
@@ -2154,8 +2153,7 @@ function TripSheet({
           </div>
         )}
       </div>
-      <div className="mt-4 space-y-2">
-        <SmartStop token={token} tripId={trip.id} onAdded={refresh} />
+      <div className="mt-4">
         <AddressAutocomplete token={token} onSelect={addStopAddress} placeholder="Add a stop or destination — autocompletes" />
       </div>
       {/* Share live tracking link with anyone, anytime. Mints (or
