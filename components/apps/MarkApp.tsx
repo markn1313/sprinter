@@ -694,20 +694,42 @@ function MapTab({
   }, [live, mapTrip]);
   const pickupModeKind: "edit" | "new" = myStop ? "edit" : "new";
 
-  // Is Mark physically in the van? Hide the Pickup button in that case —
-  // summoning a van you're already inside is meaningless. Two signals:
-  // (a) the trip's status says he's onboard / at_dropoff (he must be
-  // in the van for those), or (b) his GPS is within ~50 m of the van's
-  // position. If we don't have GPS, fall back to the trip-status signal.
+  // Sticky in-van detection: once Mark's GPS comes within 10m of the
+  // van for a given trip, lock him in until the trip ends. Without
+  // the latch, GPS jitter (he goes through a tunnel, sits in a metal
+  // parking garage, etc.) could briefly read >10m apart and flip the
+  // UI back to "Pickup" mid-ride. The latch resets when the trip ID
+  // changes.
+  const [stickyTripId, setStickyTripId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!myGps || !pos || !mapTrip) return;
+    if (stickyTripId === mapTrip.id) return; // already latched for this trip
+    const R = 6_371_000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(pos.lat - myGps.lat);
+    const dLng = toRad(pos.lng - myGps.lng);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
+    const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    if (m < 10) setStickyTripId(mapTrip.id);
+  }, [mapTrip, myGps, pos, stickyTripId]);
+  // Reset the latch when the focal trip changes (or disappears).
+  useEffect(() => {
+    if (mapTrip?.id !== stickyTripId && stickyTripId != null && mapTrip?.id == null) {
+      setStickyTripId(null);
+    }
+  }, [mapTrip, stickyTripId]);
+
+  // Is Mark physically in the van?
+  //   1. Trip status says onboard / at_dropoff   → yes
+  //   2. Sticky latch tripped during this trip   → yes (survives jitter)
+  //   3. Current GPS within 10m of van           → yes (transient too)
+  // Otherwise no. Joining passengers far from the van fail all three.
   const inVan = useMemo(() => {
-    // Trip-status signal is authoritative once a real trip is in flight.
     if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
+    if (mapTrip && stickyTripId === mapTrip.id) return true;
     if (!myGps || !pos) return false;
-    // Proximity-based: as soon as Mark's GPS is within 10m of the van,
-    // he's in it. Per his explicit ask. 10m is tight enough that a
-    // pedestrian on the sidewalk next to a parked van wouldn't trip
-    // it (modern iPhone GPS holds 3-5m accuracy outdoors, and the van
-    // is parked at the curb 10-20m from any sidewalk).
     const R = 6_371_000;
     const toRad = (d: number) => (d * Math.PI) / 180;
     const dLat = toRad(pos.lat - myGps.lat);
@@ -717,7 +739,7 @@ function MapTab({
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return m < 10;
-  }, [live, myGps, pos]);
+  }, [live, mapTrip, stickyTripId, myGps, pos]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can
