@@ -72,11 +72,12 @@ async function shouldKeepSample(row: VehiclePositionRow): Promise<boolean> {
       .maybeSingle();
     if (!data || data.lat == null || data.lng == null) return true;
     const ageMs = Date.now() - new Date(data.recorded_at as string).getTime();
-    if (ageMs >= MIN_GAP_S * 1000) {
-      // Time gap floor — even a stationary van produces a heartbeat row
-      // every MIN_GAP_S so the timeseries doesn't have minute-long voids.
-      return true;
-    }
+    // Time-gap floor: 3s during active state, 5min when the van is
+    // parked + ignition-off (else parked heartbeats every few seconds
+    // accumulate 1000+ rows/hour for zero information value).
+    const parkedAndOff = row.ignition === false && (row.speed_mph ?? 0) < 1;
+    const timeFloorMs = parkedAndOff ? 5 * 60_000 : MIN_GAP_S * 1000;
+    if (ageMs >= timeFloorMs) return true;
     const movedM = haversineM(row.lat, row.lng, data.lat as number, data.lng as number);
     if (movedM >= MIN_MOVE_M) return true;
     const dSpeed = Math.abs((row.speed_mph ?? 0) - ((data.speed_mph as number | null) ?? 0));

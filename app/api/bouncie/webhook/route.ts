@@ -213,7 +213,16 @@ export async function POST(req: Request) {
       const movedM = haversineM(prev.lat, prev.lng, s.lat, s.lng);
       const dSpeed = Math.abs((s.speed_mph ?? 0) - (prev.speed_mph ?? 0));
       const dFuel = Math.abs((s.fuel_pct ?? 0) - (prev.fuel_pct ?? 0));
-      if (ageMs >= 3000 || movedM >= 5 || dSpeed >= 1 || dFuel >= 0.005) {
+      // Time-gap floor: keeps the timeseries from going minute-long
+      // void when the van is moving. 3s during ignition-on (so we get
+      // 1 sample per 3 seconds of driving even in a straight line),
+      // 5 min when parked + ignition-off (so an overnight parking
+      // session adds 12 rows/hour, not 1200). Bouncie sends heartbeat
+      // pings even when off, and without this gate they all pass the
+      // OR predicate because the 3s clock ticks.
+      const parkedAndOff = s.ignition === false && (s.speed_mph ?? 0) < 1;
+      const timeFloor = parkedAndOff ? 5 * 60_000 : 3000;
+      if (ageMs >= timeFloor || movedM >= 5 || dSpeed >= 1 || dFuel >= 0.005) {
         kept.push(s);
         prev = { lat: s.lat, lng: s.lng, speed_mph: s.speed_mph, fuel_pct: s.fuel_pct, recorded_at: s.recorded_at };
       }
