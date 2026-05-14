@@ -1234,11 +1234,13 @@ function MapTab({
             title={inEditMode ? "Snap pickup to my location" : "Center on me"}
           />
         )}
-        {/* Share — sits below the snap-to-me icon so all trip-action
-            chips live in one column. h-10 w-10 to match. */}
-        {live && (
-          <ShareTripButton token={token} tripId={live.id} compact />
-        )}
+        {/* Share — sits below the snap-to-me icon. Always visible: with
+            a live trip it mints the trip's passenger link; without one
+            it mints a generic "track my van" link (passenger role,
+            null trip_id, 24h expiry). Recipient lands on /p/<token>
+            either way; the only thing that changes is whether they
+            see trip details too. */}
+        <ShareTripButton token={token} tripId={live?.id ?? null} compact />
       </div>
 
       {/* Vitals strip — top-right column. Pickup button sits at the top
