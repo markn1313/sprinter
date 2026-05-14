@@ -216,20 +216,72 @@ export async function GET(req: Request) {
             }
           }
 
-          // at_pickup → onboard once the van moves away from the just-
-          // boarded pickup with speed.
+          // Stable anchor for the just-arrived pickup. Once at_pickup
+          // fires, `firstPendingStop` advances to the NEXT pending
+          // stop — so the old onboard rule that compared van position
+          // to `nextPickup` was effectively dead code for stops-based
+          // trips (the reference pointed past the pickup). Anchor
+          // instead to trip.pickup_lat (always set on dispatch-created
+          // trips) with the most-recently arrived stop as fallback.
+          const arrivedStops = stopsArr
+            .filter((s) => s.arrived_at && s.lat != null && s.lng != null)
+            .sort(
+              (a, b) =>
+                new Date(b.arrived_at as string).getTime() -
+                new Date(a.arrived_at as string).getTime(),
+            );
+          const pickupAnchor: { lat: number; lng: number } | null =
+            t.pickup_lat != null && t.pickup_lng != null
+              ? { lat: t.pickup_lat, lng: t.pickup_lng }
+              : arrivedStops.length > 0
+                ? {
+                    lat: arrivedStops[0].lat as number,
+                    lng: arrivedStops[0].lng as number,
+                  }
+                : null;
+
+          // at_pickup → onboard. PRIMARY rule (Mark's spec): within
+          // 30m of the pickup spot = passenger is in. Don't wait for
+          // a departure burst. Mark's "everything is automatic"
+          // intent: as soon as the van is essentially next to him,
+          // his trip is onboard and Dio's app should show the
+          // dropoff as the next destination.
           if (
             t.status === "at_pickup" &&
-            nextPickup &&
-            speed > DEPART_MPH &&
-            haversineM(pos.lat, pos.lng, nextPickup.lat, nextPickup.lng) > DEPART_M
+            pickupAnchor &&
+            haversineM(pos.lat, pos.lng, pickupAnchor.lat, pickupAnchor.lng) < 30
           ) {
             await sb
               .from("trips")
               .update({ status: "onboard", onboard_at: now })
               .eq("id", t.id)
               .eq("status", "at_pickup");
-            logTripEvent({ trip_id: t.id, kind: "auto_onboard", payload: { reason: "departed pickup" } });
+            logTripEvent({
+              trip_id: t.id,
+              kind: "auto_onboard",
+              payload: { reason: "within 30m of pickup" },
+            });
+          }
+          // FALLBACK: van clearly drove away from the pickup point
+          // (>400m and >5mph). Catches edge cases where the 30m gate
+          // somehow missed (e.g. GPS jump from a tunnel that
+          // skipped the at_pickup→onboard transition window).
+          else if (
+            t.status === "at_pickup" &&
+            pickupAnchor &&
+            speed > DEPART_MPH &&
+            haversineM(pos.lat, pos.lng, pickupAnchor.lat, pickupAnchor.lng) > DEPART_M
+          ) {
+            await sb
+              .from("trips")
+              .update({ status: "onboard", onboard_at: now })
+              .eq("id", t.id)
+              .eq("status", "at_pickup");
+            logTripEvent({
+              trip_id: t.id,
+              kind: "auto_onboard",
+              payload: { reason: "departed pickup (>400m + >5mph)" },
+            });
           }
 
           // Multi-stop / multi-pickup: while onboard, mark any pending
