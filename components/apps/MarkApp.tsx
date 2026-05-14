@@ -18,7 +18,6 @@ import FuelAlertCard from "@/components/FuelAlertCard";
 import EtaCard from "@/components/EtaCard";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
-import SmartStop from "@/components/SmartStop";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
@@ -1802,6 +1801,35 @@ function TripSheet({
     }
   };
 
+  // "Share live tracking" — mints (or reuses) the trip's GENERIC
+  // passenger link via invite-guest. Anyone Mark sends this to opens
+  // /p/<token> and sees the van moving in real time + ETA. Idempotent
+  // so a second tap just re-shares the same link.
+  const inviteGuest = async () => {
+    if (reorderBusy) return;
+    setReorderErr(null);
+    setReorderBusy(true);
+    try {
+      const res = await fetch(`/api/trips/${trip.id}/invite-guest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`invite-guest ${res.status}: ${body.slice(0, 200)}`);
+      }
+      const j = (await res.json().catch(() => null)) as { token?: string } | null;
+      if (!j?.token || typeof window === "undefined") return;
+      const url = `${window.location.origin}/p/${j.token}`;
+      await sharePassengerLink("passenger", url);
+    } catch (err) {
+      console.warn("[MarkApp] inviteGuest failed", err);
+      setReorderErr((err as Error).message);
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
   // Native share sheet if available (iOS / Android), otherwise copy
   // the link to clipboard and surface a one-shot confirmation.
   const sharePassengerLink = async (name: string, url: string) => {
@@ -2125,14 +2153,26 @@ function TripSheet({
           </div>
         )}
       </div>
-      <div className="mt-4 space-y-2">
-        <SmartStop token={token} tripId={trip.id} onAdded={refresh} />
+      <div className="mt-4">
         <AddressAutocomplete token={token} onSelect={addStopAddress} placeholder="Add a stop or destination — autocompletes" />
       </div>
+      {/* Share live tracking link with anyone, anytime. Mints (or
+          reuses) the trip-level passenger link via /invite-guest and
+          fires the native share sheet so Mark can fire it off to a
+          friend, a meeting party, anyone who wants to see the van
+          coming. Distinct from the per-stop UserPlus button above,
+          which mints a NAMED link tied to a specific pickup. */}
+      <button
+        onClick={inviteGuest}
+        disabled={reorderBusy}
+        className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+      >
+        <Share2 size={16} /> Share live tracking link
+      </button>
       <button
         onClick={cancelTrip}
         disabled={cancelBusy}
-        className="mt-6 w-full rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-900/60 disabled:opacity-50"
+        className="mt-3 w-full rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-900/60 disabled:opacity-50"
       >
         {cancelBusy ? "Cancelling…" : "Cancel trip"}
       </button>
