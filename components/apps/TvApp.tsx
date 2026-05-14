@@ -83,15 +83,15 @@ export default function TvApp({ token }: { token: string }) {
 
   return (
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
-      {/* Split-screen map. Both sides are CENTERED on the van's current
-          location — no fit-to-bounds (that pulled the camera way back to
-          include past pickups). LEFT = navigation-night vector at a wider
-          zoom so the surrounding streets and the next turn are visible.
-          RIGHT = satellite at a tighter zoom so the bar audience can see
-          the actual rooftop / parking lot the van is in. Both stay
-          north-up (followCamRotate={false}) so the van icon's heading
-          arrow is meaningful — without that the right side was locking
-          the icon to point north regardless of travel direction. */}
+      {/* Split-screen map. LEFT = full remaining route fit-to-bounds
+          (navigation-night vector) so Mark sees the whole path to the
+          destination — van + every upcoming waypoint + the polyline.
+          RIGHT = satellite close-up centered on the current van location
+          (follow-cam, top-down, high zoom) for street-level detail of
+          where the van is right now. Both stay north-up
+          (followCamRotate={false}) so the van icon's heading is
+          meaningful — without that the right side was locking the icon
+          to point north regardless of travel direction. */}
       <div className="absolute inset-0 flex">
         <ClientMap
           position={pos}
@@ -100,15 +100,19 @@ export default function TvApp({ token }: { token: string }) {
           congestion={congestion}
           mapStyle="mapbox://styles/mapbox/navigation-night-v1"
           className="h-full flex-1 border-r border-zinc-700"
-          fitBounds={false}
+          fitBounds={true}
+          fitPadding={{
+            top: 110,
+            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
+            left: 50,
+            right: 50,
+          }}
+          fitMaxZoom={17}
           routeLineWidth={8}
           routeGlowWidth={20}
           vanIconSize={36}
           pinScale={2.8}
-          followCam={true}
-          followCamPitch={0}
-          followCamZoom={14.5}
-          followCamRotate={false}
+          followCam={false}
         />
         <div className="relative flex-1">
           <ClientMap
