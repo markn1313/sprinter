@@ -345,26 +345,40 @@ export async function GET(req: Request) {
             });
           }
 
-          // onboard → at_dropoff when within 100m of dropoff
+          // DROPOFF ARRIVAL — Mark's spec, same shape as the pickup
+          // rule: van within 30m of the dropoff = trip is done.
+          // Skip the at_dropoff intermediate entirely so Mark's app
+          // returns to its no-trip baseline (Pickup button, no
+          // destination card) the moment he's actually been dropped
+          // off. Stamps both arrived_at_dropoff_at and completed_at
+          // in one update.
           if (
-            t.status === "onboard" &&
+            (t.status === "onboard" || t.status === "at_dropoff") &&
             t.dropoff_lat != null &&
             t.dropoff_lng != null &&
-            haversineM(pos.lat, pos.lng, t.dropoff_lat, t.dropoff_lng) < GEOFENCE_M
+            haversineM(pos.lat, pos.lng, t.dropoff_lat, t.dropoff_lng) < ARRIVE_M
           ) {
             await sb
               .from("trips")
-              .update({ status: "at_dropoff", arrived_at_dropoff_at: now })
+              .update({
+                status: "complete",
+                arrived_at_dropoff_at: now,
+                completed_at: now,
+              })
               .eq("id", t.id)
-              .eq("status", "onboard");
-            logTripEvent({ trip_id: t.id, kind: "auto_at_dropoff", payload: { reason: "geofence" } });
+              .in("status", ["onboard", "at_dropoff"]);
+            logTripEvent({
+              trip_id: t.id,
+              kind: "auto_complete",
+              payload: { reason: "within 30m of dropoff" },
+            });
+            t.status = "complete";
           }
 
-          // at_dropoff → complete once the van moves away from dropoff
-          // with speed (departure detection — passenger off-loaded, van
-          // is heading somewhere else). Skipping the explicit "complete"
-          // tap means the trip-history view and recap card update on
-          // their own.
+          // FALLBACK: van clearly drove away from the dropoff
+          // (>400m + >5mph). Same tunnel-jump guard as the pickup
+          // fallback — kicks the trip from at_dropoff to complete
+          // if it somehow skipped the 30m window.
           if (
             t.status === "at_dropoff" &&
             t.dropoff_lat != null &&
@@ -377,7 +391,11 @@ export async function GET(req: Request) {
               .update({ status: "complete", completed_at: now })
               .eq("id", t.id)
               .eq("status", "at_dropoff");
-            logTripEvent({ trip_id: t.id, kind: "auto_complete", payload: { reason: "departed dropoff" } });
+            logTripEvent({
+              trip_id: t.id,
+              kind: "auto_complete",
+              payload: { reason: "departed dropoff (>400m + >5mph)" },
+            });
           }
 
           // scheduled → onboard for "current-location" pickups where the van
