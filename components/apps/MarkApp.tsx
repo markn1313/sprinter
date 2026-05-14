@@ -40,6 +40,7 @@ import {
   Fuel,
   GripVertical,
   Flag,
+  Trash2,
 } from "lucide-react";
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
@@ -1853,6 +1854,38 @@ function TripSheet({
     }
   };
 
+  // Remove an intermediate stop. The dropoff isn't deletable from
+  // here — a trip needs an endpoint. To swap the dropoff out, Mark
+  // promotes a different stop (Flag button) first, which demotes the
+  // old dropoff into the stops list where IT becomes removable.
+  const deleteStop = async (id: string, address: string) => {
+    if (reorderBusy) return;
+    if (id.startsWith("__")) return; // can't delete the virtual dropoff
+    const ok =
+      typeof window !== "undefined"
+        ? window.confirm(`Remove this stop?\n\n${address}`)
+        : false;
+    if (!ok) return;
+    setReorderErr(null);
+    setReorderBusy(true);
+    try {
+      const res = await fetch(`/api/trips/${trip.id}/stops?stop=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`stops DELETE ${res.status}: ${body.slice(0, 200)}`);
+      }
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] deleteStop failed", err);
+      setReorderErr((err as Error).message);
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
   // Promote a destination to be the LAST one (the trip's final
   // dropoff). Move it to the end of the destinations array; whatever
   // WAS the dropoff slides into its old position.
@@ -1927,6 +1960,17 @@ function TripSheet({
               </span>
               {isPending && (
                 <>
+                  {!isLast && !d.id.startsWith("__") && (
+                    <button
+                      onClick={() => deleteStop(d.id, d.address)}
+                      disabled={reorderBusy}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-red-400 hover:bg-red-950/50 disabled:opacity-25"
+                      aria-label="Delete this stop"
+                      title="Delete this stop"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  )}
                   {!isLast && (
                     <button
                       onClick={() => promoteToDropoff(d.id)}
