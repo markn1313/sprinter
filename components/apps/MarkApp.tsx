@@ -1209,18 +1209,20 @@ function MapTab({
           </button>
         ) : (
           <>
-            {/* Pickup button is universal now: always visible, adds my
-                own pickup-stop the first time and modifies it on
-                subsequent taps. Removed the !inVan gate — joining
-                passengers who aren't physically in the van should
-                still be able to add their pickup. */}
-            <button
-              onClick={enterPickup}
-              disabled={!myGps && !myStop}
-              className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {pickupModeKind === "edit" ? "Modify" : "Pickup"}
-            </button>
+            {/* Pickup OR Dropoff — mutually exclusive based on whether
+                Mark is in the van. Out of van: Pickup (add/modify his
+                pickup stop). In van: Dropoff (set/modify destination).
+                Remote passengers joining a trip see Pickup because
+                their phone GPS is far from the van — inVan = false. */}
+            {!inVan && (
+              <button
+                onClick={enterPickup}
+                disabled={!myGps && !myStop}
+                className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {pickupModeKind === "edit" ? "Modify" : "Pickup"}
+              </button>
+            )}
             {inVan && (
               <button
                 onClick={enterDropoff}
