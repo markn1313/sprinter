@@ -28,6 +28,21 @@ export default function TvApp({ token }: { token: string }) {
 
   const stopsArr = ((focus as unknown as { stops?: Array<{ lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
 
+  // Speed-adaptive zoom for the right (close-up) map. Faster = wider
+  // framing so the viewer can see what's coming up; slower / stopped =
+  // tighter so the actual building / parking lot is recognizable. Bucketed
+  // (not continuous) so the camera doesn't re-ease on every 1-mph wobble
+  // in the GPS speed reading — each bucket is a stable target that only
+  // changes when the van clearly transitions between regimes.
+  const rightZoom = useMemo(() => {
+    const mph = pos?.speed_mph ?? 0;
+    if (mph < 5) return 17.0;   // parked / very slow
+    if (mph < 25) return 16.6;  // city streets
+    if (mph < 45) return 16.2;  // suburban / surface arterials
+    if (mph < 65) return 15.8;  // highway
+    return 15.5;                // freeway
+  }, [pos?.speed_mph]);
+
   // The TV map should always reflect the REMAINING route: van → next stop →
   // ... → final destination. Once Mark is onboard, the pickup leg is in the
   // past and shouldn't be drawn or padded into the auto-fit bounds.
@@ -129,7 +144,7 @@ export default function TvApp({ token }: { token: string }) {
             pinScale={2.8}
             followCam={true}
             followCamPitch={0}
-            followCamZoom={16.4}
+            followCamZoom={rightZoom}
             followCamRotate={false}
           />
         </div>
