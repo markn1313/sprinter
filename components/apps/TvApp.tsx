@@ -55,7 +55,13 @@ export default function TvApp({ token }: { token: string }) {
     if (focus?.dropoff_lat != null && focus.dropoff_lng != null)
       out.push({ kind: "dropoff", lat: focus.dropoff_lat, lng: focus.dropoff_lng, label: focus.dropoff_address ?? undefined });
     stopsArr.forEach((s, i) => {
-      if (s.lat != null && s.lng != null) out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+      if (s.lat == null || s.lng == null) return;
+      // Skip already-visited stops so the pin disappears from the TV map
+      // as soon as the state machine fires arrived_at. Otherwise the
+      // viewer keeps seeing where the van WAS rather than where it's GOING.
+      const sx = s as unknown as { arrived_at?: string | null };
+      if (sx.arrived_at) return;
+      out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
     });
     return out;
   }, [upcoming, focus, stopsArr]);

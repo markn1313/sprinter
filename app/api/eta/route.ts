@@ -237,8 +237,14 @@ export async function GET(req: Request) {
   }
 
   if (upcoming.length === 0) {
+    // Include `upcoming: []` so clients can distinguish "no remaining
+    // waypoints" (don't show any waypoint pins) from "ETA not loaded
+    // yet" (missing key — fall back to trip fields). Previously this
+    // omitted the field and clients triggered their stale-trip-fields
+    // fallback, redrawing the arrived pickup as a still-active pin.
     return NextResponse.json({
       van: { lat: origin.lat, lng: origin.lng, source: origin.source },
+      upcoming: [],
       to_next: null,
       to_final: null,
     });

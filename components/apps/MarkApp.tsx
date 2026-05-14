@@ -458,25 +458,39 @@ function MapTab({
         });
       });
     } else {
-      // Fallback while ETA hasn't loaded yet
-      if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
-        out.push({ kind: "pickup", id: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
+      // Fallback while ETA hasn't loaded yet. Mirror the ETA endpoint's
+      // gates so we don't keep showing arrived/past waypoints:
+      //   - Legacy trip.pickup_* renders only when (a) no stops carry
+      //     coords (legacy-only trip) AND (b) status hasn't advanced
+      //     past dispatched yet. Once we hit at_pickup / onboard /
+      //     at_dropoff the pickup has been served and should disappear.
+      //   - Stops with arrived_at set are filtered out — they've been
+      //     visited, no longer pending.
+      const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
+      const showLegacyPickup =
+        !hasAnyStop &&
+        mapTrip?.pickup_lat != null &&
+        mapTrip.pickup_lng != null &&
+        (mapTrip.status === "scheduled" || mapTrip.status === "dispatched");
+      if (showLegacyPickup) {
+        out.push({ kind: "pickup", id: "pickup", lat: mapTrip!.pickup_lat!, lng: mapTrip!.pickup_lng!, label: mapTrip!.pickup_address ?? undefined });
+      }
       if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
         out.push({ kind: "dropoff", id: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
       stopsArr.forEach((s, i) => {
-        if (s.lat != null && s.lng != null) {
-          const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
-          out.push({
-            kind: "stop",
-            id: s.id,
-            lat: s.lat,
-            lng: s.lng,
-            label: s.address,
-            index: i + 1,
-            ...(sx.passenger ? { passenger: sx.passenger } : {}),
-            ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
-          });
-        }
+        if (s.lat == null || s.lng == null) return;
+        const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null; arrived_at?: string | null };
+        if (sx.arrived_at) return; // already visited — don't redraw
+        out.push({
+          kind: "stop",
+          id: s.id,
+          lat: s.lat,
+          lng: s.lng,
+          label: s.address,
+          index: i + 1,
+          ...(sx.passenger ? { passenger: sx.passenger } : {}),
+          ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
+        });
       });
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
