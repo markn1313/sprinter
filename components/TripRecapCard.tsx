@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { shortAddr } from "@/lib/format";
-import { CheckCircle2, MapPin, Flag } from "lucide-react";
+import { CheckCircle2, MapPin, Flag, UserPlus, X } from "lucide-react";
 
 interface RecapStats {
   miles: number;
@@ -18,12 +18,39 @@ type TripWithExtras = Trip & {
   completed_at?: string | null;
 };
 
+// localStorage key for trips Mark has dismissed from his home screen
+// so a completed trip doesn't reappear after a refresh / re-mount.
+const DISMISS_KEY = "sprinter:dismissed_recap_trip_ids";
+
+function loadDismissed(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(DISMISS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistDismissed(s: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DISMISS_KEY, JSON.stringify(Array.from(s)));
+  } catch {
+    // quota / private mode — fine, the dismiss is per-session anyway
+  }
+}
+
 // Shows on Mark home when there's no active trip but a recent completion
 // (within 90 min). Pulls per-trip metrics from vehicle_positions for that
-// trip_id. Disappears after that.
+// trip_id. Disappears after Mark hits the X — that state is persisted in
+// localStorage so a reload doesn't bring the dismissed trip back.
 export default function TripRecapCard({ token }: { token: string }) {
   const [trip, setTrip] = useState<TripWithExtras | null>(null);
   const [stats, setStats] = useState<RecapStats | null>(null);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,23 +80,74 @@ export default function TripRecapCard({ token }: { token: string }) {
     };
   }, [token]);
 
-  if (!trip) return null;
+  if (!trip || dismissed.has(trip.id)) return null;
 
   const dur = stats?.duration_min ?? computeDurationMin(trip);
+
+  const dismiss = () => {
+    const next = new Set(dismissed);
+    next.add(trip.id);
+    setDismissed(next);
+    persistDismissed(next);
+  };
+
+  // Mint (or reuse) the trip's passenger link via /invite-guest and
+  // share it via the native share sheet. Works even after the trip
+  // completes — the recipient sees the trip in its final state
+  // (historical view, no live van movement). Mark uses this when a
+  // friend pings him "where'd you end up?" after the ride.
+  const invite = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/trips/${trip.id}/invite-guest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const j = (await res.json().catch(() => null)) as { token?: string } | null;
+      if (!j?.token || typeof window === "undefined") return;
+      const url = `${window.location.origin}/p/${j.token}`;
+      const body = `Here's the ride: ${url}`;
+      if ("share" in navigator) {
+        try {
+          await (
+            navigator as Navigator & {
+              share: (d: { title: string; text: string; url: string }) => Promise<void>;
+            }
+          ).share({ title: "Sprinter ride", text: body, url });
+        } catch {
+          // user cancelled — drop silently
+        }
+      } else {
+        window.location.href = `sms:&body=${encodeURIComponent(body)}`;
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/95 p-4 backdrop-blur shadow-xl">
+    <div className="relative rounded-2xl border border-zinc-800 bg-zinc-950/95 p-4 backdrop-blur shadow-xl">
+      <button
+        onClick={dismiss}
+        aria-label="Dismiss"
+        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+      >
+        <X size={16} />
+      </button>
       <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-emerald-300">
         <CheckCircle2 size={12} /> Trip complete
       </div>
       <div className="mt-2 space-y-1 text-xs text-zinc-300">
         {trip.pickup_address && (
-          <div className="flex items-center gap-1.5 truncate">
+          <div className="flex items-center gap-1.5 truncate pr-8">
             <MapPin size={10} className="shrink-0 text-amber-400" />
             <span className="truncate">{shortAddr(trip.pickup_address)}</span>
           </div>
         )}
         {trip.dropoff_address && (
-          <div className="flex items-center gap-1.5 truncate">
+          <div className="flex items-center gap-1.5 truncate pr-8">
             <Flag size={10} className="shrink-0 text-blue-400" />
             <span className="truncate">{shortAddr(trip.dropoff_address)}</span>
           </div>
@@ -80,6 +158,13 @@ export default function TripRecapCard({ token }: { token: string }) {
         <Stat value={dur != null ? dur.toString() : "—"} unit="min" label="Duration" />
         <Stat value={stats ? `$${stats.fuel_cost_dollars}` : "—"} label="Fuel" />
       </div>
+      <button
+        onClick={invite}
+        disabled={busy}
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+      >
+        <UserPlus size={14} /> Invite passenger
+      </button>
     </div>
   );
 }
