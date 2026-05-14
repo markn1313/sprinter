@@ -38,8 +38,7 @@ import {
   MessageCircle,
   HelpCircle,
   Fuel,
-  ChevronUp,
-  ChevronDown,
+  GripVertical,
   Flag,
 } from "lucide-react";
 
@@ -1304,13 +1303,27 @@ function MapTab({
         </button>
         {pos && (
           <>
+            {/* Combined fuel/range chip. Range is the actionable
+                number (how far can we go), fuel % is the secondary
+                context (how full is the tank). Fuel icon implies
+                the topic so we don't need both labels. */}
             <VitalChip>
               <Fuel size={11} className="text-emerald-400" />
-              <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
-            </VitalChip>
-            <VitalChip>
-              <span className="text-emerald-400">↗</span>
-              <span title={range?.mpg_source === "bouncie_trips" && range.mpg ? `${range.mpg.toFixed(1)} mpg · ${range.window_miles?.toFixed(0)} mi over ${range.window_days}d` : undefined}>{range?.range_miles ?? "—"} mi</span>
+              <span
+                title={
+                  range?.mpg_source === "bouncie_trips" && range.mpg
+                    ? `${range.mpg.toFixed(1)} mpg · ${range.window_miles?.toFixed(0)} mi over ${range.window_days}d`
+                    : undefined
+                }
+              >
+                {range?.range_miles ?? "—"} mi
+                {pos.fuel_pct != null && (
+                  <span className="text-zinc-500">
+                    {" · "}
+                    {(pos.fuel_pct * 100).toFixed(0)}%
+                  </span>
+                )}
+              </span>
             </VitalChip>
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
@@ -1695,80 +1708,169 @@ function TripSheet({
   };
 
   const [reorderBusy, setReorderBusy] = useState(false);
+  const [reorderErr, setReorderErr] = useState<string | null>(null);
 
-  // Swap two stops in the stops[] array. Pending stops only — arrived
-  // stops stay pinned in chronological order at the front.
-  const moveStop = async (stopId: string, dir: "up" | "down") => {
-    if (reorderBusy) return;
-    const idx = stops.findIndex((s) => s.id === stopId);
-    if (idx < 0) return;
-    // Can't move arrived stops. Can't cross the arrived/pending boundary.
-    const firstPending = stops.findIndex((s) => !s.arrived_at);
-    if (idx < firstPending) return;
-    const target = dir === "up" ? idx - 1 : idx + 1;
-    if (target < firstPending || target >= stops.length) return;
-    const next = stops.slice();
-    [next[idx], next[target]] = [next[target], next[idx]];
-    setReorderBusy(true);
-    try {
-      await fetch(`/api/trips/${trip.id}/stops`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ stops: next, optimize: false }),
-      });
-      refresh();
-    } finally {
-      setReorderBusy(false);
-    }
+  // Treat pickup as fixed, stops + dropoff as one ordered list. The
+  // LAST entry in the list is the trip's dropoff; everything before it
+  // is in stops[]. Arrived stops stay pinned in chronological order
+  // at the front.
+  type Destination = {
+    id: string;
+    address: string;
+    lat?: number | null;
+    lng?: number | null;
+    arrived_at?: string | null;
+    isDropoff: boolean;
   };
+  const destinations: Destination[] = [
+    ...stops.map((s) => ({ ...s, isDropoff: false })),
+    ...(trip.dropoff_address && trip.dropoff_lat != null && trip.dropoff_lng != null
+      ? [
+          {
+            id: "__dropoff__",
+            address: trip.dropoff_address,
+            lat: trip.dropoff_lat,
+            lng: trip.dropoff_lng,
+            arrived_at: null,
+            isDropoff: true,
+          },
+        ]
+      : []),
+  ];
 
-  // Promote a pending stop to be the trip's final destination. The
-  // current dropoff is demoted to an intermediate stop (slotted where
-  // the promoted stop was). Common path: Mark adds a destination after
-  // setting an earlier one — the new one should be the end of the trip.
-  const promoteToDropoff = async (stopId: string) => {
-    if (reorderBusy) return;
-    const stop = stops.find((s) => s.id === stopId);
-    if (!stop || stop.lat == null || stop.lng == null) return;
-    setReorderBusy(true);
-    try {
-      // Build the new stops[]: replace this stop with the current
-      // dropoff (demoted to kind=stop). Then PATCH the trip's dropoff
-      // to the promoted stop's coords.
-      const nextStops = stops.map((s) =>
-        s.id === stopId && trip.dropoff_lat != null && trip.dropoff_lng != null
-          ? {
-              ...s,
-              address: trip.dropoff_address ?? s.address,
-              lat: trip.dropoff_lat,
-              lng: trip.dropoff_lng,
-            }
-          : s,
-      );
-      await fetch(`/api/trips/${trip.id}/stops`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ stops: nextStops, optimize: false }),
-      });
-      await fetch(`/api/trips/${trip.id}`, {
+  // Push the destinations array to the server. LAST entry → trip's
+  // dropoff. All preceding entries → stops[]. PUT stops first (with
+  // optimize=false so explicit reorder isn't clobbered), then PATCH
+  // the dropoff if it changed.
+  const persist = async (next: Destination[]): Promise<void> => {
+    const newDropoff = next[next.length - 1];
+    const newStops = next.slice(0, -1).map((d) => ({
+      // Pass everything through so the PUT endpoint re-fills with the
+      // full Stop shape (passenger / token / arrived_at etc).
+      ...(stops.find((s) => s.id === d.id) ?? {}),
+      id: d.id.startsWith("__") ? undefined : d.id,
+      address: d.address,
+      lat: d.lat,
+      lng: d.lng,
+      arrived_at: d.arrived_at ?? null,
+    }));
+    const stopsRes = await fetch(`/api/trips/${trip.id}/stops`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ stops: newStops, optimize: false }),
+    });
+    if (!stopsRes.ok) {
+      const body = await stopsRes.text().catch(() => "");
+      throw new Error(`stops PUT ${stopsRes.status}: ${body.slice(0, 200)}`);
+    }
+    if (
+      newDropoff &&
+      (newDropoff.address !== trip.dropoff_address ||
+        newDropoff.lat !== trip.dropoff_lat ||
+        newDropoff.lng !== trip.dropoff_lng)
+    ) {
+      const dropRes = await fetch(`/api/trips/${trip.id}`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          dropoff_address: stop.address,
-          dropoff_lat: stop.lat,
-          dropoff_lng: stop.lng,
+          dropoff_address: newDropoff.address,
+          dropoff_lat: newDropoff.lat,
+          dropoff_lng: newDropoff.lng,
         }),
       });
+      if (!dropRes.ok) {
+        const body = await dropRes.text().catch(() => "");
+        throw new Error(`trip PATCH ${dropRes.status}: ${body.slice(0, 200)}`);
+      }
+    }
+  };
+
+  // Drag-to-reorder state. Touch-friendly pointer-events: capture on
+  // the grip handle means we get pointermove on the button even when
+  // the finger wanders over neighboring rows, and rowRefs let us
+  // hit-test which row the pointer is currently over.
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dragRef = useRef<{ id: string; pointerId: number } | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const startDrag = (id: string, e: React.PointerEvent<HTMLElement>) => {
+    if (reorderBusy) return;
+    dragRef.current = { id, pointerId: e.pointerId };
+    setDraggingId(id);
+    setDragOverId(id);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — some browsers reject the capture on synthetic events
+    }
+  };
+
+  const onDragMove = (e: React.PointerEvent<HTMLElement>) => {
+    if (!dragRef.current) return;
+    const y = e.clientY;
+    for (const [rid, el] of rowRefs.current) {
+      const r = el.getBoundingClientRect();
+      if (y >= r.top && y < r.bottom) {
+        setDragOverId(rid);
+        return;
+      }
+    }
+  };
+
+  const endDrag = async () => {
+    const drag = dragRef.current;
+    const overId = dragOverId;
+    dragRef.current = null;
+    setDraggingId(null);
+    setDragOverId(null);
+    if (!drag || !overId || overId === drag.id) return;
+    const fromIdx = destinations.findIndex((d) => d.id === drag.id);
+    const toIdx = destinations.findIndex((d) => d.id === overId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const firstPending = destinations.findIndex((d) => !d.arrived_at);
+    // Can't drop into the arrived/historical range.
+    if (toIdx < firstPending) return;
+    const next = destinations.slice();
+    const [picked] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, picked);
+    setReorderErr(null);
+    setReorderBusy(true);
+    try {
+      await persist(next);
       refresh();
+    } catch (err) {
+      console.warn("[MarkApp] drag reorder failed", err);
+      setReorderErr((err as Error).message);
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
+  // Promote a destination to be the LAST one (the trip's final
+  // dropoff). Move it to the end of the destinations array; whatever
+  // WAS the dropoff slides into its old position.
+  const promoteToDropoff = async (id: string) => {
+    if (reorderBusy) return;
+    setReorderErr(null);
+    const idx = destinations.findIndex((d) => d.id === id);
+    if (idx < 0 || idx === destinations.length - 1) return;
+    const next = destinations.slice();
+    const [picked] = next.splice(idx, 1);
+    next.push(picked);
+    setReorderBusy(true);
+    try {
+      await persist(next);
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] promoteToDropoff failed", err);
+      setReorderErr((err as Error).message);
     } finally {
       setReorderBusy(false);
     }
@@ -1799,51 +1901,69 @@ function TripSheet({
   return (
     <Sheet title={`Trip · ${statusLabel(trip.status)}`} onClose={onClose}>
       <div className="text-base font-semibold text-zinc-100">{trip.passenger_name}</div>
-      <div className="mt-1 space-y-1 text-sm text-zinc-400">
-        {trip.pickup_address && <div>📍 {trip.pickup_address}</div>}
-        {stops.map((s, i) => {
-          const firstPending = stops.findIndex((x) => !x.arrived_at);
-          const isPending = !s.arrived_at;
-          const canUp = isPending && i > firstPending;
-          const canDown = isPending && i < stops.length - 1;
+      <div className="mt-2 space-y-1.5 text-sm text-zinc-300">
+        {trip.pickup_address && (
+          <div className="py-1">📍 {trip.pickup_address}</div>
+        )}
+        {destinations.map((d, i) => {
+          const isPending = !d.arrived_at;
+          const isLast = i === destinations.length - 1;
+          const prefix = d.arrived_at ? "✓" : isLast ? "🏁" : `${i + 1}.`;
+          const isDragSource = draggingId === d.id;
+          const isDropTarget = dragOverId === d.id && draggingId && draggingId !== d.id;
           return (
-            <div key={s.id} className="flex items-center gap-1.5">
-              <span className="flex-1">
-                {s.arrived_at ? "✓" : `${i + 1}.`} {s.address}
+            <div
+              key={d.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(d.id, el);
+                else rowRefs.current.delete(d.id);
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-1 py-1 transition-colors ${
+                isDragSource ? "opacity-40" : ""
+              } ${isDropTarget ? "bg-emerald-900/30 ring-1 ring-emerald-700" : ""}`}
+            >
+              <span className="flex-1 leading-snug">
+                {prefix} {d.address}
               </span>
               {isPending && (
                 <>
+                  {!isLast && (
+                    <button
+                      onClick={() => promoteToDropoff(d.id)}
+                      disabled={reorderBusy}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-emerald-400 hover:bg-zinc-800 disabled:opacity-25"
+                      aria-label="Make this the final destination"
+                      title="Make this the final destination"
+                    >
+                      <Flag size={18} />
+                    </button>
+                  )}
+                  {/* Drag handle. Pointer events on the handle only —
+                      tapping the row text still lets the sheet scroll
+                      normally. touch-action: none stops the browser
+                      from claiming the touch as a vertical scroll. */}
                   <button
-                    onClick={() => moveStop(s.id, "up")}
-                    disabled={!canUp || reorderBusy}
-                    className="rounded p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-25"
-                    aria-label="Move up"
-                  >
-                    <ChevronUp size={14} />
-                  </button>
-                  <button
-                    onClick={() => moveStop(s.id, "down")}
-                    disabled={!canDown || reorderBusy}
-                    className="rounded p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-25"
-                    aria-label="Move down"
-                  >
-                    <ChevronDown size={14} />
-                  </button>
-                  <button
-                    onClick={() => promoteToDropoff(s.id)}
+                    onPointerDown={(e) => startDrag(d.id, e)}
+                    onPointerMove={onDragMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
                     disabled={reorderBusy}
-                    className="rounded p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-25"
-                    aria-label="Make this the final destination"
-                    title="Make this the final destination"
+                    style={{ touchAction: "none" }}
+                    className="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:bg-zinc-800 active:cursor-grabbing disabled:opacity-25"
+                    aria-label="Drag to reorder"
                   >
-                    <Flag size={14} />
+                    <GripVertical size={20} />
                   </button>
                 </>
               )}
             </div>
           );
         })}
-        {trip.dropoff_address && <div>🏁 {trip.dropoff_address}</div>}
+        {reorderErr && (
+          <div className="rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+            Reorder failed: {reorderErr}
+          </div>
+        )}
       </div>
       <div className="mt-4 space-y-2">
         <SmartStop token={token} tripId={trip.id} onAdded={refresh} />

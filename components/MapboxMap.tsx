@@ -508,21 +508,44 @@ export default function MapboxMap({
         }
       }
     }
-    // Derive bearing from successive lng/lat (since Bouncie's heading field
-    // is reported as 0 on our tier). Use Bouncie heading if it's non-zero;
-    // else compute from movement; else hold the last bearing so the icon
-    // doesn't snap to north when stopped at a light.
+    // Van icon heading comes from POSITION DELTAS only, never from any
+    // phone compass / DeviceOrientation / magnetometer. Phone compass is
+    // useless here because passengers set their phones in arbitrary
+    // orientations relative to van travel direction — a phone face-down
+    // in a cup holder reports a totally different bearing than the same
+    // phone in a pocket. We compute everything from where the van's GPS
+    // pin WAS to where it IS now.
+    //
+    // Order of preference:
+    //   1. Server-derived bearing (lib/bearing.ts queries vehicle_positions
+    //      with source='bouncie' over a 50m baseline). Authoritative when
+    //      Bouncie has been sampling.
+    //   2. Client-side fallback: bearing from successive position.lng/lat
+    //      deltas (which themselves come from Bouncie OR phone-fused GPS,
+    //      both of which are positional coords, never compass).
+    //   3. Hold last bearing — don't snap to north when stopped at a light.
+    //
+    // Gates for the client-side fallback are deliberately strict so GPS
+    // jitter at idle (5-10m wander when the van is parked) doesn't spin
+    // the icon. Requires ≥30m of actual movement (proper haversine, not
+    // a degree L1 approx) AND speed ≥ 3mph when speed is known.
     let bearing = lastVanLngLatRef.current?.bearing ?? 0;
     const reported = typeof position.heading === "number" ? position.heading : 0;
     if (reported > 0 && reported < 360) {
       bearing = reported;
     } else if (lastVanLngLatRef.current) {
       const prev = lastVanLngLatRef.current;
-      const dLng = position.lng - prev.lng;
-      const dLat = position.lat - prev.lat;
-      // Only update bearing on meaningful movement (~10m) to avoid spinning
-      // at idle.
-      if (Math.abs(dLng) + Math.abs(dLat) > 0.0001) {
+      const R = 6_371_000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLatR = toRad(position.lat - prev.lat);
+      const dLngR = toRad(position.lng - prev.lng);
+      const havA =
+        Math.sin(dLatR / 2) ** 2 +
+        Math.cos(toRad(prev.lat)) * Math.cos(toRad(position.lat)) * Math.sin(dLngR / 2) ** 2;
+      const movedM = R * 2 * Math.atan2(Math.sqrt(havA), Math.sqrt(1 - havA));
+      const speed = typeof position.speed_mph === "number" ? position.speed_mph : null;
+      const movingEnough = movedM >= 30 && (speed == null || speed >= 3);
+      if (movingEnough) {
         const φ1 = (prev.lat * Math.PI) / 180;
         const φ2 = (position.lat * Math.PI) / 180;
         const λ1 = (prev.lng * Math.PI) / 180;
