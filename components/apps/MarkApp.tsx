@@ -719,10 +719,15 @@ function MapTab({
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     if (m >= 20) return false;
-    // Additional gate: van must be moving OR Mark explicitly onboarded.
-    // A parked van + Mark within 20m of it isn't enough — he could be
-    // standing right next to a van he's not in. Speed > 3 mph means the
-    // van is actually driving him somewhere.
+    // Trip is at_pickup AND Mark's GPS = van's GPS → he just got in.
+    // The state machine waits to flip onboard until the van actually
+    // pulls away (>400m, >5 mph), but the moment Mark boards is
+    // earlier than that — surface the Dropoff button right away.
+    if (live?.status === "at_pickup") return true;
+    // Otherwise (no live trip / dispatched / scheduled): van must be
+    // actively moving. A parked van + Mark within 20m isn't enough —
+    // he could be standing next to a van he's not in. Speed > 3 mph
+    // means the van is genuinely driving him somewhere.
     if ((pos.speed_mph ?? 0) >= 3) return true;
     return false;
   }, [live, myGps, pos]);
