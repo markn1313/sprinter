@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { advanceTripStateForBatch } from "@/lib/trip-state-machine";
 
 export const dynamic = "force-dynamic";
 
@@ -272,6 +273,24 @@ export async function POST(req: Request) {
       .eq("id", 1);
   } catch (err) {
     console.warn("[bouncie/webhook] db write failed:", (err as Error).message);
+  }
+
+  // Run the trip state machine against the full batch. This is the
+  // canonical entry point — fires on every Bouncie dongle report
+  // regardless of whether any app is open or polling. Awaited so the
+  // writes land before the serverless function tears down. Uses MIN
+  // distance to each pending waypoint across the whole batch (not
+  // just the latest sample), catching brief sub-30m pass-throughs.
+  try {
+    await advanceTripStateForBatch(
+      samples.map((s) => ({
+        lat: s.lat,
+        lng: s.lng,
+        speed_mph: s.speed_mph,
+      })),
+    );
+  } catch (err) {
+    console.warn("[bouncie/webhook] state machine failed:", (err as Error).message);
   }
 
   return NextResponse.json({ ok: true, samples: samples.length });
