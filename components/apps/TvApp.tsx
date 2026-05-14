@@ -55,7 +55,13 @@ export default function TvApp({ token }: { token: string }) {
     if (focus?.dropoff_lat != null && focus.dropoff_lng != null)
       out.push({ kind: "dropoff", lat: focus.dropoff_lat, lng: focus.dropoff_lng, label: focus.dropoff_address ?? undefined });
     stopsArr.forEach((s, i) => {
-      if (s.lat != null && s.lng != null) out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+      if (s.lat == null || s.lng == null) return;
+      // Skip already-visited stops so the pin disappears from the TV map
+      // as soon as the state machine fires arrived_at. Otherwise the
+      // viewer keeps seeing where the van WAS rather than where it's GOING.
+      const sx = s as unknown as { arrived_at?: string | null };
+      if (sx.arrived_at) return;
+      out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
     });
     return out;
   }, [upcoming, focus, stopsArr]);
@@ -78,11 +84,14 @@ export default function TvApp({ token }: { token: string }) {
   return (
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
       {/* Split-screen map. LEFT = full remaining route fit-to-bounds
-          (navigation-night vector style) so Mark sees the whole path to
-          the destination. RIGHT = close-up around the van (satellite,
-          follow-cam, top-down, high zoom) so he sees street-level detail
-          of where he is right now. Both share the same position,
-          polyline, congestion, and pins — only the framing differs. */}
+          (navigation-night vector) so Mark sees the whole path to the
+          destination — van + every upcoming waypoint + the polyline.
+          RIGHT = satellite close-up centered on the current van location
+          (follow-cam, top-down, high zoom) for street-level detail of
+          where the van is right now. Both stay north-up
+          (followCamRotate={false}) so the van icon's heading is
+          meaningful — without that the right side was locking the icon
+          to point north regardless of travel direction. */}
       <div className="absolute inset-0 flex">
         <ClientMap
           position={pos}

@@ -458,25 +458,39 @@ function MapTab({
         });
       });
     } else {
-      // Fallback while ETA hasn't loaded yet
-      if (mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null)
-        out.push({ kind: "pickup", id: "pickup", lat: mapTrip.pickup_lat, lng: mapTrip.pickup_lng, label: mapTrip.pickup_address ?? undefined });
+      // Fallback while ETA hasn't loaded yet. Mirror the ETA endpoint's
+      // gates so we don't keep showing arrived/past waypoints:
+      //   - Legacy trip.pickup_* renders only when (a) no stops carry
+      //     coords (legacy-only trip) AND (b) status hasn't advanced
+      //     past dispatched yet. Once we hit at_pickup / onboard /
+      //     at_dropoff the pickup has been served and should disappear.
+      //   - Stops with arrived_at set are filtered out — they've been
+      //     visited, no longer pending.
+      const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
+      const showLegacyPickup =
+        !hasAnyStop &&
+        mapTrip?.pickup_lat != null &&
+        mapTrip.pickup_lng != null &&
+        (mapTrip.status === "scheduled" || mapTrip.status === "dispatched");
+      if (showLegacyPickup) {
+        out.push({ kind: "pickup", id: "pickup", lat: mapTrip!.pickup_lat!, lng: mapTrip!.pickup_lng!, label: mapTrip!.pickup_address ?? undefined });
+      }
       if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
         out.push({ kind: "dropoff", id: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
       stopsArr.forEach((s, i) => {
-        if (s.lat != null && s.lng != null) {
-          const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
-          out.push({
-            kind: "stop",
-            id: s.id,
-            lat: s.lat,
-            lng: s.lng,
-            label: s.address,
-            index: i + 1,
-            ...(sx.passenger ? { passenger: sx.passenger } : {}),
-            ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
-          });
-        }
+        if (s.lat == null || s.lng == null) return;
+        const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null; arrived_at?: string | null };
+        if (sx.arrived_at) return; // already visited — don't redraw
+        out.push({
+          kind: "stop",
+          id: s.id,
+          lat: s.lat,
+          lng: s.lng,
+          label: s.address,
+          index: i + 1,
+          ...(sx.passenger ? { passenger: sx.passenger } : {}),
+          ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
+        });
       });
     }
     if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
@@ -722,12 +736,21 @@ function MapTab({
   }, [mapTrip, stickyTripId]);
 
   // Is Mark physically in the van?
-  //   1. Trip status says onboard / at_dropoff   → yes
-  //   2. Sticky latch tripped during this trip   → yes (survives jitter)
-  //   3. Current GPS within 10m of van           → yes (transient too)
-  // Otherwise no. Joining passengers far from the van fail all three.
+  //   1. Trip status says onboard / at_dropoff       → yes (legacy single-pickup trips)
+  //   2. My stop has arrived_at set (server-derived) → yes — survives reload
+  //   3. Sticky latch tripped during this trip       → yes — covers the few seconds
+  //                                                    between getting within 10m
+  //                                                    and the server stamping
+  //                                                    arrived_at
+  //   4. Current GPS within 10m of van               → yes — transient signal
+  // Pickup is a ONE-WAY event: once Mark has been within 10m of the van during
+  // this trip, every reload should still show Dropoff (server-persisted via
+  // arrived_at). Otherwise GPS jitter / a page reload would briefly flip the UI
+  // back to "Pickup" mid-ride. Joining passengers far from the van fail all
+  // four checks.
   const inVan = useMemo(() => {
     if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
+    if (myStop?.arrived_at != null) return true;
     if (mapTrip && stickyTripId === mapTrip.id) return true;
     if (!myGps || !pos) return false;
     const R = 6_371_000;
@@ -739,7 +762,7 @@ function MapTab({
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return m < 10;
-  }, [live, mapTrip, stickyTripId, myGps, pos]);
+  }, [live, mapTrip, stickyTripId, myGps, pos, myStop]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can

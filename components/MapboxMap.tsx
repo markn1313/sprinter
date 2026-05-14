@@ -536,16 +536,22 @@ export default function MapboxMap({
       }
     }
     lastVanLngLatRef.current = { lng: position.lng, lat: position.lat, bearing };
-    // Overhead SVG natively faces UP (north) at rotation 0. In follow-cam
-    // mode the map itself rotates to the van's bearing, so the icon stays
-    // pointing up on the screen (= forward in the driver's view). In normal
-    // 2D mode we rotate the icon to the bearing instead.
+    // Overhead SVG natively faces UP (north) at rotation 0. Only skip the
+    // icon rotation when the MAP is rotating to the bearing — that's
+    // `followCam && followCamRotate` (the map turns under the icon so the
+    // icon must stay pointed up on screen). When the map is north-up — even
+    // in follow-cam mode with `followCamRotate={false}` — we still need to
+    // rotate the icon to the bearing or it loses heading. (Earlier bug: the
+    // TV right map was `followCam={true}, followCamRotate={false}` and the
+    // icon was stuck pointed north regardless of which way the van was
+    // actually traveling.)
+    const mapWillRotate = followCam && followCamRotate;
     const outer = vanMarkerRef.current.getElement();
     const inner = outer?.querySelector(".sprinter-van-rotor") as HTMLElement | null;
     if (inner) {
-      inner.style.transform = followCam ? `rotate(0deg)` : `rotate(${bearing}deg)`;
+      inner.style.transform = mapWillRotate ? `rotate(0deg)` : `rotate(${bearing}deg)`;
     }
-  }, [position, vanIconSize, followCam]);
+  }, [position, vanIconSize, followCam, followCamRotate]);
 
   // Follow-cam: track the animated van position. Throttled to ~5 Hz so we
   // don't starve Mapbox's tile loader by re-invalidating the camera every
