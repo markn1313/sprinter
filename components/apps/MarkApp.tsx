@@ -41,6 +41,8 @@ import {
   GripVertical,
   Flag,
   Trash2,
+  UserPlus,
+  Share2,
 } from "lucide-react";
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
@@ -1104,9 +1106,13 @@ function MapTab({
         className="h-full w-full"
         focusMode={focusMode}
         focusKey={focusKey}
+        // Pin-tap popups are intentionally NOT wired here. The trip
+        // card is the one place to remove / invite a passenger /
+        // reorder stops — the map is for viewing only. The single
+        // exception is `onPinDragEnd`, which lets Mark drag a pin
+        // geographically to nudge its location; that's an interaction
+        // the list can't replicate.
         onPinDragEnd={mapTrip || inEditMode ? handlePinDrag : undefined}
-        onPinRemove={mapTrip && !inEditMode ? removeStopPin : undefined}
-        onPinPassengerSave={mapTrip && !inEditMode ? savePinPassenger : undefined}
         routeLineWidth={6}
         routeGlowWidth={14}
         vanIconSize={45}
@@ -1694,7 +1700,15 @@ function TripSheet({
 }: {
   token: string;
   trip: Trip;
-  stops: Array<{ id: string; address: string; lat?: number | null; lng?: number | null; arrived_at?: string | null }>;
+  stops: Array<{
+    id: string;
+    address: string;
+    lat?: number | null;
+    lng?: number | null;
+    arrived_at?: string | null;
+    passenger?: string | null;
+    passenger_link_token?: string | null;
+  }>;
   onClose: () => void;
   refresh: () => void;
 }) {
@@ -1721,6 +1735,8 @@ function TripSheet({
     lat?: number | null;
     lng?: number | null;
     arrived_at?: string | null;
+    passenger?: string | null;
+    passenger_link_token?: string | null;
     isDropoff: boolean;
   };
   const destinations: Destination[] = [
@@ -1733,11 +1749,81 @@ function TripSheet({
             lat: trip.dropoff_lat,
             lng: trip.dropoff_lng,
             arrived_at: null,
+            passenger: null,
+            passenger_link_token: trip.passenger_link_token ?? null,
             isDropoff: true,
           },
         ]
       : []),
   ];
+
+  // Invite a passenger to a stop: prompt for name, POST it to the
+  // per-stop passenger endpoint (which mints a link), then offer to
+  // share the resulting tracking URL. Uses the same backend the map-
+  // pin popup uses; this is just a more discoverable surface.
+  const invitePassenger = async (id: string, currentName: string | null) => {
+    if (reorderBusy) return;
+    if (id.startsWith("__")) return; // dropoff invite goes through trip dispatch
+    const name =
+      typeof window !== "undefined"
+        ? window.prompt(
+            currentName ? "Update passenger name" : "Who's being picked up here?",
+            currentName ?? "",
+          )
+        : null;
+    if (name == null) return; // cancelled
+    const trimmed = name.trim();
+    setReorderErr(null);
+    setReorderBusy(true);
+    try {
+      const res = await fetch(`/api/trips/${trip.id}/stops/${id}/passenger`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: trimmed || null }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`passenger POST ${res.status}: ${body.slice(0, 200)}`);
+      }
+      const j = (await res.json().catch(() => null)) as { token?: string | null } | null;
+      if (trimmed && j?.token && typeof window !== "undefined") {
+        const url = `${window.location.origin}/p/${j.token}`;
+        await sharePassengerLink(trimmed, url);
+      }
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] invitePassenger failed", err);
+      setReorderErr((err as Error).message);
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
+  // Native share sheet if available (iOS / Android), otherwise copy
+  // the link to clipboard and surface a one-shot confirmation.
+  const sharePassengerLink = async (name: string, url: string) => {
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        await (navigator as Navigator & { share: (d: { title: string; text: string; url: string }) => Promise<void> }).share({
+          title: `Sprinter ride for ${name}`,
+          text: `Open this when you're ready — it'll show the van on its way:\n${url}`,
+          url,
+        });
+        return;
+      } catch {
+        // user cancelled or share unsupported — fall through to copy
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      if (typeof window !== "undefined") window.alert(`Link copied:\n${url}`);
+    } catch {
+      if (typeof window !== "undefined") window.prompt("Copy this link:", url);
+    }
+  };
 
   // Push the destinations array to the server. LAST entry → trip's
   // dropoff. All preceding entries → stops[]. PUT stops first (with
@@ -1956,10 +2042,40 @@ function TripSheet({
               } ${isDropTarget ? "bg-emerald-900/30 ring-1 ring-emerald-700" : ""}`}
             >
               <span className="flex-1 leading-snug">
-                {prefix} {d.address}
+                <span>{prefix} {d.address}</span>
+                {d.passenger && (
+                  <span className="ml-1 text-xs text-violet-300">· {d.passenger}</span>
+                )}
               </span>
               {isPending && (
                 <>
+                  {!d.id.startsWith("__") && (
+                    <>
+                      {d.passenger && d.passenger_link_token && (
+                        <button
+                          onClick={() => {
+                            const url = `${window.location.origin}/p/${d.passenger_link_token}`;
+                            void sharePassengerLink(d.passenger ?? "passenger", url);
+                          }}
+                          disabled={reorderBusy}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg border border-violet-900/60 bg-violet-950/30 text-violet-300 hover:bg-violet-900/40 disabled:opacity-25"
+                          aria-label="Share passenger link"
+                          title={`Share link for ${d.passenger}`}
+                        >
+                          <Share2 size={18} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => invitePassenger(d.id, d.passenger ?? null)}
+                        disabled={reorderBusy}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-violet-300 hover:bg-zinc-800 disabled:opacity-25"
+                        aria-label={d.passenger ? "Edit passenger" : "Invite passenger"}
+                        title={d.passenger ? `Edit ${d.passenger}` : "Invite passenger"}
+                      >
+                        <UserPlus size={18} />
+                      </button>
+                    </>
+                  )}
                   {!isLast && !d.id.startsWith("__") && (
                     <button
                       onClick={() => deleteStop(d.id, d.address)}
