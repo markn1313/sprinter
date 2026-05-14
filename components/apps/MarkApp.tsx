@@ -1843,7 +1843,7 @@ function TripSheet({
   // either sent the link or chosen not to; nagging them with a "copied"
   // banner after iMessage is just noise.
   const sharePassengerLink = async (name: string, url: string) => {
-    const body = `Track my ride in real time — van location updates as it moves:\n${url}`;
+    const body = `Join Sprinter trip here:\n${url}`;
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
         await (
