@@ -1740,8 +1740,14 @@ function TripSheet({
     passenger_link_token?: string | null;
     isDropoff: boolean;
   };
+  // Filter out arrived stops entirely. Mark's spec: "as soon as
+  // sprinter comes within 30m of a stop, that stop is GONE." Don't
+  // render visited stops with a checkmark — drop them from the list
+  // outright so the card always reflects what's still ahead.
   const destinations: Destination[] = [
-    ...stops.map((s) => ({ ...s, isDropoff: false })),
+    ...stops
+      .filter((s) => !s.arrived_at)
+      .map((s) => ({ ...s, isDropoff: false })),
     ...(trip.dropoff_address && trip.dropoff_lat != null && trip.dropoff_lng != null
       ? [
           {
@@ -2064,7 +2070,11 @@ function TripSheet({
     <Sheet title={`Trip · ${statusLabel(trip.status)}`} onClose={onClose}>
       <div className="text-base font-semibold text-zinc-100">{trip.passenger_name}</div>
       <div className="mt-2 space-y-1.5 text-sm text-zinc-300">
-        {trip.pickup_address && (
+        {/* Legacy pickup line — only when pickup hasn't been reached
+            yet. Once the van crosses the 30m gate (state machine
+            stamps trip.arrived_at_pickup_at), the pickup is in the
+            past and shouldn't clutter the destinations list. */}
+        {trip.pickup_address && !trip.arrived_at_pickup_at && (
           <div className="py-1">📍 {trip.pickup_address}</div>
         )}
         {destinations.map((d, i) => {
