@@ -70,6 +70,12 @@ interface EtaShape {
   } | null;
 }
 
+// Stable storage key for the destination Dio last acknowledged.
+// Persists across reloads so a casual app refresh mid-trip doesn't
+// re-flash an already-seen destination. Cleared automatically when
+// the destination changes (the new key won't match).
+const DIO_ACK_DEST_KEY = "sprinter:dio:acked_destination";
+
 function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
   // The ETA endpoint's "next waypoint" knows about stops + arrived-at
   // flags so it always reflects the right next destination. Trip's
@@ -83,6 +89,38 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
   const fallbackAddr = fallbackTarget === "pickup" ? trip.pickup_address : trip.dropoff_address;
   const kind: "pickup" | "stop" | "dropoff" = next?.kind ?? fallbackTarget;
   const label = next?.label ?? fallbackAddr ?? "(no address)";
+
+  // Stable identity for the current destination. Used to detect when
+  // Mark's changed it: if `destKey` doesn't match what Dio acknowledged
+  // last, the card flashes gold until he taps it or hits Navigate.
+  // Trip id + kind + label is sufficient — when Mark swaps an address
+  // the label changes; when the trip's destination kind transitions
+  // (pickup→dropoff after pickup arrival) the kind changes.
+  const destKey = useMemo(
+    () => `${trip.id}|${kind}|${label}`,
+    [trip.id, kind, label],
+  );
+
+  const [acknowledgedKey, setAcknowledgedKey] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return window.localStorage.getItem(DIO_ACK_DEST_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const isNewDestination = destKey !== acknowledgedKey;
+  const acknowledge = useCallback(() => {
+    setAcknowledgedKey(destKey);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(DIO_ACK_DEST_KEY, destKey);
+      } catch {
+        // private mode / quota — fine, the in-memory state already
+        // suppresses the flash for this session.
+      }
+    }
+  }, [destKey]);
 
   // Where Google Maps should drop the user. Use the trip's dropoff/pickup
   // lat/lng — the ETA endpoint doesn't echo per-waypoint coords today.
@@ -127,7 +165,36 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-3xl border border-zinc-800 bg-zinc-950/90 p-5">
+      {/* Inline keyframes for the gold-flash. Loaded once; the
+          .sprinter-dest-new class is gated by isNewDestination below
+          so the animation only runs on a destination Dio hasn't
+          acknowledged yet. */}
+      <style>{`
+        @keyframes sprinter-dest-gold-pulse {
+          0%, 100% {
+            box-shadow:
+              0 0 0 4px rgba(250, 204, 21, 1),
+              0 0 24px 8px rgba(250, 204, 21, 0.55);
+          }
+          50% {
+            box-shadow:
+              0 0 0 6px rgba(250, 204, 21, 0.35),
+              0 0 36px 18px rgba(250, 204, 21, 0.15);
+          }
+        }
+        .sprinter-dest-new {
+          animation: sprinter-dest-gold-pulse 1.2s ease-in-out infinite;
+          border-color: rgb(250, 204, 21) !important;
+        }
+      `}</style>
+      <div
+        onClick={acknowledge}
+        className={`rounded-3xl border bg-zinc-950/90 p-5 transition-all ${
+          isNewDestination
+            ? "sprinter-dest-new cursor-pointer border-yellow-400"
+            : "border-zinc-800"
+        }`}
+      >
         <div className={`text-xs uppercase tracking-widest ${typeTint}`}>{typeLabel}</div>
         <div className="mt-2 text-3xl font-bold leading-tight text-zinc-100">
           {compactAddr(label)}
@@ -160,6 +227,7 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
           href={navUrl}
           target="_blank"
           rel="noreferrer"
+          onClick={acknowledge}
           className="flex h-20 w-full items-center justify-center gap-3 rounded-3xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-2xl font-bold text-white shadow-2xl shadow-emerald-900/40 active:scale-[0.99]"
         >
           <Navigation size={28} /> Navigate
