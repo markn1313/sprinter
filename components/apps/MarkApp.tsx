@@ -1830,26 +1830,36 @@ function TripSheet({
     }
   };
 
-  // Native share sheet if available (iOS / Android), otherwise copy
-  // the link to clipboard and surface a one-shot confirmation.
+  // Open the native share sheet (iOS/Android). The recipient lands on
+  // /p/<token> with the full passenger app (same map + trip card +
+  // chat that Mark sees; settings tab is restricted to push toggle).
+  //
+  // On platforms with no Web Share API (mostly desktop), fall back to
+  // an `sms:` deep link that opens iMessage with the URL prefilled.
+  // Last resort copies silently to clipboard. Deliberately no follow-
+  // up alert / prompt — once the share sheet closes, the user has
+  // either sent the link or chosen not to; nagging them with a "copied"
+  // banner after iMessage is just noise.
   const sharePassengerLink = async (name: string, url: string) => {
+    const body = `Track my ride in real time — van location updates as it moves:\n${url}`;
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        await (navigator as Navigator & { share: (d: { title: string; text: string; url: string }) => Promise<void> }).share({
-          title: `Sprinter ride for ${name}`,
-          text: `Open this when you're ready — it'll show the van on its way:\n${url}`,
+        await (
+          navigator as Navigator & {
+            share: (d: { title: string; text: string; url: string }) => Promise<void>;
+          }
+        ).share({
+          title: `Sprinter ride${name && name !== "passenger" ? ` for ${name}` : ""}`,
+          text: body,
           url,
         });
-        return;
       } catch {
-        // user cancelled or share unsupported — fall through to copy
+        // user cancelled or platform rejected the share — drop silently
       }
+      return;
     }
-    try {
-      await navigator.clipboard.writeText(url);
-      if (typeof window !== "undefined") window.alert(`Link copied:\n${url}`);
-    } catch {
-      if (typeof window !== "undefined") window.prompt("Copy this link:", url);
+    if (typeof window !== "undefined") {
+      window.location.href = `sms:&body=${encodeURIComponent(body)}`;
     }
   };
 
@@ -2156,18 +2166,19 @@ function TripSheet({
       <div className="mt-4">
         <AddressAutocomplete token={token} onSelect={addStopAddress} placeholder="Add a stop or destination — autocompletes" />
       </div>
-      {/* Share live tracking link with anyone, anytime. Mints (or
-          reuses) the trip-level passenger link via /invite-guest and
-          fires the native share sheet so Mark can fire it off to a
-          friend, a meeting party, anyone who wants to see the van
-          coming. Distinct from the per-stop UserPlus button above,
-          which mints a NAMED link tied to a specific pickup. */}
+      {/* Invite passenger — mints (or reuses) the trip-level passenger
+          link via /invite-guest and opens the native share sheet. The
+          recipient gets the FULL passenger app at /p/<token> (same map,
+          trip card, chat, all of it — only the settings tab is
+          restricted to push toggle). Distinct from the per-stop
+          UserPlus button above, which mints a NAMED link tied to a
+          specific pickup point. */}
       <button
         onClick={inviteGuest}
         disabled={reorderBusy}
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
       >
-        <Share2 size={16} /> Share live tracking link
+        <UserPlus size={16} /> Invite passenger
       </button>
       <button
         onClick={cancelTrip}
