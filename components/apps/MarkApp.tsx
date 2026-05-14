@@ -1843,7 +1843,10 @@ function TripSheet({
   // either sent the link or chosen not to; nagging them with a "copied"
   // banner after iMessage is just noise.
   const sharePassengerLink = async (name: string, url: string) => {
-    const body = `Join Sprinter trip here:\n${url}`;
+    // Keep the URL OUT of the `text` field — iOS appends it
+    // automatically, so including it here makes the link show up
+    // twice in iMessage. Same pattern as ShareTripButton.
+    const text = "Join Sprinter trip here:";
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
         await (
@@ -1852,7 +1855,7 @@ function TripSheet({
           }
         ).share({
           title: `Sprinter ride${name && name !== "passenger" ? ` for ${name}` : ""}`,
-          text: body,
+          text,
           url,
         });
       } catch {
@@ -1861,7 +1864,7 @@ function TripSheet({
       return;
     }
     if (typeof window !== "undefined") {
-      window.location.href = `sms:&body=${encodeURIComponent(body)}`;
+      window.location.href = `sms:&body=${encodeURIComponent(`${text}\n${url}`)}`;
     }
   };
 

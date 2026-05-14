@@ -46,7 +46,12 @@ export default function ShareTripButton({
       if (!res.ok) return;
       const { token: passengerToken } = (await res.json()) as { token: string };
       const url = `${window.location.origin}/p/${passengerToken}`;
-      const body = `Join Sprinter trip here:\n${url}`;
+      // iOS / Web Share API appends the URL to the text automatically
+      // when shared to Messages. Don't include the URL in `text` or
+      // it shows up TWICE (once from the text, once appended). Keep
+      // the text as just the headline; the platform pairs it with the
+      // url field.
+      const text = "Join Sprinter trip here:";
       if ("share" in navigator) {
         try {
           await (
@@ -55,7 +60,7 @@ export default function ShareTripButton({
             }
           ).share({
             title: tripId ? "Sprinter ride" : "Sprinter van",
-            text: body,
+            text,
             url,
           });
         } catch {
@@ -66,7 +71,9 @@ export default function ShareTripButton({
         // forward Mark to Messages a SECOND time after he just sent.
         return;
       }
-      window.location.href = `sms:&body=${encodeURIComponent(body)}`;
+      // sms: deep link has no separate URL field — include the URL
+      // in the body manually.
+      window.location.href = `sms:&body=${encodeURIComponent(`${text}\n${url}`)}`;
     } finally {
       setBusy(false);
     }
