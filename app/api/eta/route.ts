@@ -211,8 +211,16 @@ export async function GET(req: Request) {
       if (distM > 400) includeLegacyPickup = false;
     }
   }
-  // Same drop-past-pickup logic for onboard / at_dropoff states.
-  if (t.status === "onboard" || t.status === "at_dropoff" || t.status === "complete") {
+  // Same drop-past-pickup logic for at_pickup / onboard / at_dropoff /
+  // complete. at_pickup means the van has crossed the 100m geofence
+  // — the pickup leg is in the past even if the state machine hasn't
+  // flipped to onboard yet, so it shouldn't be drawn or rerouted to.
+  if (
+    t.status === "at_pickup" ||
+    t.status === "onboard" ||
+    t.status === "at_dropoff" ||
+    t.status === "complete"
+  ) {
     includeLegacyPickup = false;
   }
   if (includeLegacyPickup && t.pickup_lat != null && t.pickup_lng != null) {
