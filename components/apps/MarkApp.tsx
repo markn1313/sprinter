@@ -736,12 +736,21 @@ function MapTab({
   }, [mapTrip, stickyTripId]);
 
   // Is Mark physically in the van?
-  //   1. Trip status says onboard / at_dropoff   → yes
-  //   2. Sticky latch tripped during this trip   → yes (survives jitter)
-  //   3. Current GPS within 10m of van           → yes (transient too)
-  // Otherwise no. Joining passengers far from the van fail all three.
+  //   1. Trip status says onboard / at_dropoff       → yes (legacy single-pickup trips)
+  //   2. My stop has arrived_at set (server-derived) → yes — survives reload
+  //   3. Sticky latch tripped during this trip       → yes — covers the few seconds
+  //                                                    between getting within 10m
+  //                                                    and the server stamping
+  //                                                    arrived_at
+  //   4. Current GPS within 10m of van               → yes — transient signal
+  // Pickup is a ONE-WAY event: once Mark has been within 10m of the van during
+  // this trip, every reload should still show Dropoff (server-persisted via
+  // arrived_at). Otherwise GPS jitter / a page reload would briefly flip the UI
+  // back to "Pickup" mid-ride. Joining passengers far from the van fail all
+  // four checks.
   const inVan = useMemo(() => {
     if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
+    if (myStop?.arrived_at != null) return true;
     if (mapTrip && stickyTripId === mapTrip.id) return true;
     if (!myGps || !pos) return false;
     const R = 6_371_000;
@@ -753,7 +762,7 @@ function MapTab({
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return m < 10;
-  }, [live, mapTrip, stickyTripId, myGps, pos]);
+  }, [live, mapTrip, stickyTripId, myGps, pos, myStop]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can
