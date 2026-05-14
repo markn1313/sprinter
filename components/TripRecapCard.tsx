@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Trip } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { shortAddr } from "@/lib/format";
-import { CheckCircle2, MapPin, Flag, UserPlus, X } from "lucide-react";
+import { CheckCircle2, MapPin, Flag, X } from "lucide-react";
 
 interface RecapStats {
   miles: number;
@@ -50,7 +50,6 @@ export default function TripRecapCard({ token }: { token: string }) {
   const [trip, setTrip] = useState<TripWithExtras | null>(null);
   const [stats, setStats] = useState<RecapStats | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,42 +90,6 @@ export default function TripRecapCard({ token }: { token: string }) {
     persistDismissed(next);
   };
 
-  // Mint (or reuse) the trip's passenger link via /invite-guest and
-  // share it via the native share sheet. Works even after the trip
-  // completes — the recipient sees the trip in its final state
-  // (historical view, no live van movement). Mark uses this when a
-  // friend pings him "where'd you end up?" after the ride.
-  const invite = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/trips/${trip.id}/invite-guest`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const j = (await res.json().catch(() => null)) as { token?: string } | null;
-      if (!j?.token || typeof window === "undefined") return;
-      const url = `${window.location.origin}/p/${j.token}`;
-      const body = `Here's the ride: ${url}`;
-      if ("share" in navigator) {
-        try {
-          await (
-            navigator as Navigator & {
-              share: (d: { title: string; text: string; url: string }) => Promise<void>;
-            }
-          ).share({ title: "Sprinter ride", text: body, url });
-        } catch {
-          // user cancelled — drop silently
-        }
-      } else {
-        window.location.href = `sms:&body=${encodeURIComponent(body)}`;
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="relative rounded-2xl border border-zinc-800 bg-zinc-950/95 p-4 backdrop-blur shadow-xl">
       <button
@@ -158,13 +121,6 @@ export default function TripRecapCard({ token }: { token: string }) {
         <Stat value={dur != null ? dur.toString() : "—"} unit="min" label="Duration" />
         <Stat value={stats ? `$${stats.fuel_cost_dollars}` : "—"} label="Fuel" />
       </div>
-      <button
-        onClick={invite}
-        disabled={busy}
-        className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
-      >
-        <UserPlus size={14} /> Invite passenger
-      </button>
     </div>
   );
 }
