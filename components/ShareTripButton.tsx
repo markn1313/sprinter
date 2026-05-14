@@ -58,10 +58,13 @@ export default function ShareTripButton({
             text: body,
             url,
           });
-          return;
         } catch {
-          // user cancelled or platform rejected — fall through silently
+          // user cancelled or platform rejected — drop silently
         }
+        // Web Share API was available: success OR cancel both end here.
+        // Don't fall through to the `sms:` deep link, that would
+        // forward Mark to Messages a SECOND time after he just sent.
+        return;
       }
       window.location.href = `sms:&body=${encodeURIComponent(body)}`;
     } finally {
