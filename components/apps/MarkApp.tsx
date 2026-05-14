@@ -38,8 +38,7 @@ import {
   MessageCircle,
   HelpCircle,
   Fuel,
-  ChevronUp,
-  ChevronDown,
+  GripVertical,
   Flag,
 } from "lucide-react";
 
@@ -1304,13 +1303,27 @@ function MapTab({
         </button>
         {pos && (
           <>
+            {/* Combined fuel/range chip. Range is the actionable
+                number (how far can we go), fuel % is the secondary
+                context (how full is the tank). Fuel icon implies
+                the topic so we don't need both labels. */}
             <VitalChip>
               <Fuel size={11} className="text-emerald-400" />
-              <span>{pos.fuel_pct != null ? `${(pos.fuel_pct * 100).toFixed(0)}%` : "—"}</span>
-            </VitalChip>
-            <VitalChip>
-              <span className="text-emerald-400">↗</span>
-              <span title={range?.mpg_source === "bouncie_trips" && range.mpg ? `${range.mpg.toFixed(1)} mpg · ${range.window_miles?.toFixed(0)} mi over ${range.window_days}d` : undefined}>{range?.range_miles ?? "—"} mi</span>
+              <span
+                title={
+                  range?.mpg_source === "bouncie_trips" && range.mpg
+                    ? `${range.mpg.toFixed(1)} mpg · ${range.window_miles?.toFixed(0)} mi over ${range.window_days}d`
+                    : undefined
+                }
+              >
+                {range?.range_miles ?? "—"} mi
+                {pos.fuel_pct != null && (
+                  <span className="text-zinc-500">
+                    {" · "}
+                    {(pos.fuel_pct * 100).toFixed(0)}%
+                  </span>
+                )}
+              </span>
             </VitalChip>
             <SpeedChip mph={pos.speed_mph ?? null} />
           </>
@@ -1778,25 +1791,62 @@ function TripSheet({
     }
   };
 
-  // Swap two adjacent destinations. Arrived stops can't move; can't
-  // swap across the arrived/pending boundary.
-  const moveDestination = async (id: string, dir: "up" | "down") => {
+  // Drag-to-reorder state. Touch-friendly pointer-events: capture on
+  // the grip handle means we get pointermove on the button even when
+  // the finger wanders over neighboring rows, and rowRefs let us
+  // hit-test which row the pointer is currently over.
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dragRef = useRef<{ id: string; pointerId: number } | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const startDrag = (id: string, e: React.PointerEvent<HTMLElement>) => {
     if (reorderBusy) return;
-    setReorderErr(null);
-    const idx = destinations.findIndex((d) => d.id === id);
-    if (idx < 0) return;
+    dragRef.current = { id, pointerId: e.pointerId };
+    setDraggingId(id);
+    setDragOverId(id);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — some browsers reject the capture on synthetic events
+    }
+  };
+
+  const onDragMove = (e: React.PointerEvent<HTMLElement>) => {
+    if (!dragRef.current) return;
+    const y = e.clientY;
+    for (const [rid, el] of rowRefs.current) {
+      const r = el.getBoundingClientRect();
+      if (y >= r.top && y < r.bottom) {
+        setDragOverId(rid);
+        return;
+      }
+    }
+  };
+
+  const endDrag = async () => {
+    const drag = dragRef.current;
+    const overId = dragOverId;
+    dragRef.current = null;
+    setDraggingId(null);
+    setDragOverId(null);
+    if (!drag || !overId || overId === drag.id) return;
+    const fromIdx = destinations.findIndex((d) => d.id === drag.id);
+    const toIdx = destinations.findIndex((d) => d.id === overId);
+    if (fromIdx < 0 || toIdx < 0) return;
     const firstPending = destinations.findIndex((d) => !d.arrived_at);
-    if (idx < firstPending) return;
-    const target = dir === "up" ? idx - 1 : idx + 1;
-    if (target < firstPending || target >= destinations.length) return;
+    // Can't drop into the arrived/historical range.
+    if (toIdx < firstPending) return;
     const next = destinations.slice();
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const [picked] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, picked);
+    setReorderErr(null);
     setReorderBusy(true);
     try {
       await persist(next);
       refresh();
     } catch (err) {
-      console.warn("[MarkApp] moveDestination failed", err);
+      console.warn("[MarkApp] drag reorder failed", err);
       setReorderErr((err as Error).message);
     } finally {
       setReorderBusy(false);
@@ -1856,35 +1906,27 @@ function TripSheet({
           <div className="py-1">📍 {trip.pickup_address}</div>
         )}
         {destinations.map((d, i) => {
-          const firstPending = destinations.findIndex((x) => !x.arrived_at);
           const isPending = !d.arrived_at;
-          const canUp = isPending && i > firstPending;
-          const canDown = isPending && i < destinations.length - 1;
           const isLast = i === destinations.length - 1;
           const prefix = d.arrived_at ? "✓" : isLast ? "🏁" : `${i + 1}.`;
+          const isDragSource = draggingId === d.id;
+          const isDropTarget = dragOverId === d.id && draggingId && draggingId !== d.id;
           return (
-            <div key={d.id} className="flex items-center gap-1.5">
+            <div
+              key={d.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(d.id, el);
+                else rowRefs.current.delete(d.id);
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-1 py-1 transition-colors ${
+                isDragSource ? "opacity-40" : ""
+              } ${isDropTarget ? "bg-emerald-900/30 ring-1 ring-emerald-700" : ""}`}
+            >
               <span className="flex-1 leading-snug">
                 {prefix} {d.address}
               </span>
               {isPending && (
                 <>
-                  <button
-                    onClick={() => moveDestination(d.id, "up")}
-                    disabled={!canUp || reorderBusy}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 disabled:opacity-25"
-                    aria-label="Move up"
-                  >
-                    <ChevronUp size={20} />
-                  </button>
-                  <button
-                    onClick={() => moveDestination(d.id, "down")}
-                    disabled={!canDown || reorderBusy}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 disabled:opacity-25"
-                    aria-label="Move down"
-                  >
-                    <ChevronDown size={20} />
-                  </button>
                   {!isLast && (
                     <button
                       onClick={() => promoteToDropoff(d.id)}
@@ -1896,6 +1938,22 @@ function TripSheet({
                       <Flag size={18} />
                     </button>
                   )}
+                  {/* Drag handle. Pointer events on the handle only —
+                      tapping the row text still lets the sheet scroll
+                      normally. touch-action: none stops the browser
+                      from claiming the touch as a vertical scroll. */}
+                  <button
+                    onPointerDown={(e) => startDrag(d.id, e)}
+                    onPointerMove={onDragMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    disabled={reorderBusy}
+                    style={{ touchAction: "none" }}
+                    className="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:bg-zinc-800 active:cursor-grabbing disabled:opacity-25"
+                    aria-label="Drag to reorder"
+                  >
+                    <GripVertical size={20} />
+                  </button>
                 </>
               )}
             </div>
