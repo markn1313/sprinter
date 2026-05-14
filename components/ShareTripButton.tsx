@@ -46,9 +46,7 @@ export default function ShareTripButton({
       if (!res.ok) return;
       const { token: passengerToken } = (await res.json()) as { token: string };
       const url = `${window.location.origin}/p/${passengerToken}`;
-      const body = tripId
-        ? `Live track my ride — van location updates in real time:\n${url}`
-        : `Track my van in real time:\n${url}`;
+      const body = `Join Sprinter trip here:\n${url}`;
       if ("share" in navigator) {
         try {
           await (
