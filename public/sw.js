@@ -1,7 +1,14 @@
-/* Sprinter PWA service worker — push notifications */
+/* Sprinter PWA service worker — push notifications + installability */
 
 self.addEventListener('install', (e) => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+// Empty fetch handler. Chromium's PWA-installability heuristic wants the
+// service worker to have a fetch listener registered before it will fire
+// `beforeinstallprompt`. We don't cache or intercept anything — the app
+// is online-only — so requests pass straight through to the network.
+// This handler's only job is to exist.
+self.addEventListener('fetch', () => {});
 
 self.addEventListener('push', (event) => {
   let data = {};

@@ -10,6 +10,7 @@ import { api, postJson } from "@/lib/api-client";
 import { googleMapsTo } from "@/lib/maps-link";
 import { compactAddr } from "@/lib/format";
 import PushToggle from "@/components/PushToggle";
+import InstallPrompt from "@/components/InstallPrompt";
 import {
   Bell,
   MessageCircle,
@@ -50,6 +51,10 @@ export default function DioApp({ token, name: _name }: { token: string; name: st
           <PushToggle token={token} />
         </div>
       </div>
+      {/* Add-to-Home-Screen prompt. Dio is a daily user — installing
+          unlocks reliable push alerts for new trips, so he gets the
+          firm nudge. */}
+      <InstallPrompt role="dio" />
     </div>
   );
 }

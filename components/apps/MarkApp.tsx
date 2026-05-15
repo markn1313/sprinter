@@ -26,6 +26,7 @@ import CabinChat from "@/components/CabinChat";
 import CabinQuickStrip from "@/components/CabinQuickStrip";
 import DriverChat, { useUnreadDriverChat } from "@/components/DriverChat";
 import VanIcon from "@/components/VanIcon";
+import InstallPrompt from "@/components/InstallPrompt";
 import { useRange } from "@/components/useRange";
 import {
   Map as MapIcon,
@@ -144,6 +145,11 @@ export default function MarkApp({
           <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={20} />} label="Settings" />
         </div>
       </nav>
+
+      {/* Add-to-Home-Screen prompt. Role-aware: Mark gets a firm nudge,
+          a one-ride passenger gets a soft one-time ask (and nothing at
+          all if they're stuck in the iMessage in-app browser). */}
+      <InstallPrompt role={role} />
     </div>
   );
 }
