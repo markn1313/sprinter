@@ -260,6 +260,14 @@ function MapTab({
   const [editPin, setEditPin] = useState<{ lat: number; lng: number } | null>(null);
   const [editAddress, setEditAddress] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  // Inline error surfaced under the action button in the edit panel.
+  // Set by commit handlers when (a) there's no trip to mutate — a passenger
+  // tracking via a generic link with trip_id=null hits this, the live trip
+  // 404s on PATCH otherwise — or (b) the server returns non-OK. Clearing
+  // on exitEdit so it doesn't bleed across edit sessions. Replaces the
+  // earlier silent-return + console.warn behaviour that made the button
+  // look broken to passengers ("I tapped Set dropoff and nothing happened").
+  const [editError, setEditError] = useState<string | null>(null);
   // Van → pin route preview (replaces ambient van→me when in any edit mode).
   const [editRoute, setEditRoute] = useState<{ polyline: string | null; congestion: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes: number | null; distance_miles: number | null }>(
     { polyline: null, congestion: null, eta_minutes: null, distance_miles: null },
@@ -824,6 +832,7 @@ function MapTab({
     setEditTarget(null);
     setEditPin(null);
     setEditAddress(null);
+    setEditError(null);
     setEditRoute({ polyline: null, congestion: null, eta_minutes: null, distance_miles: null });
   };
   // Legacy alias name kept for the existing X-Cancel button. The button
@@ -956,14 +965,22 @@ function MapTab({
   };
 
   // Commit a dropoff change — PATCH the live trip's dropoff fields. Mark
-  // is by definition in the van, so a live trip must exist.
+  // is by definition in the van, so a live trip usually exists; passengers
+  // tracking via a generic ("Van tracker") link with trip_id=null can also
+  // reach this handler and we surface that as an inline error instead of
+  // a silent no-op (which used to look like "I tapped the button and
+  // nothing happened" — see 2026-05-20 incident).
   const commitDropoff = async () => {
     if (!editPin || editBusy) return;
     setEditBusy(true);
+    setEditError(null);
     try {
       const trip = live ?? mapTrip;
-      if (!trip) return;
-      await fetch(`/api/trips/${trip.id}`, {
+      if (!trip) {
+        setEditError("No active trip yet. Ask Mark to dispatch you first.");
+        return;
+      }
+      const res = await fetch(`/api/trips/${trip.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -972,10 +989,15 @@ function MapTab({
           dropoff_address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
         }),
       });
+      if (!res.ok) {
+        setEditError(`Couldn't save dropoff (${res.status}). Try again.`);
+        return;
+      }
       exitEdit();
       refresh();
     } catch (err) {
       console.warn("[MarkApp] dropoff commit failed", err);
+      setEditError("Couldn't save dropoff. Check connection and try again.");
     } finally {
       setEditBusy(false);
     }
@@ -988,9 +1010,13 @@ function MapTab({
   const commitStop = async () => {
     if (!editPin || editBusy) return;
     setEditBusy(true);
+    setEditError(null);
     try {
       const trip = live ?? mapTrip;
-      if (!trip) return;
+      if (!trip) {
+        setEditError("No active trip yet. Ask Mark to dispatch you first.");
+        return;
+      }
       const newStop = {
         id: crypto.randomUUID(),
         kind: "stop",
@@ -1001,15 +1027,20 @@ function MapTab({
         arrived_at: null,
         added_at: new Date().toISOString(),
       };
-      await fetch(`/api/trips/${trip.id}/stops`, {
+      const res = await fetch(`/api/trips/${trip.id}/stops`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ stops: [...stopsArr, newStop] }),
       });
+      if (!res.ok) {
+        setEditError(`Couldn't add stop (${res.status}). Try again.`);
+        return;
+      }
       exitEdit();
       refresh();
     } catch (err) {
       console.warn("[MarkApp] stop commit failed", err);
+      setEditError("Couldn't add stop. Check connection and try again.");
     } finally {
       setEditBusy(false);
     }
@@ -1486,7 +1517,16 @@ function MapTab({
                 })}
               </div>
             ) : (
-              <div className="mt-2 flex items-stretch gap-2">
+              <div className="mt-2 flex flex-col gap-2">
+                {editError && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-red-700/60 bg-red-950/50 px-3 py-2 text-xs font-medium text-red-200"
+                  >
+                    {editError}
+                  </div>
+                )}
+                <div className="flex items-stretch gap-2">
                 <button
                   onClick={dropoffMode ? commitDropoff : commitStop}
                   disabled={editBusy || !editPin}
@@ -1508,6 +1548,7 @@ function MapTab({
                     Clear all
                   </button>
                 )}
+                </div>
               </div>
             )}
           </div>
