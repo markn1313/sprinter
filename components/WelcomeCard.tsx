@@ -50,15 +50,15 @@ export default function WelcomeCard({ token, vanLat, vanLng, myLat, myLng, onDis
     if (busy) return;
     setBusy(true);
     try {
-      const coords = await getGps();
-      await postJson(token, "/api/quick-pickup", {
-        lat: coords.lat,
-        lng: coords.lng,
-        address: "My current location",
-        dropoff_address: home.address,
-        dropoff_lat: home.lat,
-        dropoff_lng: home.lng,
-        notes: "Take me home",
+      // /api/destinations is the single bootstrap-or-append endpoint.
+      // Pickup is derived server-side from the van's GPS — we only send
+      // the destination. idempotencyKey protects against double-taps and
+      // offline-queue replays creating two trips.
+      await postJson(token, "/api/destinations", {
+        address: home.address,
+        lat: home.lat,
+        lng: home.lng,
+        idempotencyKey: crypto.randomUUID(),
       });
       onDispatched?.();
     } finally {
@@ -98,18 +98,4 @@ function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 function shortLabel(addr: string): string {
   return addr.split(",")[0].trim();
-}
-
-function getGps(): Promise<{ lat: number; lng: number }> {
-  return new Promise((resolve, reject) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("Geolocation not available"));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => reject(new Error(err.message)),
-      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 15_000 },
-    );
-  });
 }

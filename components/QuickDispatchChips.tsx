@@ -39,15 +39,15 @@ export default function QuickDispatchChips({
     if (busy) return;
     setBusy(d.address);
     try {
-      const coords = await getGps();
-      await postJson(token, "/api/quick-pickup", {
-        lat: coords.lat,
-        lng: coords.lng,
-        address: "My current location",
-        dropoff_address: d.address,
-        dropoff_lat: d.lat,
-        dropoff_lng: d.lng,
-        notes: `Quick dispatch: ${d.address}`,
+      // /api/destinations is the single bootstrap-or-append endpoint —
+      // pickup is derived from the van's GPS server-side, we only send
+      // the destination. Fresh idempotencyKey per tap so double-tapping
+      // the same chip can't accidentally create two trips.
+      await postJson(token, "/api/destinations", {
+        address: d.address,
+        lat: d.lat,
+        lng: d.lng,
+        idempotencyKey: crypto.randomUUID(),
       });
       onDispatched?.();
     } catch (err) {
@@ -150,18 +150,4 @@ export default function QuickDispatchChips({
 function shortLabel(addr: string): string {
   const first = shortAddr(addr);
   return first.length > 28 ? first.slice(0, 26) + "…" : first;
-}
-
-function getGps(): Promise<{ lat: number; lng: number }> {
-  return new Promise((resolve, reject) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      reject(new Error("Geolocation not available"));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => reject(new Error(err.message)),
-      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 15_000 },
-    );
-  });
 }

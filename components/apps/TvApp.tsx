@@ -38,43 +38,13 @@ export default function TvApp({ token }: { token: string }) {
   const { eta } = useEta(token, focus?.id ?? null, 20_000);
   const range = useRange(token);
 
-  // Destination chain for the focused trip. Defensive fallback: if a
-  // legacy trip somehow still has empty stops[] after the backfill
-  // migration, synthesize the chain from the dual-written pickup_* /
-  // dropoff_* columns so the TV doesn't blank out. New code paths only
-  // ever read from this `stopsArr` going forward.
-  const focusUnknown = focus as unknown as {
-    stops?: Stop[];
-    pickup_lat?: number | null;
-    pickup_lng?: number | null;
-    pickup_address?: string | null;
-    dropoff_lat?: number | null;
-    dropoff_lng?: number | null;
-    dropoff_address?: string | null;
-  };
+  // Destination chain for the focused trip. The backfill migration
+  // (2026-05-20) guaranteed every existing trip has stops[] populated,
+  // and the legacy pickup_*/dropoff_* columns are gone, so this is just
+  // a passthrough.
   const stopsArr: Stop[] = useMemo(() => {
-    const fromChain = focusUnknown?.stops ?? [];
-    if (fromChain.length > 0) return fromChain;
-    if (!focus) return [];
-    const fallback: Stop[] = [];
-    if (focus.pickup_lat != null && focus.pickup_lng != null) {
-      fallback.push({
-        lat: focus.pickup_lat,
-        lng: focus.pickup_lng,
-        address: focus.pickup_address ?? "",
-        arrived_at: focus.arrived_at_pickup_at ?? focus.onboard_at,
-      });
-    }
-    if (focus.dropoff_lat != null && focus.dropoff_lng != null) {
-      fallback.push({
-        lat: focus.dropoff_lat,
-        lng: focus.dropoff_lng,
-        address: focus.dropoff_address ?? "",
-        arrived_at: focus.arrived_at_dropoff_at,
-      });
-    }
-    return fallback;
-  }, [focus, focusUnknown?.stops]);
+    return (focus as unknown as { stops?: Stop[] } | null)?.stops ?? [];
+  }, [focus]);
 
   // Speed-adaptive zoom for the right (close-up) map. Faster = wider
   // framing so the viewer can see what's coming up; slower / stopped =

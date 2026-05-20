@@ -61,38 +61,57 @@ export async function POST(req: Request) {
     else pickupAddress = `${body.lat.toFixed(5)}, ${body.lng.toFixed(5)}`;
   }
 
-  // Universal-Pickup data model: the requester's pickup is now a stop
-  // in stops[], not a special field on the trip. We still dual-write
-  // trip.pickup_* for backward compat with any reader that hasn't been
-  // migrated to read stops; those reads will be cut over in a follow-up.
+  // Destinations-as-chain model: pickup is stops[0], optional dropoff
+  // is stops[stops.length-1]. Legacy pickup_*/dropoff_* columns dropped
+  // in 2026-05-20 schema migration.
   const requesterName = (body.passenger ?? "Mark").trim() || "Mark";
-  const initialStops =
-    typeof body.lat === "number" && typeof body.lng === "number"
-      ? [
-          {
-            id: crypto.randomUUID(),
-            kind: "stop" as const,
-            address: pickupAddress,
-            lat: body.lat,
-            lng: body.lng,
-            passenger: requesterName,
-            created_by_token: body.created_by_token ?? ctx.token,
-            arrived_at: null,
-            added_at: new Date().toISOString(),
-          },
-        ]
-      : [];
+  const nowIso = new Date().toISOString();
+  const initialStops: Array<{
+    id: string;
+    kind: "stop";
+    address: string;
+    lat: number;
+    lng: number;
+    passenger: string | null;
+    created_by_token: string | null;
+    arrived_at: string | null;
+    added_at: string;
+  }> = [];
+  if (typeof body.lat === "number" && typeof body.lng === "number") {
+    initialStops.push({
+      id: crypto.randomUUID(),
+      kind: "stop",
+      address: pickupAddress,
+      lat: body.lat,
+      lng: body.lng,
+      passenger: requesterName,
+      created_by_token: body.created_by_token ?? ctx.token,
+      arrived_at: null,
+      added_at: nowIso,
+    });
+  }
+  if (
+    body.dropoff_address &&
+    typeof body.dropoff_lat === "number" &&
+    typeof body.dropoff_lng === "number"
+  ) {
+    initialStops.push({
+      id: crypto.randomUUID(),
+      kind: "stop",
+      address: body.dropoff_address,
+      lat: body.dropoff_lat,
+      lng: body.dropoff_lng,
+      passenger: null,
+      created_by_token: body.created_by_token ?? ctx.token,
+      arrived_at: null,
+      added_at: nowIso,
+    });
+  }
 
   const { data: trip, error } = await sb
     .from("trips")
     .insert({
       passenger_name: requesterName,
-      pickup_address: pickupAddress,
-      pickup_lat: body.lat ?? null,
-      pickup_lng: body.lng ?? null,
-      dropoff_address: body.dropoff_address ?? null,
-      dropoff_lat: body.dropoff_lat ?? null,
-      dropoff_lng: body.dropoff_lng ?? null,
       scheduled_at: scheduledAt,
       status: "scheduled",
       notes: body.notes ?? "Pick me up",

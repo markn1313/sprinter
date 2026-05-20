@@ -59,43 +59,56 @@ export async function POST(req: Request) {
     }
   }
 
-  // Universal-Pickup model: the dispatched pickup is a stop in stops[],
-  // attributed to whoever will be picked up. When we'll mint a passenger
-  // link below, we pre-mint the token so we can stamp it on the stop in
-  // the same insert (avoids a follow-up patch). When the owner is the
-  // passenger (parsed.isOwnerRiding), the stop is attributed to ctx.token.
-  // Dual-write trip.pickup_* for back-compat — Phase 3 cuts readers over.
+  // Destinations-as-chain model: pickup is stops[0], dropoff is
+  // stops[stops.length-1], any intermediates go between. Legacy
+  // pickup_*/dropoff_* columns dropped in 2026-05-20 schema migration.
   const shouldMint = body.mintGuestLink !== false && !parsed.isOwnerRiding;
   const guestToken: string | null = shouldMint ? newToken() : null;
   const pickupStopToken = guestToken ?? ctx.token;
-  const initialStops =
-    pickupGeo
-      ? [
-          {
-            id: crypto.randomUUID(),
-            kind: "stop" as const,
-            address: pickupGeo.display ?? parsed.pickupHint,
-            lat: pickupGeo.lat,
-            lng: pickupGeo.lng,
-            passenger: parsed.passengerName,
-            created_by_token: pickupStopToken,
-            arrived_at: null,
-            added_at: new Date().toISOString(),
-          },
-        ]
-      : [];
+  const nowIso = new Date().toISOString();
+  const initialStops: Array<{
+    id: string;
+    kind: "stop";
+    address: string;
+    lat: number;
+    lng: number;
+    passenger: string | null;
+    created_by_token: string | null;
+    arrived_at: string | null;
+    added_at: string;
+  }> = [];
+  if (pickupGeo) {
+    initialStops.push({
+      id: crypto.randomUUID(),
+      kind: "stop",
+      address: pickupGeo.display ?? parsed.pickupHint,
+      lat: pickupGeo.lat,
+      lng: pickupGeo.lng,
+      passenger: parsed.passengerName,
+      created_by_token: pickupStopToken,
+      arrived_at: null,
+      added_at: nowIso,
+    });
+  }
+  if (dropoffGeo) {
+    initialStops.push({
+      id: crypto.randomUUID(),
+      kind: "stop",
+      address: dropoffGeo.display ?? parsed.dropoffHint,
+      lat: dropoffGeo.lat,
+      lng: dropoffGeo.lng,
+      passenger: null,
+      created_by_token: pickupStopToken,
+      arrived_at: null,
+      added_at: nowIso,
+    });
+  }
 
   const sb = supabaseAdmin();
   const { data: trip, error } = await sb
     .from("trips")
     .insert({
       passenger_name: parsed.passengerName,
-      pickup_address: pickupGeo?.display ?? parsed.pickupHint,
-      pickup_lat: pickupGeo?.lat ?? null,
-      pickup_lng: pickupGeo?.lng ?? null,
-      dropoff_address: dropoffGeo?.display ?? parsed.dropoffHint,
-      dropoff_lat: dropoffGeo?.lat ?? null,
-      dropoff_lng: dropoffGeo?.lng ?? null,
       scheduled_at: parsed.scheduledAt,
       notes: parsed.rawNotes,
       created_by: ctx.token,

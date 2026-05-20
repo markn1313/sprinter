@@ -69,7 +69,7 @@ export async function POST(
   const sb = supabaseAdmin();
   const { data: trip } = await sb
     .from("trips")
-    .select("stops, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng")
+    .select("stops")
     .eq("id", id)
     .single();
   const stops: Stop[] = (trip?.stops as Stop[] | undefined) ?? [];
@@ -97,34 +97,31 @@ export async function POST(
   stops.splice(idx, 0, newStop);
 
   let finalStops: Stop[] = stops;
-  if (
-    !explicitIndex &&
-    newStop.kind === "stop" &&
-    trip?.pickup_lat != null &&
-    trip?.pickup_lng != null &&
-    trip?.dropoff_lat != null &&
-    trip?.dropoff_lng != null
-  ) {
+  if (!explicitIndex && newStop.kind === "stop") {
     const arrivedStops = stops.filter((s) => s.arrived_at != null);
     const pendingStops = stops.filter(
       (s) => s.arrived_at == null && s.lat != null && s.lng != null,
     );
-    if (pendingStops.length >= 2) {
-      // Mapbox source=first pins start, destination=last pins end. We
-      // anchor the start to wherever the van is in the planned sequence
-      // (last arrived stop if any, else trip pickup) — that way mid-trip
-      // adds optimize relative to current progress, not the original
-      // pickup that's already in the rearview.
+    // Need at least 3 pending (start anchor + ≥1 middle + end anchor) for
+    // the optimizer to have any reordering work to do. Anchor start = last
+    // arrived stop if any else the first pending (which IS the pickup);
+    // anchor end = last pending (the final destination). Everything in
+    // between is what gets re-ranked.
+    if (pendingStops.length >= 3) {
       const startPoint =
         arrivedStops.length > 0
           ? {
               lat: arrivedStops[arrivedStops.length - 1].lat as number,
               lng: arrivedStops[arrivedStops.length - 1].lng as number,
             }
-          : { lat: trip.pickup_lat as number, lng: trip.pickup_lng as number };
+          : { lat: pendingStops[0].lat as number, lng: pendingStops[0].lng as number };
+      const endPoint = {
+        lat: pendingStops[pendingStops.length - 1].lat as number,
+        lng: pendingStops[pendingStops.length - 1].lng as number,
+      };
       const optimized = await optimizeStops(
         startPoint,
-        { lat: trip.dropoff_lat as number, lng: trip.dropoff_lng as number },
+        endPoint,
         pendingStops.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
       );
       if (optimized) {
@@ -218,24 +215,28 @@ export async function PUT(
   // stops are pinned in place (their order is historical, not optional);
   // only pending stops get permuted.
   let next: Stop[] = filled;
-  const { data: trip } = await sb
-    .from("trips")
-    .select("pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
-    .eq("id", id)
-    .maybeSingle();
-  if (
-    shouldOptimize &&
-    trip?.pickup_lat != null &&
-    trip?.pickup_lng != null &&
-    trip?.dropoff_lat != null &&
-    trip?.dropoff_lng != null
-  ) {
+  if (shouldOptimize) {
     const arrived = filled.filter((s) => s.arrived_at != null);
     const pending = filled.filter((s) => s.arrived_at == null && s.lat != null && s.lng != null);
-    if (pending.length >= 2) {
+    // Need ≥3 pending (start anchor + ≥1 middle + end anchor) for the
+    // optimizer to have meaningful reorder work. Start = last arrived
+    // stop if any, else the first pending (which IS the pickup); end =
+    // last pending (the final destination).
+    if (pending.length >= 3) {
+      const startPoint =
+        arrived.length > 0
+          ? {
+              lat: arrived[arrived.length - 1].lat as number,
+              lng: arrived[arrived.length - 1].lng as number,
+            }
+          : { lat: pending[0].lat as number, lng: pending[0].lng as number };
+      const endPoint = {
+        lat: pending[pending.length - 1].lat as number,
+        lng: pending[pending.length - 1].lng as number,
+      };
       const optimized = await optimizeStops(
-        { lat: trip.pickup_lat, lng: trip.pickup_lng },
-        { lat: trip.dropoff_lat, lng: trip.dropoff_lng },
+        startPoint,
+        endPoint,
         pending.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
       );
       if (optimized) {

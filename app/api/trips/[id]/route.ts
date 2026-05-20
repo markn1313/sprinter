@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireMark, requireTripActor } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { geocode } from "@/lib/geocode";
 import { logTripEvent } from "@/lib/log";
-import { notifyDriverPlanChange } from "@/lib/push";
 
 export async function PATCH(
   req: Request,
@@ -19,15 +17,13 @@ export async function PATCH(
   const ctx = await requireTripActor(token, id);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // pickup_*/dropoff_* dropped 2026-05-20 — those edits route through
+  // PUT /api/trips/[id]/stops now (or POST /api/destinations for adds).
+  // This endpoint only handles trip-level metadata: passenger name,
+  // scheduled time, notes.
   const body = (await req.json().catch(() => null)) as
     | {
         passenger_name?: string;
-        pickup_address?: string | null;
-        pickup_lat?: number | null;
-        pickup_lng?: number | null;
-        dropoff_address?: string | null;
-        dropoff_lat?: number | null;
-        dropoff_lng?: number | null;
         scheduled_at?: string;
         notes?: string;
       }
@@ -41,49 +37,8 @@ export async function PATCH(
   if (typeof body.scheduled_at === "string") update.scheduled_at = body.scheduled_at;
   if (typeof body.notes === "string") update.notes = body.notes;
 
-  // Pickup: if lat/lng explicitly provided, trust them (skip geocoding); else
-  // if address is provided alone, geocode it.
-  if (body.pickup_address !== undefined || body.pickup_lat !== undefined || body.pickup_lng !== undefined) {
-    if (body.pickup_address) update.pickup_address = body.pickup_address;
-    if (body.pickup_lat !== undefined && body.pickup_lng !== undefined) {
-      update.pickup_lat = body.pickup_lat;
-      update.pickup_lng = body.pickup_lng;
-    } else if (body.pickup_address) {
-      const g = await geocode(body.pickup_address);
-      if (g) {
-        update.pickup_address = g.display;
-        update.pickup_lat = g.lat;
-        update.pickup_lng = g.lng;
-      } else {
-        update.pickup_lat = null;
-        update.pickup_lng = null;
-      }
-    } else if (body.pickup_address === null) {
-      update.pickup_address = null;
-      update.pickup_lat = null;
-      update.pickup_lng = null;
-    }
-  }
-  if (body.dropoff_address !== undefined || body.dropoff_lat !== undefined || body.dropoff_lng !== undefined) {
-    if (body.dropoff_address) update.dropoff_address = body.dropoff_address;
-    if (body.dropoff_lat !== undefined && body.dropoff_lng !== undefined) {
-      update.dropoff_lat = body.dropoff_lat;
-      update.dropoff_lng = body.dropoff_lng;
-    } else if (body.dropoff_address) {
-      const g = await geocode(body.dropoff_address);
-      if (g) {
-        update.dropoff_address = g.display;
-        update.dropoff_lat = g.lat;
-        update.dropoff_lng = g.lng;
-      } else {
-        update.dropoff_lat = null;
-        update.dropoff_lng = null;
-      }
-    } else if (body.dropoff_address === null) {
-      update.dropoff_address = null;
-      update.dropoff_lat = null;
-      update.dropoff_lng = null;
-    }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "no editable fields supplied" }, { status: 400 });
   }
 
   const { data, error } = await supabaseAdmin()
@@ -94,22 +49,8 @@ export async function PATCH(
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   logTripEvent({ trip_id: id, kind: "edited", actor_token: ctx.token, payload: body as Record<string, unknown> });
-
-  // Only push the driver when the change affects WHERE he's driving.
-  // Edits to scheduled_at / notes / passenger_name aren't worth a
-  // notification — they don't change his next destination.
-  const movedPickup = body.pickup_lat !== undefined || body.pickup_lng !== undefined || body.pickup_address !== undefined;
-  const movedDropoff = body.dropoff_lat !== undefined || body.dropoff_lng !== undefined || body.dropoff_address !== undefined;
-  if (movedPickup || movedDropoff) {
-    const what = movedPickup && movedDropoff ? "Pickup and dropoff updated" : movedPickup ? "Pickup moved" : "Dropoff moved";
-    const where = movedPickup
-      ? (update.pickup_address as string | undefined) ?? data?.pickup_address
-      : (update.dropoff_address as string | undefined) ?? data?.dropoff_address;
-    void notifyDriverPlanChange({
-      title: what,
-      body: where ?? "Open the app for the new address",
-    });
-  }
+  // Scheduled-time / notes / passenger-name edits don't move the driver,
+  // so no plan-change push — that fires from the /stops PUT instead.
   return NextResponse.json({ trip: data });
 }
 

@@ -20,9 +20,9 @@
 //  3. Idempotency: every POST carries an Idempotency-Key. Replays return
 //     the cached response — double-tap + offline-queue replay are safe.
 //
-//  4. Always dual-writes pickup_*/dropoff_* on the trip row so the
-//     legacy state machine / readers keep working during the cutover.
-//     Phase 3 of the destinations rewrite removes the dual-write.
+//  4. Writes to trip.stops[] only — the legacy pickup_*/dropoff_* columns
+//     were dropped in the 2026-05-20 schema migration. State machine and
+//     all readers consume the chain directly.
 //
 // Auth: trip-actor (Mark or trip's passenger) for append; passenger-link
 // with GPS-in-van proof for bootstrap. Mark can always bootstrap.
@@ -166,10 +166,6 @@ export async function POST(req: Request) {
 interface ActiveTrip {
   id: string;
   status: string;
-  pickup_lat: number | null;
-  pickup_lng: number | null;
-  dropoff_lat: number | null;
-  dropoff_lng: number | null;
   stops: Stop[] | null;
   passenger_link_token: string | null;
 }
@@ -186,7 +182,7 @@ async function findActiveTrip(
     const { data } = await sb
       .from("trips")
       .select(
-        "id,status,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,stops,passenger_link_token",
+        "id,status,stops,passenger_link_token",
       )
       .eq("id", session.trip_id)
       .maybeSingle();
@@ -196,7 +192,7 @@ async function findActiveTrip(
   // non-terminal trip (single-trip mode says there's at most one).
   const { data } = await sb
     .from("trips")
-    .select("id,status,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,stops,passenger_link_token")
+    .select("id,status,stops,passenger_link_token")
     .not("status", "in", "(complete,cancelled)")
     .order("created_at", { ascending: false })
     .limit(1);
@@ -310,25 +306,23 @@ async function appendDestination(
   const pending = stops.filter((s) => s.arrived_at == null);
   pending.push(newStop);
 
+  // Optimize the visit order of PENDING stops via Mapbox. Anchor start =
+  // last arrived stop if any, else the first pending stop itself (which
+  // is the original pickup the first time around). End anchor = the new
+  // last stop, which by definition is the final destination.
   let finalStops: Stop[] = [...arrived, ...pending];
-  if (
-    pending.length >= 2 &&
-    trip.pickup_lat != null &&
-    trip.pickup_lng != null &&
-    trip.dropoff_lat != null &&
-    trip.dropoff_lng != null
-  ) {
-    // Optimize from current progress point: last arrived stop if any,
-    // else trip's pickup. Destination anchor for optimizer = current
-    // dropoff. After optimization, last pending becomes the new dropoff
-    // (see dual-write below).
+  if (pending.length >= 2) {
     const startPoint =
       arrived.length > 0
         ? { lat: arrived[arrived.length - 1].lat as number, lng: arrived[arrived.length - 1].lng as number }
-        : { lat: trip.pickup_lat, lng: trip.pickup_lng };
+        : { lat: pending[0].lat as number, lng: pending[0].lng as number };
+    const endPoint = {
+      lat: pending[pending.length - 1].lat as number,
+      lng: pending[pending.length - 1].lng as number,
+    };
     const optimized = await optimizeStops(
       startPoint,
-      { lat: trip.dropoff_lat, lng: trip.dropoff_lng },
+      endPoint,
       pending.map((s) => ({ lat: s.lat as number, lng: s.lng as number })),
     );
     if (optimized) {
@@ -349,23 +343,7 @@ async function appendDestination(
     }
   }
 
-  // Dual-write: legacy pickup_*/dropoff_* derived from chain ends so
-  // the existing state machine, TV view, and any unmigrated reader keep
-  // working. First non-arrived = pickup (or first overall if all
-  // arrived); last = dropoff. Phase 3 removes the dual-write.
-  const first = finalStops[0];
-  const last = finalStops[finalStops.length - 1];
-  const updates: Record<string, unknown> = {
-    stops: finalStops,
-    pickup_address: first?.address ?? null,
-    pickup_lat: first?.lat ?? null,
-    pickup_lng: first?.lng ?? null,
-    dropoff_address: last?.address ?? null,
-    dropoff_lat: last?.lat ?? null,
-    dropoff_lng: last?.lng ?? null,
-  };
-
-  const { error } = await sb.from("trips").update(updates).eq("id", trip.id);
+  const { error } = await sb.from("trips").update({ stops: finalStops }).eq("id", trip.id);
   if (error) throw new Error(`trip update failed: ${error.message}`);
 
   logTripEvent({
@@ -440,15 +418,8 @@ async function bootstrapTrip(
     .insert({
       passenger_name: passengerName,
       passenger_link_token: linkToken,
-      pickup_address: pickupAddress,
-      pickup_lat: van.lat,
-      pickup_lng: van.lng,
-      dropoff_address: d.address,
-      dropoff_lat: d.lat,
-      dropoff_lng: d.lng,
       scheduled_at: nowIso,
       dispatched_at: nowIso,
-      arrived_at_pickup_at: nowIso,
       onboard_at: nowIso,
       status: "onboard",
       notes: "Self-dispatched via /api/destinations",

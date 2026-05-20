@@ -6,6 +6,19 @@ import { Copy, MessageSquare, ExternalLink } from "lucide-react";
 import { useState, MouseEvent } from "react";
 import SwipeToDelete from "./SwipeToDelete";
 
+// Local shape of a stop on the trip — minimum surface needed here.
+// Project-level Trip.stops typing lives elsewhere; we just need the
+// address to render the From/To line.
+interface TripStop {
+  id: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  arrived_at?: string | null;
+  passenger?: string | null;
+  kind?: string;
+}
+
 function buildInviteBody(_trip: Trip, url: string): string {
   return `Click for details on your trip:\n${url}`;
 }
@@ -59,6 +72,12 @@ export default function TripList({ trips, role, origin, token, onOpenTrip, onCha
         const openTrip = () => {
           if (tappable) onOpenTrip!(t.id);
         };
+        // Pickup/dropoff are now derived from the stops chain: first stop
+        // is the pickup, last is the final dropoff. Trip type doesn't yet
+        // declare the field, so widen locally.
+        const stops = (t as { stops?: TripStop[] | null }).stops ?? [];
+        const pickupAddr = stops[0]?.address ?? null;
+        const dropoffAddr = stops.at(-1)?.address ?? null;
         const inner = (
           <div
             onClick={openTrip}
@@ -74,9 +93,9 @@ export default function TripList({ trips, role, origin, token, onOpenTrip, onCha
                   <span className="font-medium text-zinc-100">{t.passenger_name}</span>
                 </div>
                 <div className="mt-1 truncate text-xs text-zinc-400">
-                  {t.pickup_address && <>From {stripZip(t.pickup_address)} · </>}
-                  {t.dropoff_address && <>To {stripZip(t.dropoff_address)}</>}
-                  {!t.pickup_address && !t.dropoff_address && <em>No address parsed</em>}
+                  {pickupAddr && <>From {stripZip(pickupAddr)} · </>}
+                  {dropoffAddr && <>To {stripZip(dropoffAddr)}</>}
+                  {!pickupAddr && !dropoffAddr && <em>No address parsed</em>}
                 </div>
                 <div className="mt-1 text-xs text-zinc-500">
                   {shortDate(t.scheduled_at)} · {shortTime(t.scheduled_at)}

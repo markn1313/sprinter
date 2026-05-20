@@ -25,14 +25,13 @@ interface ServerStop {
   arrived_at?: string | null;
 }
 
-interface TripWithStops extends Trip {
-  stops?: ServerStop[];
-  route_polyline?: string | null;
-}
+// Trip rows here may carry a route_polyline column that lib/types.ts
+// doesn't expose. Narrow widening only — stops[] already on Trip.
+type TripWithStops = Trip & { route_polyline?: string | null };
 
 // Unified waypoint — first = pickup, last = dropoff, middle = intermediate stops.
-// `serverId` is "pickup" / "dropoff" for the boundary slots, the row's UUID for
-// existing intermediate stops, or "new" for freshly-inserted local entries.
+// `serverId` is the stop row's UUID for entries that came from the server, or
+// "new" for freshly-inserted local entries that haven't been persisted yet.
 interface Waypoint {
   id: string;
   serverId: string;
@@ -79,39 +78,19 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     return () => clearInterval(t);
   }, [tripId, token]);
 
-  // Server-side view of the route (pickup → stops → dropoff) as a unified list
+  // Server-side view of the route. `stops[]` is now the source of truth —
+  // index 0 is the pickup, last is the final destination, middle entries are
+  // intermediate stops. No synthesis from legacy pickup_*/dropoff_* columns.
   const serverOrdered = useMemo<Waypoint[]>(() => {
     if (!trip) return [];
-    const list: Waypoint[] = [];
-    if (trip.pickup_address || trip.pickup_lat != null) {
-      list.push({
-        id: "pickup",
-        serverId: "pickup",
-        address: trip.pickup_address ?? "",
-        lat: trip.pickup_lat,
-        lng: trip.pickup_lng,
-      });
-    }
-    (trip.stops ?? []).forEach((s) => {
-      list.push({
-        id: s.id,
-        serverId: s.id,
-        address: s.address,
-        lat: s.lat,
-        lng: s.lng,
-        arrived_at: s.arrived_at,
-      });
-    });
-    if (trip.dropoff_address || trip.dropoff_lat != null) {
-      list.push({
-        id: "dropoff",
-        serverId: "dropoff",
-        address: trip.dropoff_address ?? "",
-        lat: trip.dropoff_lat,
-        lng: trip.dropoff_lng,
-      });
-    }
-    return list;
+    return (trip.stops ?? []).map((s) => ({
+      id: s.id,
+      serverId: s.id,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      arrived_at: s.arrived_at,
+    }));
   }, [trip]);
 
   // Local-staged ordered list — null until the user makes a change
@@ -251,63 +230,23 @@ export default function TripDetailApp({ token, tripId, hideMap }: TripDetailProp
     if (!localOrdered || localOrdered.length < 2) return;
     setBusy(true);
     try {
+      // stops[] is the source of truth — send the whole chain in one PUT.
+      // First entry is the pickup, last is the final destination, middle are
+      // intermediate stops; the server reconstructs the chain from order.
       const list = localOrdered;
-      const first = list[0];
-      const last = list[list.length - 1];
-      const middle = list.slice(1, -1);
-
-      const oldFirst = serverOrdered[0];
-      const oldLast = serverOrdered[serverOrdered.length - 1];
-      const pickupChanged =
-        !oldFirst ||
-        oldFirst.address !== first.address ||
-        oldFirst.lat !== first.lat ||
-        oldFirst.lng !== first.lng;
-      const dropoffChanged =
-        !oldLast ||
-        oldLast.address !== last.address ||
-        oldLast.lat !== last.lat ||
-        oldLast.lng !== last.lng;
-
-      if (pickupChanged || dropoffChanged) {
-        const body: Record<string, unknown> = {};
-        if (pickupChanged) {
-          body.pickup_address = first.address;
-          body.pickup_lat = first.lat;
-          body.pickup_lng = first.lng;
-        }
-        if (dropoffChanged) {
-          body.dropoff_address = last.address;
-          body.dropoff_lat = last.lat;
-          body.dropoff_lng = last.lng;
-        }
-        await fetch(`/api/trips/${tripId}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-      }
-
-      const serverMiddle = serverOrdered.slice(1, -1);
-      const middleChanged = !sameOrdered(middle, serverMiddle);
-      if (middleChanged) {
-        await fetch(`/api/trips/${tripId}/stops`, {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            stops: middle.map((w) => ({
-              id:
-                w.serverId !== "new" && w.serverId !== "pickup" && w.serverId !== "dropoff"
-                  ? w.serverId
-                  : undefined,
-              address: w.address,
-              lat: w.lat,
-              lng: w.lng,
-              kind: "stop",
-            })),
-          }),
-        });
-      }
+      await fetch(`/api/trips/${tripId}/stops`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stops: list.map((w, i) => ({
+            id: w.serverId !== "new" ? w.serverId : undefined,
+            address: w.address,
+            lat: w.lat,
+            lng: w.lng,
+            kind: i === 0 ? "pickup" : i === list.length - 1 ? "dropoff" : "stop",
+          })),
+        }),
+      });
       setLocalOrdered(null);
       await refresh();
     } finally {

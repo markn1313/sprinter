@@ -13,9 +13,22 @@ interface RecapStats {
   fuel_cost_dollars: number;
 }
 
+// Local shape for a stop on the trip — kept minimal. Pickup/dropoff
+// addresses now live on stops[0] / stops.at(-1), not on top-level
+// trip.pickup_address / dropoff_address.
+interface TripStop {
+  id: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  arrived_at?: string | null;
+  passenger?: string | null;
+  kind?: string;
+}
+
 type TripWithExtras = Trip & {
-  arrived_at_dropoff_at?: string | null;
   completed_at?: string | null;
+  stops?: TripStop[] | null;
 };
 
 // localStorage key for trips Mark has dismissed from his home screen
@@ -81,6 +94,9 @@ export default function TripRecapCard({ token }: { token: string }) {
 
   if (!trip || dismissed.has(trip.id)) return null;
 
+  const stops = trip.stops ?? [];
+  const pickupAddr = stops[0]?.address ?? null;
+  const dropoffAddr = stops.at(-1)?.address ?? null;
   const dur = stats?.duration_min ?? computeDurationMin(trip);
 
   const dismiss = () => {
@@ -103,16 +119,18 @@ export default function TripRecapCard({ token }: { token: string }) {
         <CheckCircle2 size={12} /> Trip complete
       </div>
       <div className="mt-2 space-y-1 text-xs text-zinc-300">
-        {trip.pickup_address && (
+        {/* Pickup = first stop, dropoff = last. Recap only renders for
+            completed trips so the chain is fully populated. */}
+        {pickupAddr && (
           <div className="flex items-center gap-1.5 truncate pr-8">
             <MapPin size={10} className="shrink-0 text-amber-400" />
-            <span className="truncate">{shortAddr(trip.pickup_address)}</span>
+            <span className="truncate">{shortAddr(pickupAddr)}</span>
           </div>
         )}
-        {trip.dropoff_address && (
+        {dropoffAddr && (
           <div className="flex items-center gap-1.5 truncate pr-8">
             <Flag size={10} className="shrink-0 text-blue-400" />
-            <span className="truncate">{shortAddr(trip.dropoff_address)}</span>
+            <span className="truncate">{shortAddr(dropoffAddr)}</span>
           </div>
         )}
       </div>

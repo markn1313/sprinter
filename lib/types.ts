@@ -28,21 +28,32 @@ export interface Link {
   revoked_at: string | null;
 }
 
+// Stop in the destination chain. trip.stops[0] = pickup,
+// trip.stops[stops.length-1] = final destination, middle = intermediate
+// stops. Replaced the pickup_*/dropoff_* + arrived_at_*_at columns
+// dropped in the 2026-05-20 schema migration.
+export interface TripStop {
+  id: string;
+  kind?: "pickup" | "dropoff" | "stop";
+  category?: string | null;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  passenger?: string | null;
+  passenger_link_token?: string | null;
+  created_by_token?: string | null;
+  arrived_at?: string | null;
+  added_at: string;
+}
+
 export interface Trip {
   id: string;
   passenger_name: string;
   passenger_link_token: string | null;
-  pickup_address: string | null;
-  pickup_lat: number | null;
-  pickup_lng: number | null;
-  dropoff_address: string | null;
-  dropoff_lat: number | null;
-  dropoff_lng: number | null;
+  stops: TripStop[] | null;
   scheduled_at: string;
   dispatched_at: string | null;
-  arrived_at_pickup_at: string | null;
   onboard_at: string | null;
-  arrived_at_dropoff_at: string | null;
   completed_at: string | null;
   status: TripStatus;
   notes: string | null;

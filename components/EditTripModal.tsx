@@ -25,49 +25,20 @@ interface Stop {
   added_at?: string;
 }
 
-// Trip rows in this app sometimes carry a `stops` JSONB column that
-// isn't on the base Trip type yet. Narrow widening here keeps the
-// modal type-strict without polluting lib/types.ts before the rewrite
-// settles.
-type TripWithStops = Trip & { stops?: Stop[] | null };
-
 interface Props {
   token: string;
-  trip: TripWithStops;
+  trip: Trip;
   onClose: () => void;
   onSaved: () => void;
 }
 
-// Build the initial chain. Prefer trip.stops[] (the new model) and
-// only synthesise from pickup_*/dropoff_* as a defensive fallback for
-// pre-backfill rows — the 2026-05-20 migration should make this branch
-// unreachable in practice, but it's cheap insurance until the legacy
-// columns are dropped.
-function initialChain(trip: TripWithStops): Stop[] {
-  const fromStops = (trip.stops ?? []).filter((s): s is Stop => !!s);
-  if (fromStops.length > 0) return fromStops;
-  const synth: Stop[] = [];
-  if (trip.pickup_address || trip.pickup_lat != null) {
-    synth.push({
-      id: "legacy-pickup",
-      kind: "pickup",
-      address: trip.pickup_address ?? "",
-      lat: trip.pickup_lat,
-      lng: trip.pickup_lng,
-      arrived_at: trip.arrived_at_pickup_at ?? trip.onboard_at ?? null,
-    });
-  }
-  if (trip.dropoff_address || trip.dropoff_lat != null) {
-    synth.push({
-      id: "legacy-dropoff",
-      kind: "dropoff",
-      address: trip.dropoff_address ?? "",
-      lat: trip.dropoff_lat,
-      lng: trip.dropoff_lng,
-      arrived_at: trip.arrived_at_dropoff_at ?? null,
-    });
-  }
-  return synth;
+// Build the initial chain from trip.stops[]. The 2026-05-20 backfill
+// migration guarantees every existing trip has a populated chain, and
+// the legacy pickup_*/dropoff_* columns are gone, so this is a direct
+// projection.
+function initialChain(trip: Trip): Stop[] {
+  const raw = (trip.stops ?? []) as Stop[];
+  return raw.filter((s): s is Stop => !!s);
 }
 
 export default function EditTripModal({ token, trip, onClose, onSaved }: Props) {
@@ -151,36 +122,15 @@ export default function EditTripModal({ token, trip, onClose, onSaved }: Props) 
         });
       }
 
-      // 2) Dual-write the chain ends to the legacy pickup_*/dropoff_*
-      // columns. The state machine still reads those (and so do a couple
-      // of pre-chain views), so until the cutover the only safe move is
-      // to keep them in sync — mirrors MarkApp.commitDropoff. Also folds
-      // in passenger_name + scheduled_at since this modal owns those too.
-      const first = chain[0];
-      const last = chain[chain.length - 1];
-      const patch: Record<string, unknown> = {
-        passenger_name: passenger,
-        scheduled_at: fromPTInput(scheduled),
-      };
-      if (first) {
-        patch.pickup_address = first.address || null;
-        patch.pickup_lat = first.lat;
-        patch.pickup_lng = first.lng;
-      }
-      if (last && chain.length >= 2) {
-        patch.dropoff_address = last.address || null;
-        patch.dropoff_lat = last.lat;
-        patch.dropoff_lng = last.lng;
-      } else if (chain.length < 2) {
-        // Single-stop chain — clear the dropoff side so the state machine
-        // doesn't keep firing on a stale destination.
-        patch.dropoff_address = null;
-        patch.dropoff_lat = null;
-        patch.dropoff_lng = null;
-      }
+      // 2) PATCH only trip-level metadata that EditTripModal owns —
+      // passenger name + scheduled time. Chain ends ARE the pickup and
+      // dropoff now (no separate columns to mirror).
       await api(token, `/api/trips/${trip.id}`, {
         method: "PATCH",
-        body: JSON.stringify(patch),
+        body: JSON.stringify({
+          passenger_name: passenger,
+          scheduled_at: fromPTInput(scheduled),
+        }),
       });
 
       onSaved();

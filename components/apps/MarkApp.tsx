@@ -388,53 +388,28 @@ function MapTab({
     // trip's pickup/dropoff here — that pulls the camera way out and is
     // not what Mark wants to look at while idle.
     if (!live) {
-      // Scheduled trip waiting for dispatch.
-      // Universal-Pickup model: pickups live in stops[]. The first
-      // pickup-style stop renders as the violet "pending pickup"
-      // teardrop; subsequent stops render as the regular numbered stop
-      // pin. Legacy trips with only trip.pickup_* (no stops[]) fall
-      // back to the original behavior so old trips don't lose their pin.
-      const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
-      if (!hasAnyStop && mapTrip?.pickup_lat != null && mapTrip.pickup_lng != null) {
-        out.push({
-          kind: "pickup",
-          id: "pickup",
-          lat: mapTrip.pickup_lat,
-          lng: mapTrip.pickup_lng,
-          label: mapTrip.pickup_address ?? undefined,
-          pending: true,
-        });
-      }
-      if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null) {
-        out.push({
-          kind: "dropoff",
-          id: "dropoff",
-          lat: mapTrip.dropoff_lat,
-          lng: mapTrip.dropoff_lng,
-          label: mapTrip.dropoff_address ?? undefined,
-        });
-      }
+      // Scheduled trip waiting for dispatch. Render the chain:
+      //   - First stop  → kind="pickup" (violet pending teardrop)
+      //   - Last stop   → kind="dropoff" (flag pin)
+      //   - Middle      → numbered stop pins
+      // Same rule everywhere now that pickup_*/dropoff_* are gone.
+      const lastIdx = stopsArr.length - 1;
       stopsArr.forEach((s, i) => {
-        if (s.lat != null && s.lng != null) {
-          const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
-          // Option A: stops with a `passenger` field are pickups, the
-          // rest are errand waypoints. Render the pickup ones as the
-          // violet pending-teardrop on scheduled trips (pre-dispatch)
-          // so Mark can see WHO is being fetched; errands stay as
-          // numbered stop pins. Survives Mapbox optimizer reordering.
-          const isPickup = !!sx.passenger;
-          out.push({
-            kind: isPickup ? "pickup" : "stop",
-            id: s.id,
-            lat: s.lat,
-            lng: s.lng,
-            label: s.address,
-            index: i + 1,
-            ...(isPickup ? { pending: true } : {}),
-            ...(sx.passenger ? { passenger: sx.passenger } : {}),
-            ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
-          });
-        }
+        if (s.lat == null || s.lng == null) return;
+        const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null };
+        const kind: "pickup" | "stop" | "dropoff" =
+          i === 0 ? "pickup" : i === lastIdx ? "dropoff" : "stop";
+        out.push({
+          kind,
+          id: kind === "pickup" ? "pickup" : kind === "dropoff" ? "dropoff" : s.id,
+          lat: s.lat,
+          lng: s.lng,
+          label: s.address,
+          ...(kind === "stop" ? { index: i + 1 } : {}),
+          ...(kind === "pickup" ? { pending: true } : {}),
+          ...(sx.passenger ? { passenger: sx.passenger } : {}),
+          ...(sx.passenger_link_token ? { passenger_link_token: sx.passenger_link_token } : {}),
+        });
       });
       if (myGps) out.push({ kind: "mark", lat: myGps.lat, lng: myGps.lng, label: "You" });
       return out;
@@ -476,29 +451,21 @@ function MapTab({
         });
       });
     } else {
-      // Fallback while ETA hasn't loaded yet. Mirror the ETA endpoint's
-      // gates so we don't keep showing arrived/past waypoints:
-      //   - Legacy trip.pickup_* renders only when (a) no stops carry
-      //     coords (legacy-only trip) AND (b) status hasn't advanced
-      //     past dispatched yet. Once we hit at_pickup / onboard /
-      //     at_dropoff the pickup has been served and should disappear.
-      //   - Stops with arrived_at set are filtered out — they've been
-      //     visited, no longer pending.
-      const hasAnyStop = stopsArr.some((s) => s.lat != null && s.lng != null);
-      const showLegacyPickup =
-        !hasAnyStop &&
-        mapTrip?.pickup_lat != null &&
-        mapTrip.pickup_lng != null &&
-        (mapTrip.status === "scheduled" || mapTrip.status === "dispatched");
-      if (showLegacyPickup) {
-        out.push({ kind: "pickup", id: "pickup", lat: mapTrip!.pickup_lat!, lng: mapTrip!.pickup_lng!, label: mapTrip!.pickup_address ?? undefined });
-      }
-      if (mapTrip?.dropoff_lat != null && mapTrip.dropoff_lng != null)
-        out.push({ kind: "dropoff", id: "dropoff", lat: mapTrip.dropoff_lat, lng: mapTrip.dropoff_lng, label: mapTrip.dropoff_address ?? undefined });
+      // Fallback while ETA hasn't loaded yet. Render the chain directly:
+      //   - First un-arrived stop → kind="pickup" (until visited)
+      //   - Last stop             → kind="dropoff" (regardless of arrived)
+      //   - Middle un-arrived     → numbered stop pins
+      // Arrived intermediates are filtered out; the dropoff stays until
+      // the trip auto-completes (state machine handles that).
+      const lastIdx = stopsArr.length - 1;
       stopsArr.forEach((s, i) => {
         if (s.lat == null || s.lng == null) return;
         const sx = s as unknown as { passenger?: string | null; passenger_link_token?: string | null; arrived_at?: string | null };
-        if (sx.arrived_at) return; // already visited — don't redraw
+        if (sx.arrived_at && i !== lastIdx) return; // arrived intermediate
+        if (i === lastIdx) {
+          out.push({ kind: "dropoff", id: "dropoff", lat: s.lat, lng: s.lng, label: s.address });
+          return;
+        }
         out.push({
           kind: "stop",
           id: s.id,
@@ -615,22 +582,24 @@ function MapTab({
     if (inEditMode) return null;
     if (!myGps || !mapTrip) return null;
     if (mapTrip.status !== "scheduled") return null;
-    if (mapTrip.pickup_lat == null || mapTrip.pickup_lng == null) return null;
+    // Pickup = first stop in the chain.
+    const pickup = stopsArr[0];
+    if (!pickup || pickup.lat == null || pickup.lng == null) return null;
     // Skip if Mark is essentially at the pickup (< ~30m) — no walk line needed.
-    const dLat = (mapTrip.pickup_lat - myGps.lat) * Math.PI / 180;
-    const dLng = (mapTrip.pickup_lng - myGps.lng) * Math.PI / 180;
+    const dLat = (pickup.lat - myGps.lat) * Math.PI / 180;
+    const dLng = (pickup.lng - myGps.lng) * Math.PI / 180;
     const a =
       Math.sin(dLat / 2) ** 2 +
       Math.cos(myGps.lat * Math.PI / 180) *
-        Math.cos(mapTrip.pickup_lat * Math.PI / 180) *
+        Math.cos(pickup.lat * Math.PI / 180) *
         Math.sin(dLng / 2) ** 2;
     const distM = 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     if (distM < 30) return null;
     return encodePolyline([
       [myGps.lng, myGps.lat],
-      [mapTrip.pickup_lng, mapTrip.pickup_lat],
+      [pickup.lng, pickup.lat],
     ]);
-  }, [inEditMode, myGps, mapTrip]);
+  }, [inEditMode, myGps, mapTrip, stopsArr]);
 
   // "Van is X min / Y mi from me" — prefer the Mapbox-computed route ETA
   // (vanToMe) when we have it; fall back to a straight-line haversine +
@@ -679,31 +648,31 @@ function MapTab({
       address = `${newLat.toFixed(5)}, ${newLng.toFixed(5)}`;
     }
     try {
-      if (pin.kind === "pickup") {
-        await fetch(`/api/trips/${mapTrip.id}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ pickup_lat: newLat, pickup_lng: newLng, pickup_address: address }),
-        });
-      } else if (pin.kind === "dropoff") {
-        await fetch(`/api/trips/${mapTrip.id}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ dropoff_lat: newLat, dropoff_lng: newLng, dropoff_address: address }),
-        });
-      } else if (pin.kind === "stop") {
-        // Build the next stops array — match by id (preferred) or fall back
-        // to lat/lng + label proximity if no id was wired.
-        const next = stopsArr.map((s) => {
-          const matches =
-            (pin.id && s.id === pin.id) ||
-            (!pin.id && Math.abs((s.lat ?? 0) - pin.lat) < 1e-6 && Math.abs((s.lng ?? 0) - pin.lng) < 1e-6);
-          return matches ? { ...s, lat: newLat, lng: newLng, address: address ?? s.address } : s;
-        });
+      // Destinations-as-chain: pickup = stops[0], dropoff = stops[last],
+      // intermediate = match-by-id. Every pin drag becomes a single PUT
+      // /stops mutation — no more pickup_*/dropoff_* PATCH path. Send
+      // optimize=false so a drag doesn't get reordered out from under
+      // the user.
+      const targetIdx =
+        pin.kind === "pickup"
+          ? 0
+          : pin.kind === "dropoff"
+            ? stopsArr.length - 1
+            : stopsArr.findIndex(
+                (s) =>
+                  (pin.id && s.id === pin.id) ||
+                  (!pin.id &&
+                    Math.abs((s.lat ?? 0) - pin.lat) < 1e-6 &&
+                    Math.abs((s.lng ?? 0) - pin.lng) < 1e-6),
+              );
+      if (targetIdx >= 0 && targetIdx < stopsArr.length) {
+        const next = stopsArr.map((s, i) =>
+          i === targetIdx ? { ...s, lat: newLat, lng: newLng, address: address ?? s.address } : s,
+        );
         await fetch(`/api/trips/${mapTrip.id}/stops`, {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ stops: next }),
+          body: JSON.stringify({ stops: next, optimize: false }),
         });
       }
       refresh();
@@ -1079,7 +1048,7 @@ function MapTab({
           rail (Pickup / GPS / vitals) at the top of the screen. */}
       <div className="absolute left-3 top-3 z-30 flex flex-col gap-1.5">
         <FocusBtn label={<VanIcon size={26} />} onClick={() => focus("van")} title="Center on van" />
-        {(mapTrip?.dropoff_lat != null || mapTrip?.pickup_lat != null) && (
+        {stopsArr.some((s) => s.lat != null && s.lng != null) && (
           <FocusBtn label={<span className="text-2xl leading-none">🏁</span>} onClick={() => focus("dest")} title="Center on destination" />
         )}
         {myGps && pos && (
@@ -1612,25 +1581,19 @@ function TripSheet({
   // sprinter comes within 30m of a stop, that stop is GONE." Don't
   // render visited stops with a checkmark — drop them from the list
   // outright so the card always reflects what's still ahead.
-  const destinations: Destination[] = [
-    ...stops
-      .filter((s) => !s.arrived_at)
-      .map((s) => ({ ...s, isDropoff: false })),
-    ...(trip.dropoff_address && trip.dropoff_lat != null && trip.dropoff_lng != null
-      ? [
-          {
-            id: "__dropoff__",
-            address: trip.dropoff_address,
-            lat: trip.dropoff_lat,
-            lng: trip.dropoff_lng,
-            arrived_at: null,
-            passenger: null,
-            passenger_link_token: trip.passenger_link_token ?? null,
-            isDropoff: true,
-          },
-        ]
-      : []),
-  ];
+  //
+  // The last stop in the chain IS the trip's final destination — flag
+  // it with isDropoff so the row renders with the dropoff treatment.
+  const lastUnarrivedIdx = (() => {
+    for (let i = stops.length - 1; i >= 0; i--) {
+      if (!stops[i].arrived_at) return i;
+    }
+    return -1;
+  })();
+  const destinations: Destination[] = stops
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => !s.arrived_at)
+    .map(({ s, i }) => ({ ...s, isDropoff: i === lastUnarrivedIdx }));
 
   // Invite a passenger to a stop: prompt for name, POST it to the
   // per-stop passenger endpoint (which mints a link), then offer to
@@ -1742,13 +1705,12 @@ function TripSheet({
     }
   };
 
-  // Push the destinations array to the server. LAST entry → trip's
-  // dropoff. All preceding entries → stops[]. PUT stops first (with
-  // optimize=false so explicit reorder isn't clobbered), then PATCH
-  // the dropoff if it changed.
+  // Push the destinations array to the server. Whole chain goes through
+  // PUT /stops with optimize=false (so the user's explicit reorder
+  // isn't clobbered). The legacy "PATCH /trips/[id] with dropoff_*" leg
+  // is gone — chain ends ARE the pickup and dropoff now.
   const persist = async (next: Destination[]): Promise<void> => {
-    const newDropoff = next[next.length - 1];
-    const newStops = next.slice(0, -1).map((d) => ({
+    const newStops = next.map((d) => ({
       // Pass everything through so the PUT endpoint re-fills with the
       // full Stop shape (passenger / token / arrived_at etc).
       ...(stops.find((s) => s.id === d.id) ?? {}),
@@ -1769,29 +1731,6 @@ function TripSheet({
     if (!stopsRes.ok) {
       const body = await stopsRes.text().catch(() => "");
       throw new Error(`stops PUT ${stopsRes.status}: ${body.slice(0, 200)}`);
-    }
-    if (
-      newDropoff &&
-      (newDropoff.address !== trip.dropoff_address ||
-        newDropoff.lat !== trip.dropoff_lat ||
-        newDropoff.lng !== trip.dropoff_lng)
-    ) {
-      const dropRes = await fetch(`/api/trips/${trip.id}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          dropoff_address: newDropoff.address,
-          dropoff_lat: newDropoff.lat,
-          dropoff_lng: newDropoff.lng,
-        }),
-      });
-      if (!dropRes.ok) {
-        const body = await dropRes.text().catch(() => "");
-        throw new Error(`trip PATCH ${dropRes.status}: ${body.slice(0, 200)}`);
-      }
     }
   };
 
@@ -1938,12 +1877,11 @@ function TripSheet({
     <Sheet title={`Trip · ${statusLabel(trip.status)}`} onClose={onClose}>
       <div className="text-base font-semibold text-zinc-100">{trip.passenger_name}</div>
       <div className="mt-2 space-y-1.5 text-sm text-zinc-300">
-        {/* Legacy pickup line — only when pickup hasn't been reached
-            yet. Once the van crosses the 30m gate (state machine
-            stamps trip.arrived_at_pickup_at), the pickup is in the
-            past and shouldn't clutter the destinations list. */}
-        {trip.pickup_address && !trip.arrived_at_pickup_at && (
-          <div className="py-1">📍 {trip.pickup_address}</div>
+        {/* Pickup line — first stop in the chain, only when it hasn't
+            been visited yet. After the 30m gate the destinations list
+            below already shows what's still ahead. */}
+        {stops[0] && !stops[0].arrived_at && stops[0].address && (
+          <div className="py-1">📍 {stops[0].address}</div>
         )}
         {destinations.map((d, i) => {
           const isPending = !d.arrived_at;

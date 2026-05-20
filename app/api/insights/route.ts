@@ -161,7 +161,7 @@ export async function GET(req: Request) {
   const [{ data: allTrips }, { data: hiddenRows }] = await Promise.all([
     sb
       .from("trips")
-      .select("pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,scheduled_at")
+      .select("stops,scheduled_at")
       .gte("scheduled_at", destSince)
       .order("scheduled_at", { ascending: false })
       .limit(300),
@@ -171,32 +171,42 @@ export async function GET(req: Request) {
     ((hiddenRows ?? []) as Array<{ address_key: string }>).map((r) => r.address_key),
   );
 
+  // EVERY stop counts as a destination — multi-stop trips now contribute
+  // each address, not just pickup/dropoff. Bucket by rounded lat/lng
+  // (~11m) so e.g. "123 Main" and "123 Main St" at the same coords merge;
+  // fall back to a lowercased address key when coords are missing.
+  type StopRow = {
+    address?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  };
+  type TripRow = { stops: StopRow[] | null; scheduled_at: string };
   const destBuckets = new Map<string, { address: string; lat: number | null; lng: number | null; count: number; last: string }>();
   const skipRe = /current\s+location|my\s+location|^pickup$/i;
-  for (const t of (allTrips ?? []) as Array<{
-    pickup_address: string | null;
-    pickup_lat: number | null;
-    pickup_lng: number | null;
-    dropoff_address: string | null;
-    dropoff_lat: number | null;
-    dropoff_lng: number | null;
-    scheduled_at: string;
-  }>) {
-    for (const [addr, lat, lng] of [
-      [t.dropoff_address, t.dropoff_lat, t.dropoff_lng] as const,
-      [t.pickup_address, t.pickup_lat, t.pickup_lng] as const,
-    ]) {
+  for (const t of (allTrips ?? []) as TripRow[]) {
+    for (const s of t.stops ?? []) {
+      const addr = s.address;
       if (!addr || skipRe.test(addr)) continue;
       const trimmed = addr.trim();
       if (!trimmed) continue;
-      const key = trimmed.toLowerCase();
-      if (hiddenSet.has(key)) continue;
+      const addrKey = trimmed.toLowerCase();
+      if (hiddenSet.has(addrKey)) continue;
+      const hasCoords = typeof s.lat === "number" && typeof s.lng === "number";
+      const key = hasCoords
+        ? `${(s.lat as number).toFixed(4)},${(s.lng as number).toFixed(4)}`
+        : addrKey;
       const existing = destBuckets.get(key);
       if (existing) {
         existing.count += 1;
         if (t.scheduled_at > existing.last) existing.last = t.scheduled_at;
       } else {
-        destBuckets.set(key, { address: trimmed, lat, lng, count: 1, last: t.scheduled_at });
+        destBuckets.set(key, {
+          address: trimmed,
+          lat: hasCoords ? (s.lat as number) : null,
+          lng: hasCoords ? (s.lng as number) : null,
+          count: 1,
+          last: t.scheduled_at,
+        });
       }
     }
   }

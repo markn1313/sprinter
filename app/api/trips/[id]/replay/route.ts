@@ -29,7 +29,7 @@ export async function GET(
   const sb = supabaseAdmin();
   const { data: trip } = await sb
     .from("trips")
-    .select("dispatched_at,completed_at,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng")
+    .select("dispatched_at,completed_at,stops")
     .eq("id", id)
     .maybeSingle();
   if (!trip) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -97,14 +97,33 @@ export async function GET(
     }
   }
 
+  // Build the stop chain for the replay overlay. stops[0] is the pickup,
+  // stops[last] is the final dropoff; anything in between is a mid-trip
+  // waypoint the replay can render as a numbered marker. arrived_at lets
+  // the scrubber show which stop has been reached at each point in time.
+  type Stop = {
+    address?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    arrived_at?: string | null;
+  };
+  const rawStops = (trip as { stops?: Stop[] | null }).stops ?? [];
+  const stops = rawStops
+    .filter((s) => typeof s.lat === "number" && typeof s.lng === "number")
+    .map((s) => ({
+      lat: s.lat as number,
+      lng: s.lng as number,
+      address: s.address ?? null,
+      arrived_at: s.arrived_at ?? null,
+    }));
+  const pickup = stops.length > 0 ? { lat: stops[0].lat, lng: stops[0].lng } : null;
+  const dropoff = stops.length > 0 ? { lat: stops[stops.length - 1].lat, lng: stops[stops.length - 1].lng } : null;
+
   return NextResponse.json({
     samples,
-    pickup: trip.pickup_lat != null && trip.pickup_lng != null
-      ? { lat: trip.pickup_lat, lng: trip.pickup_lng }
-      : null,
-    dropoff: trip.dropoff_lat != null && trip.dropoff_lng != null
-      ? { lat: trip.dropoff_lat, lng: trip.dropoff_lng }
-      : null,
+    pickup,
+    dropoff,
+    stops,
     raw_count: dedupe.length,
     sample_count: samples.length,
   });

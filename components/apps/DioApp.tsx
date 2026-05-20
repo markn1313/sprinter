@@ -90,18 +90,11 @@ interface DioStop {
 const DIO_ACK_DEST_KEY = "sprinter:dio:acked_destination";
 
 function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
-  // The chain is just stops[]. Backend dual-writes pickup_*/dropoff_*
-  // during this migration, so an empty stops[] (legacy trip) falls
-  // back to a synthesized 2-entry chain rather than rendering blank.
+  // The chain is just stops[]. Every trip has one — the backfill
+  // migration (2026-05-20) ensured legacy trips are populated, and the
+  // legacy pickup_*/dropoff_* columns are gone.
   const chain = useMemo<DioStop[]>(() => {
-    const raw = (trip as unknown as { stops?: DioStop[] }).stops;
-    if (raw && raw.length > 0) return raw;
-    const fb: DioStop[] = [];
-    if (trip.pickup_address || trip.pickup_lat != null)
-      fb.push({ id: `${trip.id}:p`, address: trip.pickup_address ?? "(pickup)", lat: trip.pickup_lat, lng: trip.pickup_lng, arrived_at: trip.arrived_at_pickup_at });
-    if (trip.dropoff_address || trip.dropoff_lat != null)
-      fb.push({ id: `${trip.id}:d`, address: trip.dropoff_address ?? "(dropoff)", lat: trip.dropoff_lat, lng: trip.dropoff_lng, arrived_at: trip.arrived_at_dropoff_at });
-    return fb;
+    return ((trip as unknown as { stops?: DioStop[] }).stops) ?? [];
   }, [trip]);
 
   // Active = first un-arrived stop. If everything's arrived (rare —

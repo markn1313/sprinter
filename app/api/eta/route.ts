@@ -123,12 +123,6 @@ export async function POST(req: Request) {
 
 interface TripWaypoints {
   status: string;
-  pickup_lat: number | null;
-  pickup_lng: number | null;
-  pickup_address: string | null;
-  dropoff_lat: number | null;
-  dropoff_lng: number | null;
-  dropoff_address: string | null;
   stops: StopRow[] | null;
 }
 
@@ -174,7 +168,7 @@ export async function GET(req: Request) {
 
   const { data: trip } = await supabaseAdmin()
     .from("trips")
-    .select("status,pickup_lat,pickup_lng,pickup_address,dropoff_lat,dropoff_lng,dropoff_address,stops")
+    .select("status,stops")
     .eq("id", tripId)
     .maybeSingle();
   if (!trip) return NextResponse.json({ error: "trip not found" }, { status: 404 });
@@ -183,66 +177,20 @@ export async function GET(req: Request) {
 
   const upcoming: Array<{ kind: "pickup" | "stop" | "dropoff"; lat: number; lng: number; label: string }> = [];
 
-  // Universal-Pickup data model: all pickups live in stops[]. Each stop
-  // that hasn't been visited yet (arrived_at == null) is a future
-  // waypoint. Once the van has driven past a stop (arrived_at set), we
-  // drop it from upcoming. The legacy trip.pickup_* fields are merged
-  // in only as a fallback for trips dispatched before the migration
-  // (no stops[] entry) — those get rendered as an implicit first stop.
-  const stopsRaw = (t.stops as (StopRow & { arrived_at?: string | null })[] | null) ?? [];
-  const hasAnyStop = stopsRaw.some((s) => s.lat != null && s.lng != null);
-
-  // Pre-migration trips wrote only trip.pickup_*; treat as one implicit
-  // stop. Sentinel-pickup ("My current location") is dropped once the
-  // van is >400m away so the route doesn't loop back to the dispatch
-  // origin once Mark has clearly departed.
-  let includeLegacyPickup = !hasAnyStop && t.pickup_lat != null && t.pickup_lng != null;
-  if (includeLegacyPickup && t.pickup_address) {
-    const sentinel = /current\s+location|my\s+location|mark.?s\s+location/i.test(t.pickup_address);
-    if (sentinel) {
-      const R = 6_371_000;
-      const toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad((t.pickup_lat ?? 0) - origin.lat);
-      const dLng = toRad((t.pickup_lng ?? 0) - origin.lng);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(origin.lat)) * Math.cos(toRad(t.pickup_lat ?? 0)) * Math.sin(dLng / 2) ** 2;
-      const distM = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (distM > 400) includeLegacyPickup = false;
-    }
-  }
-  // Same drop-past-pickup logic for at_pickup / onboard / at_dropoff /
-  // complete. at_pickup means the van has crossed the 100m geofence
-  // — the pickup leg is in the past even if the state machine hasn't
-  // flipped to onboard yet, so it shouldn't be drawn or rerouted to.
-  if (
-    t.status === "at_pickup" ||
-    t.status === "onboard" ||
-    t.status === "at_dropoff" ||
-    t.status === "complete"
-  ) {
-    includeLegacyPickup = false;
-  }
-  if (includeLegacyPickup && t.pickup_lat != null && t.pickup_lng != null) {
-    upcoming.push({ kind: "pickup", lat: t.pickup_lat, lng: t.pickup_lng, label: t.pickup_address ?? "Pickup" });
-  }
-
-  // Pending stops (not arrived yet). A stop with a `passenger` field
-  // is someone's pickup → render as kind="pickup" (teardrop glyph in
-  // the UI). Stops without a passenger are errand waypoints — render
-  // as plain numbered stops. This holds even after the Mapbox
-  // optimizer reorders the array, which positional logic (idx === 0)
-  // would have gotten wrong.
-  stopsRaw.forEach((s) => {
+  // Destinations-as-chain: trip.stops[] is the single source of truth.
+  // Every un-arrived stop is a future waypoint; the LAST stop is the
+  // final destination (kind="dropoff"); stops with a passenger name
+  // render as a pickup teardrop; everything else is a numbered stop.
+  const stopsRaw = (t.stops as (StopRow & { arrived_at?: string | null; passenger?: string | null })[] | null) ?? [];
+  const lastIdx = stopsRaw.length - 1;
+  stopsRaw.forEach((s, idx) => {
     if (s.lat == null || s.lng == null) return;
     if (s.arrived_at) return;
-    const isPickup = !!(s as unknown as { passenger?: string | null }).passenger;
-    upcoming.push({ kind: isPickup ? "pickup" : "stop", lat: s.lat, lng: s.lng, label: s.address });
+    const isFinal = idx === lastIdx;
+    const isPickup = !isFinal && !!s.passenger;
+    const kind: "pickup" | "stop" | "dropoff" = isFinal ? "dropoff" : isPickup ? "pickup" : "stop";
+    upcoming.push({ kind, lat: s.lat, lng: s.lng, label: s.address });
   });
-
-  if (t.dropoff_lat != null && t.dropoff_lng != null) {
-    upcoming.push({ kind: "dropoff", lat: t.dropoff_lat, lng: t.dropoff_lng, label: t.dropoff_address ?? "Dropoff" });
-  }
 
   if (upcoming.length === 0) {
     // Include `upcoming: []` so clients can distinguish "no remaining

@@ -17,6 +17,17 @@ interface EtaResp {
   distance_miles?: number | null;
 }
 
+// Local stop shape — only the fields we need to compute leave-by.
+interface TripStop {
+  id: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  arrived_at?: string | null;
+  passenger?: string | null;
+  kind?: string;
+}
+
 // Next-scheduled-trip leave-by predictor. Pulls the soonest non-completed,
 // non-cancelled trip with a future scheduled_at, computes a live ETA from the
 // van's current position to that pickup, and tells Mark when he needs to leave
@@ -64,9 +75,19 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
     };
   }, [token]);
 
+  // Pickup = first stop in the chain. Cache locally so the ETA effect and
+  // the render below don't each have to narrow null. Trip type doesn't
+  // declare stops yet, so widen at the access site.
+  const pickupStop = trip
+    ? ((trip as { stops?: TripStop[] | null }).stops?.[0] ?? null)
+    : null;
+  const pickupLat = pickupStop?.lat ?? null;
+  const pickupLng = pickupStop?.lng ?? null;
+  const pickupAddress = pickupStop?.address ?? null;
+
   // Compute ETA whenever van or trip changes
   useEffect(() => {
-    if (!trip || trip.pickup_lat == null || trip.pickup_lng == null || vanLat == null || vanLng == null) {
+    if (pickupLat == null || pickupLng == null || vanLat == null || vanLng == null) {
       setEtaMin(null);
       return;
     }
@@ -79,7 +100,7 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
           body: JSON.stringify({
             origin: { lat: vanLat, lng: vanLng },
             waypoints: [
-              { lat: trip.pickup_lat, lng: trip.pickup_lng, kind: "pickup" },
+              { lat: pickupLat, lng: pickupLng, kind: "pickup" },
             ],
           }),
         });
@@ -94,12 +115,12 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
     return () => {
       cancel = true;
     };
-  }, [trip, vanLat, vanLng, token]);
+  }, [pickupLat, pickupLng, vanLat, vanLng, token]);
 
   if (!trip) return null;
   const tripTime = new Date(trip.scheduled_at).getTime();
   const minsUntilTrip = Math.round((tripTime - now) / 60_000);
-  const drive = etaMin ?? estimateDriveMin(vanLat, vanLng, trip.pickup_lat, trip.pickup_lng);
+  const drive = etaMin ?? estimateDriveMin(vanLat, vanLng, pickupLat, pickupLng);
   const slackMin = drive != null ? minsUntilTrip - drive : null;
 
   // Tone:
@@ -132,9 +153,9 @@ export default function LeaveByCard({ token, vanLat, vanLng }: Props) {
           {trip.passenger_name || "Trip"}
         </div>
       </div>
-      {trip.pickup_address && (
+      {pickupAddress && (
         <div className="mt-1 truncate text-[11px] text-zinc-500">
-          {shortAddr(trip.pickup_address)}
+          {shortAddr(pickupAddress)}
         </div>
       )}
       <div className={`mt-2 flex items-center gap-1.5 text-sm font-semibold ${palette.text}`}>
