@@ -12,6 +12,7 @@ import { compactAddr } from "@/lib/format";
 import PushToggle from "@/components/PushToggle";
 import {
   Bell,
+  Check,
   MessageCircle,
   Navigation,
   ThermometerSnowflake,
@@ -70,6 +71,18 @@ interface EtaShape {
   } | null;
 }
 
+// Per-stop shape on the trip. Position in stops[] is what drives the
+// UI (first=pickup, last=final, middle=intermediate) — the server's
+// `kind` field is migrating away and intentionally ignored here.
+interface DioStop {
+  id: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  passenger?: string | null;
+  arrived_at?: string | null;
+}
+
 // Stable storage key for the destination Dio last acknowledged.
 // Persists across reloads so a casual app refresh mid-trip doesn't
 // re-flash an already-seen destination. Cleared automatically when
@@ -77,28 +90,46 @@ interface EtaShape {
 const DIO_ACK_DEST_KEY = "sprinter:dio:acked_destination";
 
 function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
-  // The ETA endpoint's "next waypoint" knows about stops + arrived-at
-  // flags so it always reflects the right next destination. Trip's
-  // legacy pickup/dropoff fields are the fallback for the brief window
-  // before the first ETA arrives.
-  const next = eta?.to_next ?? null;
-  const fallbackTarget: "pickup" | "dropoff" =
-    trip.status === "onboard" || trip.status === "at_dropoff" ? "dropoff" : "pickup";
-  const fallbackLat = fallbackTarget === "pickup" ? trip.pickup_lat : trip.dropoff_lat;
-  const fallbackLng = fallbackTarget === "pickup" ? trip.pickup_lng : trip.dropoff_lng;
-  const fallbackAddr = fallbackTarget === "pickup" ? trip.pickup_address : trip.dropoff_address;
-  const kind: "pickup" | "stop" | "dropoff" = next?.kind ?? fallbackTarget;
-  const label = next?.label ?? fallbackAddr ?? "(no address)";
+  // The chain is just stops[]. Backend dual-writes pickup_*/dropoff_*
+  // during this migration, so an empty stops[] (legacy trip) falls
+  // back to a synthesized 2-entry chain rather than rendering blank.
+  const chain = useMemo<DioStop[]>(() => {
+    const raw = (trip as unknown as { stops?: DioStop[] }).stops;
+    if (raw && raw.length > 0) return raw;
+    const fb: DioStop[] = [];
+    if (trip.pickup_address || trip.pickup_lat != null)
+      fb.push({ id: `${trip.id}:p`, address: trip.pickup_address ?? "(pickup)", lat: trip.pickup_lat, lng: trip.pickup_lng, arrived_at: trip.arrived_at_pickup_at });
+    if (trip.dropoff_address || trip.dropoff_lat != null)
+      fb.push({ id: `${trip.id}:d`, address: trip.dropoff_address ?? "(dropoff)", lat: trip.dropoff_lat, lng: trip.dropoff_lng, arrived_at: trip.arrived_at_dropoff_at });
+    return fb;
+  }, [trip]);
 
-  // Stable identity for the current destination. Used to detect when
-  // Mark's changed it: if `destKey` doesn't match what Dio acknowledged
-  // last, the card flashes gold until he taps it or hits Navigate.
-  // Trip id + kind + label is sufficient — when Mark swaps an address
-  // the label changes; when the trip's destination kind transitions
-  // (pickup→dropoff after pickup arrival) the kind changes.
+  // Active = first un-arrived stop. If everything's arrived (rare —
+  // the trip would be complete), point at the last entry so the
+  // Navigate button still has somewhere to go.
+  const activeIndex = useMemo(() => {
+    const i = chain.findIndex((s) => s.arrived_at == null);
+    return i === -1 ? chain.length - 1 : i;
+  }, [chain]);
+  const active: DioStop | null = chain[activeIndex] ?? null;
+  const isFirstStop = activeIndex === 0;
+  const isFinalStop = activeIndex === chain.length - 1 && chain.length > 1;
+
+  // Role is positional, not from the server's `kind` field (which is
+  // migrating away). First = Pickup, last = Final, middle = Stop.
+  const activeRole: "pickup" | "stop" | "dropoff" = isFirstStop
+    ? "pickup"
+    : isFinalStop
+      ? "dropoff"
+      : "stop";
+  const activeLabel = active?.address ?? eta?.to_next?.label ?? "(no address)";
+
+  // Stable identity for the active destination. Drives the gold flash
+  // when Mark changes the chain (insert / reorder / replace address).
+  // Including the index covers "next stop advanced" (arrived_at landed).
   const destKey = useMemo(
-    () => `${trip.id}|${kind}|${label}`,
-    [trip.id, kind, label],
+    () => `${trip.id}|${activeIndex}|${active?.id ?? "none"}|${activeLabel}`,
+    [trip.id, activeIndex, active?.id, activeLabel],
   );
 
   const [acknowledgedKey, setAcknowledgedKey] = useState<string | null>(() => {
@@ -122,19 +153,17 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
     }
   }, [destKey]);
 
-  // Where Google Maps should drop the user. Use the trip's dropoff/pickup
-  // lat/lng — the ETA endpoint doesn't echo per-waypoint coords today.
+  // Where Google Maps should drop the user. Use the active stop's
+  // own lat/lng so multi-stop trips advance the nav target correctly.
   const navUrl =
-    fallbackLat != null && fallbackLng != null ? googleMapsTo(fallbackLat, fallbackLng) : null;
+    active?.lat != null && active?.lng != null ? googleMapsTo(active.lat, active.lng) : null;
 
   // Per Mark's spec: only the PRIMARY scheduled pickup shows a time.
-  // Along-the-way pickups (added by joining passengers) and the dropoff
-  // have no commitment time — just the address + Navigate. The trip's
-  // scheduled_at is the commitment for the first pickup; once the trip
-  // moves past at_pickup (onboard / at_dropoff), the scheduled time is
-  // historical and we don't surface it.
+  // That's the FIRST stop in the chain — and only while we haven't
+  // arrived there yet. Along-the-way stops + the final destination
+  // have no commitment time, just the address + Navigate.
   const showScheduledPickupTime =
-    kind === "pickup" &&
+    isFirstStop &&
     (trip.status === "scheduled" || trip.status === "dispatched" || trip.status === "at_pickup");
   const scheduledTime = useMemo(() => {
     if (!showScheduledPickupTime || !trip.scheduled_at) return null;
@@ -160,8 +189,12 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
     return { tone: "late", label: `${deltaMin} min late` };
   }, [showScheduledPickupTime, trip.scheduled_at, minutesAvailable]);
 
-  const typeLabel = kind === "pickup" ? "Pickup" : kind === "dropoff" ? "Dropoff" : "Stop";
-  const typeTint = kind === "pickup" ? "text-amber-300" : "text-blue-300";
+  const activeTint =
+    activeRole === "pickup"
+      ? "text-amber-300"
+      : activeRole === "dropoff"
+        ? "text-violet-300"
+        : "text-blue-300";
 
   return (
     <div className="space-y-3">
@@ -187,6 +220,11 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
           border-color: rgb(250, 204, 21) !important;
         }
       `}</style>
+      {/* One card, one chain. Active row up top in big type with
+          (for the primary pickup) the "Be there at" block; the rest
+          of the chain follows below, arrived rows checked + struck,
+          upcoming rows dim. Replaces the old separate pickup/dropoff
+          cards — Dio just reads his route top to bottom. */}
       <div
         onClick={acknowledge}
         className={`rounded-3xl border bg-zinc-950/90 p-5 transition-all ${
@@ -195,10 +233,15 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
             : "border-zinc-800"
         }`}
       >
-        <div className={`text-xs uppercase tracking-widest ${typeTint}`}>{typeLabel}</div>
-        <div className="mt-2 text-3xl font-bold leading-tight text-zinc-100">
-          {compactAddr(label)}
+        <div className={`text-xs uppercase tracking-widest ${activeTint}`}>
+          {activeRole === "pickup" ? "Pickup" : activeRole === "dropoff" ? "Final destination" : "Next stop"}
         </div>
+        <div className="mt-2 text-3xl font-bold leading-tight text-zinc-100">
+          {compactAddr(activeLabel)}
+        </div>
+        {active?.passenger && (
+          <div className="mt-1 text-sm text-zinc-400">{active.passenger}</div>
+        )}
         {scheduledTime && (
           <div className="mt-4">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500">Be there at</div>
@@ -219,6 +262,38 @@ function DestinationCard({ trip, eta }: { trip: Trip; eta: EtaShape | null }) {
               )}
             </div>
           </div>
+        )}
+
+        {/* Rest of the chain. Skips the active entry (already above). */}
+        {chain.length > 1 && (
+          <ul className="mt-4 space-y-1.5 border-t border-zinc-800 pt-3">
+            {chain.map((s, i) => {
+              if (i === activeIndex) return null;
+              const arrived = s.arrived_at != null;
+              const isLast = i === chain.length - 1;
+              const roleLabel = i === 0 ? "Pickup" : isLast ? "Final" : `Stop ${i}`;
+              return (
+                <li
+                  key={s.id}
+                  className={`flex items-center gap-2 text-sm ${
+                    arrived ? "text-zinc-500 line-through" : "text-zinc-400"
+                  }`}
+                >
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                      arrived ? "bg-emerald-700/60" : "border border-zinc-700"
+                    }`}
+                  >
+                    {arrived && <Check size={11} className="text-emerald-200" />}
+                  </span>
+                  <span className="shrink-0 text-[10px] uppercase tracking-widest text-zinc-500">
+                    {roleLabel}
+                  </span>
+                  <span className="truncate">{compactAddr(s.address)}</span>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
 

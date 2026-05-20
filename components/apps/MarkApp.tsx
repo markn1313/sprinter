@@ -19,6 +19,7 @@ import EtaCard from "@/components/EtaCard";
 import BouncieConnectCard from "@/components/BouncieConnectCard";
 import EtaBadge from "@/components/EtaBadge";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
+import DestinationInput from "@/components/DestinationInput";
 import { statusLabel, shortTime } from "@/lib/format";
 import { postJson } from "@/lib/api-client";
 import { encodePolyline } from "@/lib/routing";
@@ -255,27 +256,22 @@ function MapTab({
   // All three flows share the in-place map transform (violet draggable pin
   // + zoom-in + bottom card). Only one target is active at a time. Null =
   // normal map view.
-  type EditTarget = "pickup" | "dropoff" | "stop";
+  // Edit-mode is now PICKUP-ONLY. Dropoff/stop entry moved to the
+  // always-on DestinationInput at the bottom of the screen (when Mark is
+  // in the van) — single input, server figures out bootstrap vs append,
+  // user genuinely cannot mess it up. See /api/destinations + the
+  // 2026-05-20 simplification commit for the why.
+  type EditTarget = "pickup";
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [editPin, setEditPin] = useState<{ lat: number; lng: number } | null>(null);
   const [editAddress, setEditAddress] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
-  // Inline error surfaced under the action button in the edit panel.
-  // Set by commit handlers when (a) there's no trip to mutate — a passenger
-  // tracking via a generic link with trip_id=null hits this, the live trip
-  // 404s on PATCH otherwise — or (b) the server returns non-OK. Clearing
-  // on exitEdit so it doesn't bleed across edit sessions. Replaces the
-  // earlier silent-return + console.warn behaviour that made the button
-  // look broken to passengers ("I tapped Set dropoff and nothing happened").
-  const [editError, setEditError] = useState<string | null>(null);
-  // Van → pin route preview (replaces ambient van→me when in any edit mode).
+  // Van → pin route preview (replaces ambient van→me when in pickup edit mode).
   const [editRoute, setEditRoute] = useState<{ polyline: string | null; congestion: ("low"|"moderate"|"heavy"|"severe"|"unknown")[] | null; eta_minutes: number | null; distance_miles: number | null }>(
     { polyline: null, congestion: null, eta_minutes: null, distance_miles: null },
   );
   // Convenience aliases for clarity throughout the file.
   const pickupMode = editTarget === "pickup";
-  const dropoffMode = editTarget === "dropoff";
-  const stopMode = editTarget === "stop";
   const inEditMode = editTarget !== null;
   // Drop-pin retired — was redundant with Pickup / Dropoff / Stop, each of
   // which already opens a draggable pin with live ETA + address. Drop-pin
@@ -288,6 +284,10 @@ function MapTab({
     setFocusKey((k) => k + 1);
   };
   const [myGps, setMyGps] = useState<{ lat: number; lng: number } | null>(null);
+  // Track the wall-clock time of the most recent myGps update so we can
+  // pass an accurate age to DestinationInput → X-Phone-GPS header. Stale
+  // GPS would lie to the server's bootstrap proximity check.
+  const [myGpsTs, setMyGpsTs] = useState<number | null>(null);
   const localGeoOk = useRef<boolean>(false);
   useEffect(() => {
     if (!shareGps || typeof navigator === "undefined" || !navigator.geolocation) return;
@@ -295,6 +295,7 @@ function MapTab({
       (p) => {
         localGeoOk.current = true;
         setMyGps({ lat: p.coords.latitude, lng: p.coords.longitude });
+        setMyGpsTs(Date.now());
       },
       () => {
         // Permission denied / unavailable — fall back to server-side
@@ -328,7 +329,12 @@ function MapTab({
           // stale-by-minutes would matter; the no-trip view just wants
           // a recent-ish dot to anchor the "Van to you" card on.
           const ageS = (Date.now() - new Date(j.location.reported_at).getTime()) / 1000;
-          if (ageS < 1800) setMyGps({ lat: j.location.lat, lng: j.location.lng });
+          if (ageS < 1800) {
+            setMyGps({ lat: j.location.lat, lng: j.location.lng });
+            // Stamp with the reported_at, NOT Date.now(), so DestinationInput
+            // sees the true age of this position when it builds the header.
+            setMyGpsTs(new Date(j.location.reported_at).getTime());
+          }
         }
       } catch {}
     };
@@ -796,43 +802,18 @@ function MapTab({
     setFocusKey((k) => k + 1);
   };
 
-  // Enter dropoff mode — Mark is in the van and wants to set/change where
-  // they're going. Pin starts at the existing dropoff (if set) or the
-  // van's current position so Mark drags from a familiar spot.
-  const enterDropoff = () => {
-    let start: { lat: number; lng: number } | null = null;
-    if (live?.dropoff_lat != null && live.dropoff_lng != null) {
-      start = { lat: live.dropoff_lat, lng: live.dropoff_lng };
-      setEditAddress(live.dropoff_address ?? null);
-    } else if (pos) {
-      start = { lat: pos.lat, lng: pos.lng };
-      setEditAddress(null);
-    }
-    if (!start) return;
-    setEditPin(start);
-    setEditTarget("dropoff");
-    setFocusMode("me");
-    setFocusKey((k) => k + 1);
-  };
-
-  // Enter stop mode — ADD a new intermediate stop. The pin starts at the
-  // van's current position so Mark can drag it to wherever the new stop
-  // belongs; the server-side optimizer will figure out the visit order
-  // automatically when stops are saved.
-  const enterStop = () => {
-    if (!pos) return;
-    setEditPin({ lat: pos.lat, lng: pos.lng });
-    setEditAddress(null);
-    setEditTarget("stop");
-    setFocusMode("me");
-    setFocusKey((k) => k + 1);
-  };
+  // enterDropoff + enterStop deleted 2026-05-20 — replaced by the always-
+  // on DestinationInput at the bottom of the screen. Single input, single
+  // endpoint, server decides bootstrap-vs-append. The drag-pin UX they
+  // used is retained for pickup mode only (where the spatial gesture
+  // genuinely helps — "I'm standing here, come get me"); dropoff and
+  // stops are address-or-typed entries where text + auto-optimize works
+  // better than pin dragging in a moving van.
 
   const exitEdit = () => {
     setEditTarget(null);
     setEditPin(null);
     setEditAddress(null);
-    setEditError(null);
     setEditRoute({ polyline: null, congestion: null, eta_minutes: null, distance_miles: null });
   };
   // Legacy alias name kept for the existing X-Cancel button. The button
@@ -964,87 +945,14 @@ function MapTab({
     }
   };
 
-  // Commit a dropoff change — PATCH the live trip's dropoff fields. Mark
-  // is by definition in the van, so a live trip usually exists; passengers
-  // tracking via a generic ("Van tracker") link with trip_id=null can also
-  // reach this handler and we surface that as an inline error instead of
-  // a silent no-op (which used to look like "I tapped the button and
-  // nothing happened" — see 2026-05-20 incident).
-  const commitDropoff = async () => {
-    if (!editPin || editBusy) return;
-    setEditBusy(true);
-    setEditError(null);
-    try {
-      const trip = live ?? mapTrip;
-      if (!trip) {
-        setEditError("No active trip yet. Ask Mark to dispatch you first.");
-        return;
-      }
-      const res = await fetch(`/api/trips/${trip.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dropoff_lat: editPin.lat,
-          dropoff_lng: editPin.lng,
-          dropoff_address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
-        }),
-      });
-      if (!res.ok) {
-        setEditError(`Couldn't save dropoff (${res.status}). Try again.`);
-        return;
-      }
-      exitEdit();
-      refresh();
-    } catch (err) {
-      console.warn("[MarkApp] dropoff commit failed", err);
-      setEditError("Couldn't save dropoff. Check connection and try again.");
-    } finally {
-      setEditBusy(false);
-    }
-  };
-
-  // APPEND a new intermediate stop. The stops endpoint runs Mapbox's
-  // Optimized-Trips API server-side after save, so Mark doesn't need to
-  // think about where the new stop slots into the existing route — it
-  // gets placed in the position that minimizes total drive time.
-  const commitStop = async () => {
-    if (!editPin || editBusy) return;
-    setEditBusy(true);
-    setEditError(null);
-    try {
-      const trip = live ?? mapTrip;
-      if (!trip) {
-        setEditError("No active trip yet. Ask Mark to dispatch you first.");
-        return;
-      }
-      const newStop = {
-        id: crypto.randomUUID(),
-        kind: "stop",
-        address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
-        lat: editPin.lat,
-        lng: editPin.lng,
-        passenger: null,
-        arrived_at: null,
-        added_at: new Date().toISOString(),
-      };
-      const res = await fetch(`/api/trips/${trip.id}/stops`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: [...stopsArr, newStop] }),
-      });
-      if (!res.ok) {
-        setEditError(`Couldn't add stop (${res.status}). Try again.`);
-        return;
-      }
-      exitEdit();
-      refresh();
-    } catch (err) {
-      console.warn("[MarkApp] stop commit failed", err);
-      setEditError("Couldn't add stop. Check connection and try again.");
-    } finally {
-      setEditBusy(false);
-    }
-  };
+  // commitDropoff + commitStop deleted 2026-05-20. Both flows now go
+  // through DestinationInput → POST /api/destinations, which has
+  // idempotency, optimistic UI, offline queue, geo-bounds check, and
+  // bootstrap-or-append decided server-side. The morning incident that
+  // motivated this rewrite (passenger tapped "Set dropoff", nothing
+  // happened, because her link had trip_id=null) is now structurally
+  // impossible — the new endpoint bootstraps a trip from her first
+  // entry. See app/api/destinations/route.ts.
 
   // Remove a single intermediate stop. Used when Mark taps a stop pin on
   // the map and chooses "Remove this stop". Matches by id when possible
@@ -1104,26 +1012,13 @@ function MapTab({
   // Clear ALL pending stops at once. Used when Mark long-presses the Stop
   // button (or as a fallback when the list grows unwieldy). Arrived stops
   // stay in place because their history matters.
-  const clearStops = async () => {
-    if (editBusy) return;
-    setEditBusy(true);
-    try {
-      const trip = live ?? mapTrip;
-      if (!trip) return;
-      const keep = stopsArr.filter((s) => (s as unknown as { arrived_at?: string | null }).arrived_at != null);
-      await fetch(`/api/trips/${trip.id}/stops`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ stops: keep }),
-      });
-      exitEdit();
-      refresh();
-    } catch (err) {
-      console.warn("[MarkApp] stop clear failed", err);
-    } finally {
-      setEditBusy(false);
-    }
-  };
+  // clearStops deleted 2026-05-20 — only ever rendered as a button
+  // inside the now-deleted stopMode branch of the edit panel. Removing
+  // a stop is still possible via the TripSheet drag-reorder list (per-row
+  // X button) or by tapping the pin on the map (removeStopPin). The
+  // "nuke everything pending" gesture lacked a safe path anyway — Mark
+  // can hold-to-confirm or use TripSheet's bulk-clear if he wants it
+  // back later.
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -1278,14 +1173,13 @@ function MapTab({
           of the column (above fuel%) so it's always reachable without
           competing with the map controls on the left. */}
       <div className="absolute right-3 top-3 z-30 flex w-fit flex-col items-stretch gap-1.5">
-        {/* Three context-aware buttons:
-            - Pickup: only when NOT in the van (summons Dio to come get
-              you OR modifies a pending pickup).
-            - Dropoff: only when IN the van (sets/modifies where you're
-              going).
-            - Stop: only when IN the van AND a dropoff is set (adds /
-              modifies / removes ONE intermediate stop on the way).
-            In edit mode the relevant button morphs to "✕ Cancel". */}
+        {/* Top-right button column — Pickup ONLY (out-of-van case).
+            Dropoff and Add Stop buttons removed 2026-05-20: when
+            Mark is in the van, the always-on DestinationInput at the
+            bottom of the screen is the single entry point for any new
+            destination. The server figures out bootstrap-vs-append; he
+            doesn't have to pre-classify. In edit mode (pickup pin
+            drag), this morphs to "✕ Cancel". */}
         {inEditMode ? (
           <button
             onClick={exitEdit}
@@ -1294,44 +1188,15 @@ function MapTab({
             ✕ Cancel
           </button>
         ) : (
-          <>
-            {/* Pickup OR Dropoff — mutually exclusive based on whether
-                Mark is in the van. Out of van: Pickup (add/modify his
-                pickup stop). In van: Dropoff (set/modify destination).
-                Remote passengers joining a trip see Pickup because
-                their phone GPS is far from the van — inVan = false. */}
-            {!inVan && (
-              <button
-                onClick={enterPickup}
-                disabled={!myGps && !myStop}
-                className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {pickupModeKind === "edit" ? "Modify" : "Pickup"}
-              </button>
-            )}
-            {inVan && (
-              <button
-                onClick={enterDropoff}
-                disabled={!pos}
-                className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {live?.dropoff_lat != null ? "Modify dropoff" : "Dropoff"}
-              </button>
-            )}
-            {inVan && (live?.dropoff_lat != null || (mapTrip?.dropoff_lat != null)) && (
-              <button
-                onClick={enterStop}
-                className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-zinc-900 ring-1 ring-violet-700/60 hover:bg-zinc-800"
-              >
-                Add stop
-                {stopsArr.length > 0 && (
-                  <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] tabular-nums">
-                    {stopsArr.length}
-                  </span>
-                )}
-              </button>
-            )}
-          </>
+          !inVan && (
+            <button
+              onClick={enterPickup}
+              disabled={!myGps && !myStop}
+              className="rounded-2xl px-3 py-2 text-xs font-semibold text-white shadow bg-gradient-to-br from-violet-600 to-fuchsia-700 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {pickupModeKind === "edit" ? "Modify" : "Pickup"}
+            </button>
+          )
         )}
         <button
           onClick={() => setShareGps((v) => !v)}
@@ -1428,36 +1293,22 @@ function MapTab({
         );
       })()}
 
-      {/* Pickup mode bottom strip — replaces the no-trip Van-to-you tile
-          with an address + 4 time chips. Tapping a chip dispatches the
-          trip and exits pickup mode. */}
-      {inEditMode && (
+      {/* Pickup-mode bottom strip — pin drag + address autocomplete +
+          4 time chips. Tapping a chip dispatches the pickup trip.
+          Dropoff and stop entry no longer live here; they use the
+          always-on DestinationInput rendered below when inVan. */}
+      {inEditMode && pickupMode && (
         <div className="absolute inset-x-3 bottom-3 z-30">
           <div className="rounded-2xl border border-violet-700/60 bg-zinc-950 px-4 py-2 shadow-2xl">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-violet-300">
               <span aria-hidden>📍</span>
-              <span>
-                {pickupMode
-                  ? pickupModeKind === "edit"
-                    ? "Modify pickup"
-                    : "Pick me up"
-                  : dropoffMode
-                    ? live?.dropoff_lat != null
-                      ? "Modify dropoff"
-                      : "Set dropoff"
-                    : `Add stop${stopsArr.length > 0 ? ` · ${stopsArr.length} pending` : ""}`}
-              </span>
+              <span>{pickupModeKind === "edit" ? "Modify pickup" : "Pick me up"}</span>
               <span className="text-zinc-500">·</span>
               <span className="text-zinc-400">Drag purple icon</span>
             </div>
             <div className="mt-0.5 truncate text-base font-semibold text-zinc-100 leading-tight">
               {editAddress ?? (editPin ? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}` : "Locating…")}
             </div>
-            {/* Address-input → pin snap. Type a location, tap an
-                autocomplete result, the violet pin jumps to those
-                coords and editAddress updates. Reverse-geocode +
-                route-preview effects automatically refresh because
-                they're keyed on editPin coords. */}
             <div className="mt-2">
               <AddressAutocomplete
                 token={token}
@@ -1470,16 +1321,16 @@ function MapTab({
                 }}
               />
             </div>
-            {(editRoute.eta_minutes != null || (pickupMode && pickupModeKind === "edit" && editTrip?.scheduled_at)) && (
+            {(editRoute.eta_minutes != null || (pickupModeKind === "edit" && editTrip?.scheduled_at)) && (
               <div className="mt-1 flex items-baseline justify-between gap-3 text-sm text-zinc-300">
                 <div>
                   {editRoute.eta_minutes != null && editRoute.distance_miles != null && (
                     <>
-                      {pickupMode ? "Van:" : "ETA:"} <span className="font-mono font-semibold tabular-nums text-emerald-300">{editRoute.eta_minutes}</span> min · <span className="font-mono font-semibold tabular-nums text-zinc-100">{editRoute.distance_miles}</span> mi away
+                      Van: <span className="font-mono font-semibold tabular-nums text-emerald-300">{editRoute.eta_minutes}</span> min · <span className="font-mono font-semibold tabular-nums text-zinc-100">{editRoute.distance_miles}</span> mi away
                     </>
                   )}
                 </div>
-                {pickupMode && pickupModeKind === "edit" && editTrip?.scheduled_at && (
+                {pickupModeKind === "edit" && editTrip?.scheduled_at && (
                   <div className="flex items-baseline gap-1.5 text-[10px] uppercase tracking-widest text-zinc-500">
                     <span>Currently</span>
                     <span className="font-mono text-sm font-bold tabular-nums text-emerald-300 normal-case tracking-normal">
@@ -1489,69 +1340,45 @@ function MapTab({
                 )}
               </div>
             )}
-            {/* Pickup keeps its 4 time chips; dropoff/stop use a single
-                commit button (with an optional "Remove" for an existing
-                intermediate stop). */}
-            {pickupMode ? (
-              <div className="mt-2 grid grid-cols-4 gap-2">
-                {[0, 10, 15, 20].map((m) => {
-                  const targetAt = new Date(Date.now() + m * 60_000);
-                  const targetLabel = targetAt.toLocaleTimeString("en-US", {
-                    timeZone: "America/Los_Angeles",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  });
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => dispatchPickup(m)}
-                      disabled={editBusy || !editPin}
-                      className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-1 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
-                    >
-                      <span className="leading-tight">{m === 0 ? "Now" : `${m} min`}</span>
-                      <span className="font-mono text-[13px] font-normal text-violet-100/90 tabular-nums leading-tight">
-                        {targetLabel}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="mt-2 flex flex-col gap-2">
-                {editError && (
-                  <div
-                    role="alert"
-                    className="rounded-lg border border-red-700/60 bg-red-950/50 px-3 py-2 text-xs font-medium text-red-200"
-                  >
-                    {editError}
-                  </div>
-                )}
-                <div className="flex items-stretch gap-2">
-                <button
-                  onClick={dropoffMode ? commitDropoff : commitStop}
-                  disabled={editBusy || !editPin}
-                  className="flex-1 rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-2 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
-                >
-                  {dropoffMode
-                    ? live?.dropoff_lat != null
-                      ? "Update dropoff"
-                      : "Set dropoff"
-                    : "Add stop"}
-                </button>
-                {stopMode && stopsArr.length > 0 && (
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              {[0, 10, 15, 20].map((m) => {
+                const targetAt = new Date(Date.now() + m * 60_000);
+                const targetLabel = targetAt.toLocaleTimeString("en-US", {
+                  timeZone: "America/Los_Angeles",
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+                return (
                   <button
-                    onClick={clearStops}
-                    disabled={editBusy}
-                    title="Clear all pending stops"
-                    className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-zinc-900 disabled:opacity-50"
+                    key={m}
+                    onClick={() => dispatchPickup(m)}
+                    disabled={editBusy || !editPin}
+                    className="flex flex-col items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-700 py-1 text-sm font-semibold text-white shadow active:scale-95 hover:from-violet-500 hover:to-fuchsia-600 disabled:opacity-50"
                   >
-                    Clear all
+                    <span className="leading-tight">{m === 0 ? "Now" : `${m} min`}</span>
+                    <span className="font-mono text-[13px] font-normal text-violet-100/90 tabular-nums leading-tight">
+                      {targetLabel}
+                    </span>
                   </button>
-                )}
-                </div>
-              </div>
-            )}
+                );
+              })}
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Always-on "Where to?" entry — in-van case. The single source of
+          truth for adding a destination once Mark / passenger is in the
+          van. Bootstrap-or-append decided server-side. Idempotent,
+          optimistic, offline-queue-backed. Hides during pickup-mode
+          editing to avoid two competing input panels. */}
+      {inVan && !inEditMode && (
+        <div className="absolute inset-x-3 bottom-3 z-30">
+          <DestinationInput
+            token={token}
+            myGps={myGps && myGpsTs ? { lat: myGps.lat, lng: myGps.lng, ageMs: Date.now() - myGpsTs } : null}
+            onTripChanged={refresh}
+          />
         </div>
       )}
 

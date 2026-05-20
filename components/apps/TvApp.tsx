@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Trip } from "@/lib/types";
 import { usePosition } from "@/components/usePosition";
 import { useTrips, activeTrip } from "@/components/useTrips";
 import { useEta } from "@/components/useEta";
@@ -11,7 +10,20 @@ import { useRange } from "@/components/useRange";
 import { stripZip } from "@/lib/format";
 import VanIcon from "@/components/VanIcon";
 import EtaCard from "@/components/EtaCard";
-import { Gauge, Navigation } from "lucide-react";
+import { Gauge } from "lucide-react";
+
+// One stop in the unified destination chain. First entry = pickup, last
+// entry = final destination, middle entries = intermediate stops. The
+// pickup/dropoff/stop distinction lives only at the chain *position*
+// now — there's no separate pickup_* / dropoff_* concept on the TV.
+// `arrived_at` is what the state machine stamps when the van geofences
+// each stop; we use it to skip already-visited entries.
+type Stop = {
+  lat: number | null;
+  lng: number | null;
+  address: string;
+  arrived_at?: string | null;
+};
 
 // 4K-friendly TV display. Optimized for big screens — large type, no interactive
 // controls. Same data sources as the rider/owner apps so it stays in sync.
@@ -26,7 +38,43 @@ export default function TvApp({ token }: { token: string }) {
   const { eta } = useEta(token, focus?.id ?? null, 20_000);
   const range = useRange(token);
 
-  const stopsArr = ((focus as unknown as { stops?: Array<{ lat: number | null; lng: number | null; address: string }> })?.stops ?? []);
+  // Destination chain for the focused trip. Defensive fallback: if a
+  // legacy trip somehow still has empty stops[] after the backfill
+  // migration, synthesize the chain from the dual-written pickup_* /
+  // dropoff_* columns so the TV doesn't blank out. New code paths only
+  // ever read from this `stopsArr` going forward.
+  const focusUnknown = focus as unknown as {
+    stops?: Stop[];
+    pickup_lat?: number | null;
+    pickup_lng?: number | null;
+    pickup_address?: string | null;
+    dropoff_lat?: number | null;
+    dropoff_lng?: number | null;
+    dropoff_address?: string | null;
+  };
+  const stopsArr: Stop[] = useMemo(() => {
+    const fromChain = focusUnknown?.stops ?? [];
+    if (fromChain.length > 0) return fromChain;
+    if (!focus) return [];
+    const fallback: Stop[] = [];
+    if (focus.pickup_lat != null && focus.pickup_lng != null) {
+      fallback.push({
+        lat: focus.pickup_lat,
+        lng: focus.pickup_lng,
+        address: focus.pickup_address ?? "",
+        arrived_at: focus.arrived_at_pickup_at ?? focus.onboard_at,
+      });
+    }
+    if (focus.dropoff_lat != null && focus.dropoff_lng != null) {
+      fallback.push({
+        lat: focus.dropoff_lat,
+        lng: focus.dropoff_lng,
+        address: focus.dropoff_address ?? "",
+        arrived_at: focus.arrived_at_dropoff_at,
+      });
+    }
+    return fallback;
+  }, [focus, focusUnknown?.stops]);
 
   // Speed-adaptive zoom for the right (close-up) map. Faster = wider
   // framing so the viewer can see what's coming up; slower / stopped =
@@ -58,28 +106,32 @@ export default function TvApp({ token }: { token: string }) {
         return { kind: w.kind, lat: w.lat, lng: w.lng, label: w.label, ...(idx != null ? { index: idx } : {}) };
       });
     }
-    // Fallback while ETA hasn't loaded yet — mirror the eta endpoint's
-    // includePickup logic so the right-map fitBounds doesn't briefly pull
-    // the camera way out to include a stale pickup pin (e.g. when the
-    // trip is at_pickup / onboard / at_dropoff and pickup is miles back).
-    const includePickup =
-      focus?.status === "scheduled" || focus?.status === "dispatched";
+    // Fallback while ETA hasn't loaded yet. Walk the unified chain and
+    // emit a pin for every un-arrived stop. Skipping arrived stops keeps
+    // the right-map fitBounds from briefly pulling the camera way out to
+    // include a stale pin (e.g. the pickup that was miles back) — and
+    // the viewer should see where the van is GOING, not where it WAS.
+    //
+    // The first un-arrived entry is the "next" pin (kind="stop"); the
+    // last entry of the whole chain is the final destination
+    // (kind="dropoff") so the map icon switches to the flag. Anything in
+    // between renders as a numbered intermediate stop.
     const out: MapPin[] = [];
-    if (includePickup && focus?.pickup_lat != null && focus.pickup_lng != null)
-      out.push({ kind: "pickup", lat: focus.pickup_lat, lng: focus.pickup_lng, label: focus.pickup_address ?? undefined });
-    if (focus?.dropoff_lat != null && focus.dropoff_lng != null)
-      out.push({ kind: "dropoff", lat: focus.dropoff_lat, lng: focus.dropoff_lng, label: focus.dropoff_address ?? undefined });
+    const lastIdx = stopsArr.length - 1;
+    let nextStopOrdinal = 0;
     stopsArr.forEach((s, i) => {
       if (s.lat == null || s.lng == null) return;
-      // Skip already-visited stops so the pin disappears from the TV map
-      // as soon as the state machine fires arrived_at. Otherwise the
-      // viewer keeps seeing where the van WAS rather than where it's GOING.
-      const sx = s as unknown as { arrived_at?: string | null };
-      if (sx.arrived_at) return;
-      out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: i + 1 });
+      if (s.arrived_at) return;
+      const isFinal = i === lastIdx;
+      if (isFinal) {
+        out.push({ kind: "dropoff", lat: s.lat, lng: s.lng, label: s.address });
+      } else {
+        nextStopOrdinal += 1;
+        out.push({ kind: "stop", lat: s.lat, lng: s.lng, label: s.address, index: nextStopOrdinal });
+      }
     });
     return out;
-  }, [upcoming, focus, stopsArr]);
+  }, [upcoming, stopsArr]);
 
   // Live ETA polyline traces the REMAINING route from the van's current
   // position through what's left. Only fall back to the saved
@@ -191,14 +243,16 @@ export default function TvApp({ token }: { token: string }) {
       {(() => {
         if (!eta || (!eta.to_next && !eta.to_final)) return null;
         // Hide the next-stop card when it's not actionable info:
-        //   (a) Same place as final destination (single-leg trip)
+        //   (a) Same place as final destination (single-stop chain — the
+        //       only remaining stop IS the final destination)
         //   (b) Label is the "current location" sentinel — set whenever
         //       Mark dispatches via QuickDispatch / WelcomeCard / pick-me-
         //       up. Conceptually means "where I am now" so showing it as
         //       Next Stop is nonsensical.
-        //   (c) Distance is < ~0.3 mi — pickup is effectively the van's
-        //       current spot. Distance is rounded to 1 decimal upstream
-        //       so 0.1 covers the rounding boundary.
+        //   (c) Distance is < ~0.3 mi — the next chain entry is
+        //       effectively the van's current spot (e.g. a pickup the van
+        //       is parked right on top of). Distance is rounded to 1
+        //       decimal upstream so 0.1 covers the rounding boundary.
         const sameTarget =
           !!eta.to_next &&
           !!eta.to_final &&
@@ -328,26 +382,6 @@ function BigStat({ icon, value, unit, label }: { icon: React.ReactNode; value: s
         <span className="font-mono text-5xl font-bold tabular-nums text-zinc-100">{value}</span>
         {unit && <span className="text-base font-semibold text-zinc-500">{unit}</span>}
       </div>
-    </div>
-  );
-}
-
-function RouteSummary({ trip, stops }: { trip: Trip | null; stops: Array<{ id?: string; address: string; lat: number | null; lng: number | null }> }) {
-  if (!trip) return null;
-  return (
-    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/85 px-8 py-6 backdrop-blur shadow-2xl">
-      <div className="flex items-center gap-2 text-sm uppercase tracking-widest text-zinc-500">
-        <Navigation size={18} className="text-zinc-400" /> Route
-      </div>
-      <ul className="mt-3 space-y-1.5 text-base">
-        {trip.pickup_address && <li className="truncate">🚩 {stripZip(trip.pickup_address)}</li>}
-        {stops.map((s, i) => (
-          <li key={s.id ?? `${i}-${s.address}`} className="truncate">
-            {i + 1}. {stripZip(s.address)}
-          </li>
-        ))}
-        {trip.dropoff_address && <li className="truncate">🏁 {stripZip(trip.dropoff_address)}</li>}
-      </ul>
     </div>
   );
 }
