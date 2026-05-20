@@ -722,21 +722,25 @@ function MapTab({
     }
   }, [mapTrip, stickyTripId]);
 
-  // Is Mark physically in the van?
-  //   1. Trip status says onboard / at_dropoff       → yes (legacy single-pickup trips)
-  //   2. My stop has arrived_at set (server-derived) → yes — survives reload
-  //   3. Sticky latch tripped during this trip       → yes — covers the few seconds
-  //                                                    between getting within 10m
-  //                                                    and the server stamping
-  //                                                    arrived_at
-  //   4. Current GPS within 10m of van               → yes — transient signal
-  // Pickup is a ONE-WAY event: once Mark has been within 10m of the van during
-  // this trip, every reload should still show Dropoff (server-persisted via
-  // arrived_at). Otherwise GPS jitter / a page reload would briefly flip the UI
-  // back to "Pickup" mid-ride. Joining passengers far from the van fail all
-  // four checks.
+  // Is THIS USER physically in the van? (Mark or passenger — same logic.)
+  //   1. My stop on this trip has arrived_at set    → yes — server-derived,
+  //                                                    survives reload
+  //   2. Sticky latch tripped during this trip      → yes — covers the few
+  //                                                    seconds between getting
+  //                                                    within 10m and the
+  //                                                    server stamping arrived_at
+  //   3. Current GPS within 10m of van              → yes — transient signal
+  // Pickup is a ONE-WAY event: once I've been within 10m of the van during
+  // this trip, every reload should still show in-van mode (server-persisted
+  // via arrived_at). Otherwise GPS jitter / a page reload would briefly flip
+  // back to "Pickup" mid-ride.
+  //
+  // Critically, this does NOT key off `live?.status === "onboard"`. That was a
+  // Mark-only assumption from before this app served passengers; under the
+  // observer scenario (Alex is onboard, I'm at my office), that shortcut
+  // wrongly marked the watcher as in-van and revealed the DestinationInput as
+  // if writes were for them. See 2026-05-20 observer fix.
   const inVan = useMemo(() => {
-    if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
     if (myStop?.arrived_at != null) return true;
     if (mapTrip && stickyTripId === mapTrip.id) return true;
     if (!myGps || !pos) return false;
@@ -749,7 +753,22 @@ function MapTab({
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return m < 10;
-  }, [live, mapTrip, stickyTripId, myGps, pos, myStop]);
+  }, [mapTrip, stickyTripId, myGps, pos, myStop]);
+
+  // Observer mode: there's an active trip but I'm neither in the van nor a
+  // passenger on it. Mark watching Alex head to LAX from his office is the
+  // canonical case. Renders a subtle pill near the top so the state is
+  // visually unambiguous — you're a spectator, not the rider.
+  const isObserving = useMemo(() => {
+    if (!live) return false;
+    if (inVan) return false;
+    // Am I a passenger on this trip (via my token on any stop)?
+    const myStopOnTrip = stopsArr.some(
+      (s) => (s as unknown as { created_by_token?: string | null }).created_by_token === token,
+    );
+    if (myStopOnTrip) return false;
+    return true;
+  }, [live, inVan, stopsArr, token]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can
@@ -1043,6 +1062,20 @@ function MapTab({
       {/* Top header — empty now. Both top buttons (Pickup, GPS share)
           live in the right-side column below to keep map controls on
           one rail. */}
+
+      {/* Observer pill — centered at top when watching someone else's
+          trip from outside the van. Makes the spectator state
+          unambiguous so a stray tap doesn't get misread as "the rider
+          wants to add a stop." Auto-hides the moment GPS proximity
+          flips inVan true (you got in) or the trip ends. */}
+      {isObserving && (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center">
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-violet-700/60 bg-zinc-950/85 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-widest text-violet-200 shadow backdrop-blur">
+            <span aria-hidden>👁</span>
+            <span>Watching{live?.passenger_name ? ` ${live.passenger_name}'s` : ""} trip</span>
+          </div>
+        </div>
+      )}
 
       {/* Map focus controls — left edge, aligned with the right-side
           rail (Pickup / GPS / vitals) at the top of the screen. */}
