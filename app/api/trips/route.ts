@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     const { data, error } = await sb
       .from("trips")
       .select(
-        "id,passenger_name,scheduled_at,dispatched_at,onboard_at,completed_at,status,notes,estimated_minutes,stops,route_polyline",
+        "id,passenger_name,passenger_link_token,scheduled_at,dispatched_at,onboard_at,completed_at,status,notes,estimated_minutes,stops,route_polyline",
       )
       .not("status", "in", "(complete,cancelled)")
       .order("scheduled_at", { ascending: true })
@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     const { data, error } = await sb
       .from("trips")
       .select(
-        "id,passenger_name,scheduled_at,dispatched_at,onboard_at,completed_at,status,notes,estimated_minutes,stops,route_polyline",
+        "id,passenger_name,passenger_link_token,scheduled_at,dispatched_at,onboard_at,completed_at,status,notes,estimated_minutes,stops,route_polyline",
       )
       .not("status", "in", "(complete,cancelled)")
       .order("scheduled_at", { ascending: true })
@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     const { data, error } = await sb
       .from("trips")
       .select(
-        "id,passenger_name,scheduled_at,dispatched_at,onboard_at,completed_at,status,estimated_minutes,stops",
+        "id,passenger_name,passenger_link_token,scheduled_at,dispatched_at,onboard_at,completed_at,status,estimated_minutes,stops",
       )
       .eq("id", ctx.trip_id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

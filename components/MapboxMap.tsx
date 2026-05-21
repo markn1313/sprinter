@@ -234,12 +234,21 @@ export default function MapboxMap({
     // traffic-tiles failure can't take the route line down with it.
     map.on("load", () => {
       // Traffic congestion overlay — premium token scope required.
+      // Guard against re-add on style reload / hot reload — Mapbox throws
+      // "There is already a source with ID mapbox-traffic" otherwise (the
+      // load callback can fire more than once over a component's lifetime
+      // if the user switches styles or React re-mounts the map). 2026-05-20
+      // QA caught the resulting console warning spam.
       try {
-        map.addSource("mapbox-traffic", {
-          type: "vector",
-          url: "mapbox://mapbox.mapbox-traffic-v1",
-        });
-        map.addLayer({
+        if (!map.getSource("mapbox-traffic")) {
+          map.addSource("mapbox-traffic", {
+            type: "vector",
+            url: "mapbox://mapbox.mapbox-traffic-v1",
+          });
+        }
+        if (map.getLayer("traffic-overlay")) {
+          // Layer already added on a prior load — skip the rest.
+        } else map.addLayer({
           id: "traffic-overlay",
           type: "line",
           source: "mapbox-traffic",
