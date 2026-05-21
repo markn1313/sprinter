@@ -745,12 +745,21 @@ function MapTab({
   // via arrived_at). Otherwise GPS jitter / a page reload would briefly flip
   // back to "Pickup" mid-ride.
   //
-  // Critically, this does NOT key off `live?.status === "onboard"`. That was a
-  // Mark-only assumption from before this app served passengers; under the
-  // observer scenario (Alex is onboard, I'm at my office), that shortcut
-  // wrongly marked the watcher as in-van and revealed the DestinationInput as
-  // if writes were for them. See 2026-05-20 observer fix.
+  // Status-based shortcut: I'm the trip's bound passenger AND the trip
+  // is onboard/at_dropoff = I'm in the van. The server has already
+  // accepted the bootstrap (or the pickup-arrival 30m gate fired),
+  // which is stronger proof than my client-side GPS proximity. This is
+  // gated on the token match so it does NOT mis-fire for an observer
+  // (Mark watching Alex's trip from his office) — exactly the bug the
+  // observer-mode fix introduced when it removed the unconditional
+  // `if (live?.status === "onboard") return true;` shortcut. Re-adding
+  // the shortcut with the token guard.
   const inVan = useMemo(() => {
+    if (
+      live &&
+      (live.status === "onboard" || live.status === "at_dropoff") &&
+      live.passenger_link_token === token
+    ) return true;
     if (myStop?.arrived_at != null) return true;
     if (mapTrip && stickyTripId === mapTrip.id) return true;
     if (!myGps || !pos) return false;
@@ -772,7 +781,14 @@ function MapTab({
   const isObserving = useMemo(() => {
     if (!live) return false;
     if (inVan) return false;
-    // Am I a passenger on this trip (via my token on any stop)?
+    // I'm the trip's bound passenger — never an observer of my own ride.
+    // (Caught in 2026-05-20 QA: Alex's passenger view rendered the
+    // "Watching Alex's trip" pill on her own trip because the previous
+    // check only looked for my token on a stop's created_by_token, not
+    // on the trip's passenger_link_token.)
+    if (live.passenger_link_token === token) return false;
+    // Or I created any stop on this trip — covers Mark adding a stop
+    // for himself mid-trip, or a guest-link holder being a passenger.
     const myStopOnTrip = stopsArr.some(
       (s) => (s as unknown as { created_by_token?: string | null }).created_by_token === token,
     );
@@ -1200,7 +1216,12 @@ function MapTab({
             ✕ Cancel
           </button>
         ) : (
-          !inVan && (
+          // Pickup button: only when NOT in the van AND no live trip
+          // exists. Single-trip-mode means dispatching a new pickup
+          // cancels the in-flight one, so offering the button while a
+          // trip is live is a foot-gun (would cancel Alex's LAX trip
+          // if Mark hits Pickup expecting to summon a separate ride).
+          !inVan && !live && (
             <button
               onClick={enterPickup}
               disabled={!myGps && !myStop}
