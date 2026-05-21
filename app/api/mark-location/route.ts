@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadSession, requireMark } from "@/lib/auth";
+import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logVehiclePosition } from "@/lib/log";
 
@@ -30,9 +30,14 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
+  // Mark-only. This exposes the OWNER's personal GPS — previously gated
+  // on loadSession (any valid token), which let a passenger's tracking
+  // link read Mark's home/office coordinates. 2026-05-20 audit caught
+  // an Alex passenger view rendering "Wynn Las Vegas" as her "you" pin
+  // because the GET fell through and returned Mark's saved position.
   const auth = req.headers.get("authorization");
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
-  const ctx = await loadSession(token);
+  const ctx = await requireMark(token);
   if (!ctx) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { data } = await supabaseAdmin()
     .from("mark_location")

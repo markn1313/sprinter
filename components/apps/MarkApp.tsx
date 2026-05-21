@@ -82,7 +82,11 @@ export default function MarkApp({
 
   const [origin, setOrigin] = useState("");
   const [shareGps, setShareGps] = useState(true);
-  useMarkGpsReporter(token, shareGps);
+  // Only Mark POSTs his phone GPS to /api/mark-location. For a passenger
+  // session this hook would (a) 401 on every send (the endpoint requires
+  // Mark) and (b) historically tried to overwrite Mark's saved location
+  // with the passenger's — back when the endpoint was looser.
+  useMarkGpsReporter(token, shareGps && role === "mark");
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -108,7 +112,7 @@ export default function MarkApp({
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-zinc-950">
       <div className={tab === "map" ? "relative flex-1 overflow-hidden" : "hidden"}>
-        <MapTab token={token} pos={pos} live={live} mapTrip={mapTrip} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} />
+        <MapTab token={token} pos={pos} live={live} mapTrip={mapTrip} refresh={refresh} shareGps={shareGps} setShareGps={setShareGps} name={name} role={role} />
       </div>
       <div className={tab === "chat" ? "flex flex-1 flex-col overflow-hidden" : "hidden"}>
         <header className="border-b border-zinc-900 bg-zinc-950/95 px-4 py-3">
@@ -231,6 +235,7 @@ function MapTab({
   shareGps,
   setShareGps,
   name,
+  role,
 }: {
   token: string;
   pos: ReturnType<typeof usePosition>["pos"];
@@ -240,6 +245,7 @@ function MapTab({
   shareGps: boolean;
   setShareGps: (v: boolean | ((p: boolean) => boolean)) => void;
   name: string;
+  role: "mark" | "passenger";
 }) {
   // Fire ETA for the focused trip — `live` while in motion, else the next
   // scheduled trip. Scheduled trips still need a route polyline + upcoming
@@ -308,9 +314,13 @@ function MapTab({
   }, [shareGps]);
   // Server-side fallback: poll /api/mark-location every 20s so this tab can
   // see Mark's iPhone-reported position even when local navigator.geolocation
-  // is denied or unavailable (dev Chrome sessions, etc.).
+  // is denied or unavailable (dev Chrome sessions, etc.). Mark-only — for a
+  // passenger session this would (a) 401 (endpoint requires Mark role) and
+  // (b) historically leaked Mark's saved GPS as the passenger's "you" pin
+  // before the endpoint was gated. Skip the poll entirely when not Mark.
   useEffect(() => {
     if (!shareGps) return;
+    if (role !== "mark") return;
     let cancel = false;
     const tick = async () => {
       if (cancel || localGeoOk.current) return;
@@ -344,7 +354,7 @@ function MapTab({
       cancel = true;
       clearInterval(id);
     };
-  }, [shareGps, token]);
+  }, [shareGps, token, role]);
 
   // Stops array on the trip. Each stop may carry `created_by_token` —
   // the link-token of whoever's Pickup button created it. We use that

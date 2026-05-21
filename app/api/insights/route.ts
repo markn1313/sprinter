@@ -1,30 +1,27 @@
 import { NextResponse } from "next/server";
 import { requireMark } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { fetchBouncieTrips, type BouncieTrip } from "@/lib/bouncie";
+import { type BouncieTrip } from "@/lib/bouncie";
 import { getDieselPrice, getAvgDieselPrice } from "@/lib/fuel-price";
 
 export const dynamic = "force-dynamic";
 
-// Driving insights for the settings card. Numbers are pulled DIRECTLY
-// from Bouncie's /v1/trips endpoint — they're already authoritative
-// per-trip metrics (distance, totalIdleDuration, fuelConsumed,
-// averageSpeed) computed from the ECU + odometer.
+// Driving insights for the settings card. Source = Supabase bouncie_trips
+// table (populated by the nightly cron via lib/bouncie.syncBouncieTrips).
 //
-//   miles            sum(distance) over Bouncie trips in window
+//   miles            sum(distance) over trips in window
 //   driving_minutes  sum((endTime - startTime) - totalIdleDuration)
 //   idle_minutes     sum(totalIdleDuration)
 //   avg_speed_mph    distance-weighted avg of averageSpeed
 //   fuel_cost        sum(fuelConsumed) × current CA diesel $/gal
 //                    (DB-cached price from EIA, see lib/fuel-price.ts)
 //
-// Bouncie's /v1/trips has a 7-day max span per request. 24h + 7-day
-// windows each fit in one call; the 30-day window is built from 5
-// parallel weekly calls and merged.
-
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+// Previous version called Bouncie's /v1/trips live for the 24h + 7d
+// windows. Bouncie's API was returning the same (incomplete) result set
+// for both, even though the queries differed and the synced table had
+// 5 trips in the past 7 days. The table is the single source of truth
+// — fresher than yesterday at worst, since the cron syncs nightly, plus
+// the realtime sync triggered on every Bouncie webhook.
 
 interface WindowAgg {
   miles: number;
@@ -78,33 +75,36 @@ function aggregateBouncieTrips(trips: BouncieTrip[], pricePerGal: number): Windo
   };
 }
 
-// Fetch trips covering an arbitrary span by issuing parallel ≤7-day
-// Bouncie calls (their hard per-request cap) and merging the results.
-// Used for the 30-day window; the 24h and 7d windows fit in one call.
-async function fetchTripsOverSpan(spanDays: number, anchor: Date): Promise<BouncieTrip[]> {
-  const tomorrow = new Date(anchor.getTime() + 86_400_000);
-  const windowStart = new Date(anchor.getTime() - spanDays * 86_400_000);
-  const buckets: { startsAfter: string; endsBefore: string }[] = [];
-  let cursorEnd = tomorrow;
-  while (cursorEnd > windowStart) {
-    const start = new Date(Math.max(windowStart.getTime(), cursorEnd.getTime() - 7 * 86_400_000));
-    buckets.push({ startsAfter: ymd(start), endsBefore: ymd(cursorEnd) });
-    cursorEnd = start;
-  }
-  const results = await Promise.all(buckets.map((b) => fetchBouncieTrips(b)));
-  // De-dup by transactionId — Bouncie won't return the same trip in two
-  // adjacent windows, but be defensive in case start/end boundaries
-  // overlap on the same date.
-  const seen = new Set<string>();
-  const merged: BouncieTrip[] = [];
-  for (const batch of results) {
-    for (const t of batch ?? []) {
-      if (seen.has(t.transactionId)) continue;
-      seen.add(t.transactionId);
-      merged.push(t);
-    }
-  }
-  return merged;
+// Row shape from the bouncie_trips table (snake_case Postgres) — convert
+// to the camelCase BouncieTrip shape the aggregator expects.
+interface BouncieTripRow {
+  transaction_id: string;
+  start_time: string;
+  end_time: string;
+  start_odometer: number;
+  end_odometer: number;
+  distance: number;
+  fuel_consumed: number | null;
+  average_speed: number;
+  max_speed: number;
+  total_idle_duration: number;
+  imei: string;
+}
+
+function rowToTrip(r: BouncieTripRow): BouncieTrip {
+  return {
+    transactionId: r.transaction_id,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    startOdometer: r.start_odometer,
+    endOdometer: r.end_odometer,
+    distance: r.distance,
+    fuelConsumed: r.fuel_consumed,
+    averageSpeed: r.average_speed,
+    maxSpeed: r.max_speed,
+    totalIdleDuration: r.total_idle_duration,
+    imei: r.imei,
+  };
 }
 
 export async function GET(req: Request) {
@@ -115,41 +115,39 @@ export async function GET(req: Request) {
 
   const sb = supabaseAdmin();
   const now = new Date();
-  const tomorrow = new Date(now.getTime() + 86_400_000);
-  // Rolling cutoffs anchored to NOW. Bouncie's /v1/trips takes ymd
-  // dates only, so we over-query and filter precisely by endTime.
+  // Rolling cutoffs anchored to NOW.
   const cutoff24h = new Date(now.getTime() - 24 * 3600_000);
   const cutoff7d = new Date(now.getTime() - 7 * 86_400_000);
   const cutoff30d = new Date(now.getTime() - 30 * 86_400_000);
 
-  // Run the three Bouncie windows + the price lookup in parallel.
-  // 24h and 7d fit in a single Bouncie call each; the 30-day window
-  // builds from 5 parallel weekly calls inside fetchTripsOverSpan.
-  const startDate24h = new Date(cutoff24h.getTime() - 86_400_000);
-  const startDate7d = new Date(tomorrow.getTime() - 7 * 86_400_000);
-
-  const [last24hRaw, last7dRaw, last30dRaw, fuel24h, fuel7d, fuel30d] = await Promise.all([
-    fetchBouncieTrips({ startsAfter: ymd(startDate24h), endsBefore: ymd(tomorrow) }),
-    fetchBouncieTrips({ startsAfter: ymd(startDate7d), endsBefore: ymd(tomorrow) }),
-    fetchTripsOverSpan(30, now),
-    // 24h price = most recent EIA datapoint (EIA is weekly, so
-    // there's never more than one within 24h).
+  // ONE query for the widest window — bucket client-side. Way more
+  // reliable than the previous live-Bouncie approach, which was
+  // returning the 24h subset for the 7d query (Bouncie API bug or
+  // quirk). The bouncie_trips table is kept fresh by the nightly cron
+  // + the realtime webhook handler.
+  const [tripsRes, fuel24h, fuel7d, fuel30d] = await Promise.all([
+    sb
+      .from("bouncie_trips")
+      .select("transaction_id,imei,start_time,end_time,start_odometer,end_odometer,distance,fuel_consumed,average_speed,max_speed,total_idle_duration")
+      .gte("end_time", cutoff30d.toISOString())
+      .order("end_time", { ascending: false }),
     getDieselPrice(),
-    // 7d / 30d averages over their respective windows.
     getAvgDieselPrice(7),
     getAvgDieselPrice(30),
   ]);
 
-  // Filter to trips whose endTime falls within the rolling window.
-  // Open trips (endTime missing — still driving) are included if
-  // they started within the window.
+  const allRows = (tripsRes.data ?? []) as BouncieTripRow[];
+  const allTrips30d = allRows.map(rowToTrip);
+
+  // Bucket by reference time (endTime when present, startTime for
+  // in-flight trips with no end yet).
   const within = (cutoffMs: number) => (t: BouncieTrip) => {
     const refMs = t.endTime ? new Date(t.endTime).getTime() : t.startTime ? new Date(t.startTime).getTime() : 0;
     return refMs >= cutoffMs;
   };
-  const last24hTrips = (last24hRaw ?? []).filter(within(cutoff24h.getTime()));
-  const last7dTrips = (last7dRaw ?? []).filter(within(cutoff7d.getTime()));
-  const last30dTrips = last30dRaw.filter(within(cutoff30d.getTime()));
+  const last24hTrips = allTrips30d.filter(within(cutoff24h.getTime()));
+  const last7dTrips = allTrips30d.filter(within(cutoff7d.getTime()));
+  const last30dTrips = allTrips30d.filter(within(cutoff30d.getTime()));
 
   const today = aggregateBouncieTrips(last24hTrips, fuel24h.price);
   const week = aggregateBouncieTrips(last7dTrips, fuel7d.price);
