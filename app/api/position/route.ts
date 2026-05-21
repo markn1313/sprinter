@@ -121,5 +121,15 @@ export async function GET(req: Request) {
     }
   }
 
+  // Strip owner-identifying fields for non-Mark / non-Dio sessions —
+  // passengers + TV don't need (and shouldn't see) the VIN, raw odometer,
+  // or battery voltage. 2026-05-20 QA caught the full VIN leaking into a
+  // passenger's /api/position response.
+  if (ctx.role !== "mark" && ctx.role !== "dio") {
+    const { vin: _vin, nickname: _nickname, mileage: _mileage, battery_v: _battery, ...safe } =
+      pos as unknown as Record<string, unknown>;
+    void _vin; void _nickname; void _mileage; void _battery;
+    return NextResponse.json(safe);
+  }
   return NextResponse.json(pos);
 }
