@@ -36,7 +36,7 @@ import { optimizeStops } from "@/lib/routing";
 import { logTripEvent } from "@/lib/log";
 import { notifyDriverPlanChange } from "@/lib/push";
 import { cancelOpenTrips } from "@/lib/single-trip";
-import { getCached, setCached, readIdempotencyKey } from "@/lib/idempotency";
+import { readIdempotencyKey, getOrRunWithIdempotency } from "@/lib/idempotency";
 import { isInServiceArea, distanceMeters } from "@/lib/geo-bounds";
 import { classifyEntry } from "@/lib/classify-destination-entry";
 
@@ -90,14 +90,8 @@ export async function POST(req: Request) {
   const token = auth?.replace(/^Bearer\s+/i, "") ?? "";
   if (!token) return jsonErr(401, "unauthorized", "Missing token.");
 
-  // Idempotency dedupe — return the cached response immediately if we
-  // saw this (token, key) recently. Cache is keyed inside the helper.
-  const idemKey = readIdempotencyKey(req);
-  if (idemKey) {
-    const cached = getCached<{ status: number; body: unknown }>(token, idemKey);
-    if (cached) return NextResponse.json(cached.body, { status: cached.status });
-  }
-
+  // Body has to be read up-front so the in-flight Promise can capture
+  // all the inputs the factory needs.
   const body = (await req.json().catch(() => null)) as DestinationsBody | null;
   if (!body) return jsonErr(400, "bad_body", "Body missing or not JSON.");
   if (body.lat == null && body.lng == null && !body.address?.trim()) {
@@ -107,56 +101,71 @@ export async function POST(req: Request) {
   // Phone GPS — sent separately via a header so it isn't conflated with
   // the destination's lat/lng. Format: "lat,lng,age_seconds". Optional.
   const phoneGps = parsePhoneGps(req.headers.get("X-Phone-GPS"));
+  const idemKey = readIdempotencyKey(req);
 
-  // Auth resolution:
-  //   1. Mark token → always allowed (driver/owner).
-  //   2. Passenger token bound to an active trip → trip-actor path.
-  //   3. Passenger token NOT yet bound (generic "Van tracker" link) →
-  //      bootstrap path; we verify she's in the van below.
-  const session = await loadSession(token);
-  if (!session) return jsonErr(401, "unauthorized", "Link expired or revoked.");
+  // Idempotency dedupe — concurrent calls with the same (token, key)
+  // share ONE in-flight Promise instead of each running the factory and
+  // racing on trip.stops read-modify-write. Caught in QA 2026-05-20:
+  // three near-simultaneous Idempotency-Key-tagged POSTs each saw an
+  // empty cache, each ran append, each wrote /api/trips with their own
+  // stops[], the last write won, two ghost stops surfaced to the
+  // optimistic UI then vanished. The Promise-cache returns the SAME
+  // {status, body} envelope to every concurrent caller — each caller
+  // wraps its own fresh NextResponse so the body stream isn't reused.
+  const envelope = await getOrRunWithIdempotency<{ status: number; body: unknown }>(
+    token,
+    idemKey ?? "",
+    async () => {
+      // Auth resolution:
+      //   1. Mark token → always allowed (driver/owner).
+      //   2. Passenger token bound to an active trip → trip-actor path.
+      //   3. Passenger token NOT yet bound (generic "Van tracker" link) →
+      //      bootstrap path; we verify she's in the van below.
+      const session = await loadSession(token);
+      if (!session) return errEnvelope(401, "unauthorized", "Link expired or revoked.");
 
-  const sb = supabaseAdmin();
+      const sb = supabaseAdmin();
 
-  // Locate the active trip. Either via the session's bound trip_id, or
-  // (for Mark) by finding any non-terminal trip. forceNew skips this.
-  const activeTrip = body.forceNew ? null : await findActiveTrip(sb, session);
+      // Locate the active trip. Either via the session's bound trip_id, or
+      // (for Mark) by finding any non-terminal trip. forceNew skips this.
+      const activeTrip = body.forceNew ? null : await findActiveTrip(sb, session);
 
-  // -------- APPEND PATH ---------------------------------------------
-  if (activeTrip) {
-    // The trip exists but is in a terminal state? Send 409 so the client
-    // can auto-resubmit with forceNew=true.
-    if (activeTrip.status === "complete" || activeTrip.status === "cancelled") {
-      return jsonErr(409, "TRIP_FINAL", "Trip already ended.");
-    }
-    // Authorize the actor against this specific trip.
-    const actor = await requireTripActor(token, activeTrip.id);
-    if (!actor) return jsonErr(403, "forbidden", "Not your trip.");
+      // -------- APPEND PATH ---------------------------------------------
+      if (activeTrip) {
+        // The trip exists but is in a terminal state? Send 409 so the
+        // client can auto-resubmit with forceNew=true.
+        if (activeTrip.status === "complete" || activeTrip.status === "cancelled") {
+          return errEnvelope(409, "TRIP_FINAL", "Trip already ended.");
+        }
+        // Authorize the actor against this specific trip.
+        const actor = await requireTripActor(token, activeTrip.id);
+        if (!actor) return errEnvelope(403, "forbidden", "Not your trip.");
 
-    const resolved = await resolveDestination(body);
-    if (resolved.kind === "error") return jsonErr(resolved.status, resolved.code, resolved.message);
+        const resolved = await resolveDestination(body);
+        if (resolved.kind === "error") return errEnvelope(resolved.status, resolved.code, resolved.message);
 
-    const result = await appendDestination(sb, activeTrip, resolved, token);
-    if (idemKey) setCached(token, idemKey, { status: 200, body: result });
-    return NextResponse.json(result);
-  }
+        const result = await appendDestination(sb, activeTrip, resolved, token);
+        return { status: 200, body: result };
+      }
 
-  // -------- BOOTSTRAP PATH ------------------------------------------
-  // Only proceed if we can prove the requester is physically in the
-  // van. Mark is always allowed (he can dispatch from anywhere).
-  if (session.role !== "mark") {
-    const proof = await proveInVan(phoneGps, body.override);
-    if (!proof.ok) {
-      return jsonErr(403, "NOT_IN_VAN", proof.reason);
-    }
-  }
+      // -------- BOOTSTRAP PATH ------------------------------------------
+      // Only proceed if we can prove the requester is physically in the
+      // van. Mark is always allowed (he can dispatch from anywhere).
+      if (session.role !== "mark") {
+        const proof = await proveInVan(phoneGps, body.override);
+        if (!proof.ok) {
+          return errEnvelope(403, "NOT_IN_VAN", proof.reason);
+        }
+      }
 
-  const resolved = await resolveDestination(body);
-  if (resolved.kind === "error") return jsonErr(resolved.status, resolved.code, resolved.message);
+      const resolved = await resolveDestination(body);
+      if (resolved.kind === "error") return errEnvelope(resolved.status, resolved.code, resolved.message);
 
-  const result = await bootstrapTrip(sb, session, resolved, token, body.passengerName ?? null);
-  if (idemKey) setCached(token, idemKey, { status: 200, body: result });
-  return NextResponse.json(result);
+      const result = await bootstrapTrip(sb, session, resolved, token, body.passengerName ?? null);
+      return { status: 200, body: result };
+    },
+  );
+  return NextResponse.json(envelope.body, { status: envelope.status });
 }
 
 // ===================================================================
@@ -509,4 +518,11 @@ async function proveInVan(
 
 function jsonErr(status: number, code: string, message: string) {
   return NextResponse.json({ error: code, message }, { status });
+}
+
+// Envelope variant — used inside the idempotency factory so the cached
+// value is plain data, not a NextResponse (whose body stream can't be
+// reused across concurrent callers).
+function errEnvelope(status: number, code: string, message: string) {
+  return { status, body: { error: code, message } };
 }

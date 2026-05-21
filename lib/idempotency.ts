@@ -62,6 +62,45 @@ export function setCached<T>(token: string, idemKey: string, value: T): void {
   store.set(compositeKey(token, idemKey), { value, expiresAt: now + TTL_MS });
 }
 
+// In-flight dedupe. Concurrent requests with the same (token, key) share
+// the SAME pending Promise — instead of each running the factory and
+// racing on the underlying DB read-modify-write. Original getCached/
+// setCached pattern only dedupes if call N finishes before call N+1's
+// cache lookup; with three near-simultaneous double-taps, all three
+// lookups returned empty and all three ran the factory, three writes
+// hit /api/trips.update, last write wins, two ghost stops surfaced to
+// the optimistic UI then vanished on the next refetch. Caught in QA
+// 2026-05-20.
+//
+// Stores the Promise itself in the cache during the in-flight window,
+// then replaces with the resolved value once it lands so subsequent
+// (later) cache hits are synchronous and don't await a settled Promise.
+// On factory rejection, the entry is evicted so a retry can re-run.
+export function getOrRunWithIdempotency<T>(
+  token: string,
+  idemKey: string,
+  factory: () => Promise<T>,
+): Promise<T> {
+  if (!token || !idemKey) return factory();
+  const key = compositeKey(token, idemKey);
+  const now = Date.now();
+  const existing = store.get(key);
+  if (existing && existing.expiresAt > now) {
+    return Promise.resolve(existing.value as T);
+  }
+  evictExpired(now);
+  const p = factory();
+  // Park the in-flight Promise so concurrent callers find it. TTL is
+  // the same as the post-resolution cache — a hung factory still
+  // expires within TTL_MS.
+  store.set(key, { value: p, expiresAt: now + TTL_MS });
+  p.then(
+    (v) => store.set(key, { value: v, expiresAt: Date.now() + TTL_MS }),
+    () => store.delete(key), // failed → let retries run fresh
+  );
+  return p;
+}
+
 // Pull the idempotency key out of a Request's headers in a forgiving way
 // (capitalization varies by client). Returns null when missing — callers
 // can still proceed without dedupe, just losing replay protection.
