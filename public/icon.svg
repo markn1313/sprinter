@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- App icon: black Sprinter van on near-black gradient. iOS applies its
+       own rounded corners and shadow, so we ship a flat square. The subtle
+       radial gradient prevents the icon from disappearing on dark home
+       screen wallpapers; a pure-solid black would. Van path is the same
+       silhouette as components/VanIcon.tsx, scaled and centered. -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#1f1f1f"/>
+      <stop offset="100%" stop-color="#0a0a0a"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- Van centered, scaled from 64x36 viewBox → ~880w. transform: translate to center, then scale. -->
+  <g transform="translate(72 392) scale(13.75)">
+    <path
+      d="M4 24 L4 12 Q4 6 10 6 L40 6 Q46 6 50 10 L60 16 L60 24 Q60 26 58 26 L52 26 A4 4 0 1 0 44 26 L20 26 A4 4 0 1 0 12 26 L6 26 Q4 26 4 24 Z"
+      fill="#0a0a0a"
+      stroke="#ffffff"
+      stroke-width="1.2"
+      stroke-linejoin="round"
+    />
+    <!-- Windshield + side window (mid-gray to read on the black body) -->
+    <path d="M40 8 L48 10 L56 16 L40 16 Z" fill="#4a4a4a"/>
+    <rect x="14" y="10" width="22" height="6" rx="1" fill="#4a4a4a"/>
+    <!-- Wheels -->
+    <circle cx="16" cy="26" r="3.5" fill="#1a1a1a" stroke="#ffffff" stroke-width="0.8"/>
+    <circle cx="48" cy="26" r="3.5" fill="#1a1a1a" stroke="#ffffff" stroke-width="0.8"/>
+  </g>
+</svg>
