@@ -1283,7 +1283,13 @@ function MapTab({
       {/* TV-style bottom strip — mirrors the layout on the in-van TV.
           When there's a meaningful Next Stop in addition to Final
           Destination, both cards stack. Tap either to open the trip
-          editor. Maps + Share buttons sit to the right. */}
+          editor. Maps + Share buttons sit to the right.
+
+          Bottom offset: when the always-on DestinationInput is also
+          rendered (inVan), the ETA cards are pushed up ~62px so they
+          stack ABOVE the input instead of being painted on top of its
+          Go button. Caught in QA 2026-05-20 — passenger in-van trip
+          had Final-Destination card overlapping DestinationInput. */}
       {live && eta && (() => {
         const sameTarget =
           !!eta.to_next &&
@@ -1294,8 +1300,9 @@ function MapTab({
             eta.to_next.distance_miles < 0.3
           );
         const showNext = !sameTarget && !!eta.to_next;
+        const liftForInput = inVan && !inEditMode;
         return (
-          <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
+          <div className={`absolute inset-x-3 z-30 space-y-2 ${liftForInput ? "bottom-[62px]" : "bottom-3"}`}>
             {showNext && eta.to_next && (
               <button onClick={() => setSheet("trip")} className="block w-full text-left">
                 <EtaCard
@@ -1423,7 +1430,7 @@ function MapTab({
           time-to-destination. The Van card is hidden when Mark is
           essentially in the van already (< 0.1 mi). */}
       {!live && !inEditMode && (
-        <div className="absolute inset-x-3 bottom-3 z-30 space-y-2">
+        <div className={`absolute inset-x-3 z-30 space-y-2 ${inVan ? "bottom-[62px]" : "bottom-3"}`}>
           <TripRecapCard token={token} />
           <FuelAlertCard
             fuelPct={pos?.fuel_pct ?? null}
