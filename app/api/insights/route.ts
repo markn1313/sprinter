@@ -91,36 +91,6 @@ interface BouncieTripRow {
   imei: string;
 }
 
-// Returns the Date corresponding to midnight (00:00) in LA time, N
-// calendar days before today (in LA). Used to anchor "Last 7/30 days"
-// to a calendar window the user can mentally verify against, rather
-// than a rolling 168h window that drifts out by minutes overnight.
-//
-// Computes LA's UTC offset from `now` by formatting the same instant
-// in both UTC and LA and diffing the hour fields — picks up DST
-// transitions automatically. Hand-rolled rather than pulling date-fns-tz
-// in to keep the route slim.
-function laMidnightDaysAgo(now: Date, daysBack: number): Date {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const today = fmt.format(now); // "2026-05-21"
-  const [y, m, d] = today.split("-").map(Number);
-  // Compute LA's UTC offset for this calendar date: noon UTC formatted
-  // in LA tells us what hour 12:00Z is over there.
-  const probe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const laHour = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "2-digit",
-    hour12: false,
-  }).format(probe);
-  const offsetHours = 12 - parseInt(laHour, 10); // PDT=7, PST=8
-  return new Date(Date.UTC(y, m - 1, d - daysBack, offsetHours, 0, 0));
-}
-
 function rowToTrip(r: BouncieTripRow): BouncieTrip {
   return {
     transactionId: r.transaction_id,
@@ -145,20 +115,15 @@ export async function GET(req: Request) {
 
   const sb = supabaseAdmin();
   const now = new Date();
-  // Cutoffs:
-  //   24h  → rolling, last 24 hours ("today-ish") — the "H" in the
-  //          label tells the user this one's hour-precise.
-  //   7d   → calendar-day-anchored: today + the previous 6 calendar
-  //          days in LA time. Rolling 168h had the user complaining
-  //          "Last 7 days is missing my trip from last week" because
-  //          a trip ending at 00:26 fell out of the 168h window by
-  //          43 minutes when checked after midnight UTC. Calendar
-  //          anchoring matches every other product's "Last 7 days"
-  //          semantics.
-  //   30d  → same: today + previous 29 calendar days, LA-anchored.
+  // Rolling cutoffs anchored to NOW. UTC throughout — every trip
+  // end_time stored in bouncie_trips is UTC, every comparison below
+  // happens in UTC milliseconds. Timezone only enters the picture
+  // when a human reads "Last 7 days" — that label means exactly
+  // 168 hours back from the request's instant, no calendar bucketing,
+  // no DST quirks.
   const cutoff24h = new Date(now.getTime() - 24 * 3600_000);
-  const cutoff7d = laMidnightDaysAgo(now, 6);
-  const cutoff30d = laMidnightDaysAgo(now, 29);
+  const cutoff7d = new Date(now.getTime() - 7 * 24 * 3600_000);
+  const cutoff30d = new Date(now.getTime() - 30 * 24 * 3600_000);
 
   // ONE query for the widest window — bucket client-side. Way more
   // reliable than the previous live-Bouncie approach, which was
