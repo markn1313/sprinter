@@ -21,13 +21,18 @@ import { logTripEvent } from "./log";
 //   "as soon as sprinter comes within 30m of a stop, that stop is gone
 //    app-wide — same for pickup and dropoff."
 //
-// Implementation: the 30m proximity check is the canonical arrival
-// signal. It stamps arrived_at on the matching stop AND short-circuits
-// status forward. The legacy 100m geofence, the >400m + >5mph departure
-// detection, and the special-case current-location auto-onboard are kept
-// only as fallbacks for tunnel-jump / GPS-skip edge cases.
-
-export const ARRIVE_M = 30;
+// Implementation: the proximity check is the canonical arrival signal. It
+// stamps arrived_at on the matching stop AND short-circuits status forward.
+// The >400m + >5mph departure detection and the special-case current-location
+// auto-onboard are kept only as fallbacks for tunnel-jump / GPS-skip edge
+// cases.
+//
+// ARRIVE_M is 100m (per Mark): the van's OBD GPS carries real error and the
+// dongle reports only every ~15–30s, so a tight radius made the van "miss"
+// stops it actually reached. 100m = arrived applies uniformly to every
+// pickup, every intermediate stop, and the final dropoff. Equal to GEOFENCE_M,
+// so the arrival and the legacy geofence now fire together.
+export const ARRIVE_M = 100;
 const GEOFENCE_M = 100;
 const DEPART_M = 400;
 const DEPART_MPH = 5;
@@ -123,8 +128,8 @@ export async function advanceTripStateForBatch(
   const stopsArrRaw: TripStop[] = Array.isArray(t.stops) ? t.stops : [];
   const hasAnyStop = stopsArrRaw.some((s) => s.lat != null && s.lng != null);
 
-  // STOP ARRIVAL — min distance across the batch. Mark's spec: 30m =
-  // arrived, app-wide. Runs first and independent of trip status so a
+  // STOP ARRIVAL — min distance across the batch. Mark's spec: within
+  // ARRIVE_M (100m) = arrived, app-wide. Runs first and independent of trip status so a
   // stuck status can't keep a stop visible after the van clearly passed.
   const stopsArr = stopsArrRaw.slice();
   let pickupJustArrived = false;
@@ -216,7 +221,7 @@ export async function advanceTripStateForBatch(
     logTripEvent({
       trip_id: t.id,
       kind: "auto_onboard",
-      payload: { reason: "pickup arrived (30m proximity)" },
+      payload: { reason: `pickup arrived (${ARRIVE_M}m proximity)` },
     });
     t.status = "onboard";
   }
@@ -248,7 +253,7 @@ export async function advanceTripStateForBatch(
         trip_id: t.id,
         kind: "auto_complete",
         payload: {
-          reason: `dropoff arrived (30m proximity, min ${minDist.toFixed(0)}m)`,
+          reason: `dropoff arrived (${ARRIVE_M}m proximity, min ${minDist.toFixed(0)}m)`,
         },
       });
       t.status = "complete";
