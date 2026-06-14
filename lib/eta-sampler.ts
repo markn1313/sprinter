@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabase";
+import { CONGESTION_TIME_FACTOR } from "./routing";
 
 // ETA calibration sampler. Records Mapbox's RAW (unpadded) driving-traffic
 // prediction from the van's current position to the dropoff (through any
@@ -11,9 +12,6 @@ import { supabaseAdmin } from "./supabase";
 // error, no active trip) is swallowed by the caller so calibration sampling
 // can never affect position ingestion or the state machine.
 
-// Keep in sync with SPRINTER_TIME_FACTOR in lib/routing.ts — stored on each row
-// so a future factor change doesn't make old samples ambiguous.
-const SPRINTER_TIME_FACTOR = 1.15;
 // At most one Mapbox sample per trip per this many seconds (cost / rate-limit
 // guard). The webhook may fire more often than this; the throttle dedupes.
 const SAMPLE_THROTTLE_S = 30;
@@ -134,6 +132,14 @@ export async function sampleTripEta(latest: Latest): Promise<void> {
     }
   }
 
+  // Segmented padded duration — the SAME per-congestion factors the live ETA
+  // now applies. padded_duration_s reflects what the app would have shown;
+  // time_factor is the effective blended factor for this route's mix.
+  let paddedSeg = 0;
+  for (const c of CLASSES) paddedSeg += breakdown[c].dur_s * (CONGESTION_TIME_FACTOR[c] ?? 1.15);
+  const paddedDurationS = Math.round(paddedSeg);
+  const effectiveFactor = rawToDest > 0 ? paddedDurationS / rawToDest : null;
+
   await sb.from("eta_samples").insert({
     trip_id: trip.id,
     van_lat: latest.lat,
@@ -145,8 +151,8 @@ export async function sampleTripEta(latest: Latest): Promise<void> {
     dest_lng: trip.dropoff_lng,
     mapbox_distance_m: Math.round(r.distance),
     mapbox_raw_duration_s: rawToDest,
-    padded_duration_s: Math.round(rawToDest * SPRINTER_TIME_FACTOR),
-    time_factor: SPRINTER_TIME_FACTOR,
+    padded_duration_s: paddedDurationS,
+    time_factor: effectiveFactor,
     next_mapbox_distance_m: leg0 ? Math.round(leg0.distance) : null,
     next_mapbox_raw_duration_s: leg0 ? Math.round(leg0.duration) : null,
     congestion_breakdown: congestionBreakdown,

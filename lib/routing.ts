@@ -33,12 +33,51 @@ export interface Waypoint {
   lng: number;
 }
 
-// Sprinter vans take ~15% longer than the reference car Mapbox routes for —
-// slower acceleration, lower top speed, and stricter speed limits on
-// commercial vehicles in some jurisdictions. Apply this to every leg
-// duration we report so ETAs displayed to Mark, Dio, and passengers track
-// reality. Only affects time, not distance.
-const SPRINTER_TIME_FACTOR = 1.15;
+// Sprinter slowdown vs the car Mapbox routes for — and it's NOT one number. It
+// depends on conditions (validated against real trip data in eta_samples):
+//   - Free-flow: Mapbox assumes ~75-79 mph; the van does ~60-63 → big factor.
+//   - Moderate: van a touch slower than the flowing traffic.
+//   - Heavy / jam: the van keeps up with crawling traffic, so no padding.
+// So we apply a per-Mapbox-congestion-class factor to EACH route segment and
+// sum, instead of one flat multiplier. Only affects time, not distance.
+//
+// Provisional factors (2026-06-14, from the first calibrated trip; recalibrate
+// off eta_samples as more trips land). Per Mark: heavy and jam both 1.0.
+export const CONGESTION_TIME_FACTOR: Record<string, number> = {
+  low: 1.25, // free-flow — the van is well under Mapbox's open-road speed
+  moderate: 1.2,
+  heavy: 1.0,
+  severe: 1.0, // stop-and-go: van keeps pace with the jam
+  unknown: 1.15,
+};
+// Fallback when no per-segment congestion data is available (OSRM, or Mapbox
+// without annotations) — the old blended flat factor.
+const DEFAULT_TIME_FACTOR = 1.15;
+
+// Padded duration: apply the per-congestion factor to each segment's Mapbox
+// duration and sum. Falls back to the flat default when segment annotations
+// are missing or don't cover the route.
+export function paddedDurationS(
+  rawTotalS: number,
+  congestion?: string[],
+  segDurationsS?: number[],
+): number {
+  if (!congestion?.length || !segDurationsS?.length) {
+    return Math.round(rawTotalS * DEFAULT_TIME_FACTOR);
+  }
+  const n = Math.min(congestion.length, segDurationsS.length);
+  let padded = 0;
+  let covered = 0;
+  for (let i = 0; i < n; i++) {
+    const d = segDurationsS[i] ?? 0;
+    padded += d * (CONGESTION_TIME_FACTOR[congestion[i]] ?? DEFAULT_TIME_FACTOR);
+    covered += d;
+  }
+  // Cover any uphold (annotation gap) at the default factor so we never
+  // under-count the whole route.
+  if (covered < rawTotalS) padded += (rawTotalS - covered) * DEFAULT_TIME_FACTOR;
+  return Math.round(padded);
+}
 
 // Each intermediate waypoint adds a real-world pause for boarding /
 // dropping off. Two minutes per stop covers door open + step out + bags
@@ -67,7 +106,10 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
   // home cards. `language=en` keeps instructions in English.
   // `annotations=congestion` adds a per-segment congestion level so the route
   // polyline can be rendered green/amber/red instead of one solid color.
-  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&annotations=congestion&language=en`;
+  // annotations=congestion,duration: per-segment congestion level (for the
+  // colored route line AND the per-class ETA factor) plus per-segment duration
+  // (so we can apply the right factor to each segment and sum).
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?access_token=${token}&geometries=geojson&overview=full&steps=true&annotations=congestion,duration&language=en`;
   try {
     // The pk.* Mapbox token is URL-allowlist-gated by Referer. Browser
     // calls pass automatically; server-side fetches send no Referer and
@@ -96,7 +138,7 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
     }
     interface MapboxLeg {
       steps: MapboxStep[];
-      annotation?: { congestion?: string[] };
+      annotation?: { congestion?: string[]; duration?: number[] };
     }
     const data = (await res.json()) as {
       code: string;
@@ -115,6 +157,7 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
     // segment (between consecutive geometry points), so the total length
     // equals coordinates.length - 1 across all legs.
     const congestion: CongestionLevel[] = [];
+    const segDurations: number[] = [];
     const ALLOWED: CongestionLevel[] = ["low", "moderate", "heavy", "severe", "unknown"];
     for (const leg of r.legs ?? []) {
       for (const s of leg.steps ?? []) {
@@ -135,12 +178,18 @@ async function routeMapbox(waypoints: Waypoint[], token: string): Promise<RouteR
           );
         }
       }
+      if (leg.annotation?.duration) {
+        for (const d of leg.annotation.duration) segDurations.push(d);
+      }
     }
+    // Per-segment congestion-aware padding (falls back to flat inside the
+    // helper when annotations are absent).
+    const padded = paddedDurationS(r.duration, congestion, segDurations);
     return {
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
-      duration_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
-      duration_in_traffic_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
+      duration_s: padded,
+      duration_in_traffic_s: padded,
       geometry: r.geometry,
       steps,
       congestion: congestion.length > 0 ? congestion : undefined,
@@ -231,7 +280,7 @@ async function routeOsrm(waypoints: Waypoint[]): Promise<RouteResult | null> {
     return {
       polyline: encodePolyline(r.geometry.coordinates),
       distance_m: Math.round(r.distance),
-      duration_s: Math.round(r.duration * SPRINTER_TIME_FACTOR),
+      duration_s: Math.round(r.duration * DEFAULT_TIME_FACTOR),
       duration_in_traffic_s: null,
       geometry: r.geometry,
       steps: [],
