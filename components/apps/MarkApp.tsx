@@ -46,10 +46,10 @@ import {
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
 
-// localStorage key for the in-van latch (see stickyTripId). Holds the id of
-// the trip Mark is currently aboard so the "in the van" state survives a full
-// app reload / reopen, not just GPS drift within a session.
-const IN_VAN_LATCH_KEY = "sprinter_invan_trip";
+// localStorage key for the in-van latch (see vanLatched). Holds "1" while Mark
+// is aboard so the "in the van" state survives a full app reload / reopen and
+// GPS drift, not just a single session.
+const IN_VAN_LATCH_KEY = "sprinter_invan";
 
 // Same app shell serves Mark and passengers. Role-aware bits:
 //   - Settings tab on Mark = full controls (link minting, Bouncie status,
@@ -717,39 +717,57 @@ function MapTab({
   }, [live, mapTrip]);
   const pickupModeKind: "edit" | "new" = myStop ? "edit" : "new";
 
-  // Radius (meters) at which Mark's phone is considered "in the van".
-  // Phone GPS and the van's OBD GPS are two independent fixes of the same
-  // physical spot — each carries 10–30m of error, and the van's reported
-  // position lags (Bouncie pings every ~15–30s, and a parked van's last
-  // fix can be stale). 10m was too tight: Mark sat in the van and the app
-  // never flipped out of Pickup mode. 50m absorbs the combined GPS error +
-  // position lag while staying tight enough that standing well away from the
-  // parked van doesn't read as in-van.
-  const IN_VAN_RADIUS_M = 50;
+  // ── "In the van" detection ──────────────────────────────────────────────
+  // Mark's phone GPS and the van's OBD GPS are two independent fixes. A phone
+  // fix can be 90m+ inaccurate and the server-side van fix can lag a fast-
+  // moving van by seconds — so a raw "distance < X" test flickers the UI
+  // Pickup↔Dropoff every time the wobble crosses the line. We therefore LATCH:
+  // once we believe Mark is aboard we HOLD it until there's real evidence he
+  // left, and we give him a manual override for when GPS is simply too poor to
+  // decide automatically.
+  //   ENTER (auto): a fresh fix within the (speed-scaled) enter radius.
+  //   HOLD: GPS drift / a stale or wildly inaccurate fix never un-latches him.
+  //   EXIT (auto): only when a fix is clearly farther than the exit radius and
+  //                stays that way for IN_VAN_EXIT_GRACE_MS (he really walked
+  //                off). The big gap between ENTER and EXIT is the hysteresis
+  //                that kills the flicker.
+  //   MANUAL: a button sets/clears the same latch for poor-GPS situations.
+  // The latch persists to localStorage so it survives an app reload/reopen.
+  //
+  // SPEED SCALING: the van's OBD reports only every ~15–30s, so at speed the
+  // van's last reported point and Mark's phone fix are far apart purely from
+  // reporting lag even when he's sitting in it — at 55 mph (~25 m/s) a 30s gap
+  // is ~750m. So the enter/exit radii GROW with van speed; a fixed small radius
+  // can never latch on the highway. ~13 m per mph ≈ 25 m/s × 0.447 × ~30s lag.
+  const IN_VAN_ENTER_M = 50;
+  const IN_VAN_EXIT_M = 250;
+  const IN_VAN_EXIT_GRACE_MS = 90_000;
+  const SPEED_M_PER_MPH = 13;
+  const IN_VAN_MAX_RADIUS_M = 1200;
 
-  // Sticky in-van detection: once Mark's GPS comes within IN_VAN_RADIUS_M of
-  // the van for a given trip, lock him in until the trip ENDS — not until
-  // his GPS drifts back out. Being in the van is a ONE-WAY event for the
-  // duration of the ride: a tunnel, a metal parking garage, or any GPS
-  // glitch that briefly reads him hundreds of meters away must NOT flip the
-  // UI back to "Pickup" mid-ride. The latch persists to localStorage keyed
-  // by trip id so it also survives a full app reload / reopen, and clears
-  // only when the focal trip goes away (he's been dropped off and the trip
-  // completed) — at which point the app correctly knows he's no longer
-  // aboard. The id-match in `inVan` guarantees a stale latch from a prior
-  // trip can never mark a NEW trip as in-van.
-  const [stickyTripId, setStickyTripId] = useState<string | null>(() => {
+  const [vanLatched, setVanLatched] = useState<boolean>(() => {
     try {
-      return typeof window !== "undefined"
-        ? window.localStorage.getItem(IN_VAN_LATCH_KEY)
-        : null;
+      return (
+        typeof window !== "undefined" &&
+        window.localStorage.getItem(IN_VAN_LATCH_KEY) === "1"
+      );
     } catch {
-      return null;
+      return false;
     }
   });
+  const setLatched = (v: boolean) => {
+    setVanLatched(v);
+    try {
+      if (v) window.localStorage.setItem(IN_VAN_LATCH_KEY, "1");
+      else window.localStorage.removeItem(IN_VAN_LATCH_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
+  const farSinceRef = useRef<number | null>(null);
+
   useEffect(() => {
-    if (!myGps || !pos || !mapTrip) return;
-    if (stickyTripId === mapTrip.id) return; // already latched for this trip
+    if (!myGps || !pos) return; // no evidence either way → hold current state
     const R = 6_371_000;
     const toRad = (d: number) => (d * Math.PI) / 180;
     const dLat = toRad(pos.lat - myGps.lat);
@@ -758,56 +776,38 @@ function MapTab({
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    if (m < IN_VAN_RADIUS_M) {
-      setStickyTripId(mapTrip.id);
-      try {
-        window.localStorage.setItem(IN_VAN_LATCH_KEY, mapTrip.id);
-      } catch {
-        /* ignore */
+    // Grow the radii with van speed to absorb OBD reporting lag at speed.
+    const speedMph = Math.max(0, pos.speed_mph ?? 0);
+    const enterM = Math.min(IN_VAN_ENTER_M + speedMph * SPEED_M_PER_MPH, IN_VAN_MAX_RADIUS_M);
+    const exitM = Math.min(
+      IN_VAN_EXIT_M + speedMph * SPEED_M_PER_MPH,
+      IN_VAN_MAX_RADIUS_M + (IN_VAN_EXIT_M - IN_VAN_ENTER_M),
+    );
+    if (!vanLatched) {
+      if (m < enterM) {
+        farSinceRef.current = null;
+        setLatched(true);
       }
-    }
-  }, [mapTrip, myGps, pos, stickyTripId, IN_VAN_RADIUS_M]);
-  // Reset the latch when the focal trip disappears (dropped off → trip
-  // completed → no active trip). This is the ONLY thing that clears in-van.
-  useEffect(() => {
-    if (mapTrip?.id !== stickyTripId && stickyTripId != null && mapTrip?.id == null) {
-      setStickyTripId(null);
-      try {
-        window.localStorage.removeItem(IN_VAN_LATCH_KEY);
-      } catch {
-        /* ignore */
+    } else if (m > exitM) {
+      const t = Date.now();
+      if (farSinceRef.current == null) farSinceRef.current = t;
+      else if (t - farSinceRef.current > IN_VAN_EXIT_GRACE_MS) {
+        farSinceRef.current = null;
+        setLatched(false);
       }
+    } else {
+      farSinceRef.current = null; // back inside exit radius → cancel pending exit
     }
-  }, [mapTrip, stickyTripId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myGps, pos, vanLatched]);
 
-  // Is Mark physically in the van?
-  //   1. Trip status says onboard / at_dropoff       → yes (legacy single-pickup trips)
-  //   2. My stop has arrived_at set (server-derived) → yes — survives reload
-  //   3. Sticky latch tripped during this trip       → yes — covers the few seconds
-  //                                                    between getting within
-  //                                                    IN_VAN_RADIUS_M and the
-  //                                                    server stamping arrived_at
-  //   4. Current GPS within IN_VAN_RADIUS_M of van    → yes — transient signal
-  // Pickup is a ONE-WAY event: once Mark has been within IN_VAN_RADIUS_M of the van during
-  // this trip, every reload should still show Dropoff (server-persisted via
-  // arrived_at). Otherwise GPS jitter / a page reload would briefly flip the UI
-  // back to "Pickup" mid-ride. Joining passengers far from the van fail all
-  // four checks.
+  // Is Mark physically in the van? Server-derived signals win outright;
+  // otherwise the latch (auto-detected or manually set) decides.
   const inVan = useMemo(() => {
     if (live?.status === "onboard" || live?.status === "at_dropoff") return true;
     if (myStop?.arrived_at != null) return true;
-    if (mapTrip && stickyTripId === mapTrip.id) return true;
-    if (!myGps || !pos) return false;
-    const R = 6_371_000;
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    const dLat = toRad(pos.lat - myGps.lat);
-    const dLng = toRad(pos.lng - myGps.lng);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
-    const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return m < IN_VAN_RADIUS_M;
-  }, [live, mapTrip, stickyTripId, myGps, pos, myStop, IN_VAN_RADIUS_M]);
+    return vanLatched;
+  }, [live, myStop, vanLatched]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can
@@ -1342,6 +1342,19 @@ function MapTab({
                 {pickupModeKind === "edit" ? "Modify" : "Pickup"}
               </button>
             )}
+            {/* Manual override: when GPS can't confirm it (poor accuracy, a van
+                moving fast, a stale phone fix), Mark taps this to declare he's
+                aboard. Latches in-van so the screen switches to Dropoff and
+                stops flickering. */}
+            {!inVan && (
+              <button
+                onClick={() => setLatched(true)}
+                className="rounded-2xl px-3 py-2 text-[11px] font-semibold text-violet-200 shadow bg-zinc-900 ring-1 ring-violet-700/60 hover:bg-zinc-800"
+                title="Tell the app you're in the van (use when GPS is unreliable)"
+              >
+                🚐 I&apos;m in the van
+              </button>
+            )}
             {inVan && (
               <button
                 onClick={enterDropoff}
@@ -1362,6 +1375,18 @@ function MapTab({
                     {stopsArr.length}
                   </span>
                 )}
+              </button>
+            )}
+            {/* Clear the manual/auto in-van latch — for when Mark has left the
+                van but GPS hasn't caught up. Hidden while a server signal
+                (onboard status) is what's driving in-van. */}
+            {inVan && vanLatched && (
+              <button
+                onClick={() => setLatched(false)}
+                className="rounded-2xl border border-zinc-800 bg-zinc-950/85 px-2.5 py-1.5 text-[10px] text-zinc-400 hover:text-zinc-200"
+                title="Tell the app you've left the van"
+              >
+                Not in the van
               </button>
             )}
           </>
