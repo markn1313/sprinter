@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { advanceTripStateForBatch } from "@/lib/trip-state-machine";
+import { sampleTripEta } from "@/lib/eta-sampler";
 
 export const dynamic = "force-dynamic";
 
@@ -291,6 +292,23 @@ export async function POST(req: Request) {
     );
   } catch (err) {
     console.warn("[bouncie/webhook] state machine failed:", (err as Error).message);
+  }
+
+  // ETA calibration sampling — record Mapbox's raw prediction from the van's
+  // current spot to the dropoff at the dongle-report cadence (throttled ~30s),
+  // so we can later compare predicted vs actual and calibrate the Sprinter
+  // slowdown factor. Best-effort; never blocks ingestion.
+  try {
+    const latestSample = samples.reduce((a, b) =>
+      a.recorded_at > b.recorded_at ? a : b,
+    );
+    await sampleTripEta({
+      lat: latestSample.lat,
+      lng: latestSample.lng,
+      speed_mph: latestSample.speed_mph,
+    });
+  } catch (err) {
+    console.warn("[bouncie/webhook] eta sample failed:", (err as Error).message);
   }
 
   return NextResponse.json({ ok: true, samples: samples.length });
