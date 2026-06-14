@@ -46,6 +46,11 @@ import {
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
 
+// localStorage key for the in-van latch (see stickyTripId). Holds the id of
+// the trip Mark is currently aboard so the "in the van" state survives a full
+// app reload / reopen, not just GPS drift within a session.
+const IN_VAN_LATCH_KEY = "sprinter_invan_trip";
+
 // Same app shell serves Mark and passengers. Role-aware bits:
 //   - Settings tab on Mark = full controls (link minting, Bouncie status,
 //     driver management). On passenger = just the push-notifications
@@ -712,13 +717,37 @@ function MapTab({
   }, [live, mapTrip]);
   const pickupModeKind: "edit" | "new" = myStop ? "edit" : "new";
 
-  // Sticky in-van detection: once Mark's GPS comes within 10m of the
-  // van for a given trip, lock him in until the trip ends. Without
-  // the latch, GPS jitter (he goes through a tunnel, sits in a metal
-  // parking garage, etc.) could briefly read >10m apart and flip the
-  // UI back to "Pickup" mid-ride. The latch resets when the trip ID
-  // changes.
-  const [stickyTripId, setStickyTripId] = useState<string | null>(null);
+  // Radius (meters) at which Mark's phone is considered "in the van".
+  // Phone GPS and the van's OBD GPS are two independent fixes of the same
+  // physical spot — each carries 10–30m of error, and the van's reported
+  // position lags (Bouncie pings every ~15–30s, and a parked van's last
+  // fix can be stale). 10m was too tight: Mark sat in the van and the app
+  // never flipped out of Pickup mode. 100m comfortably absorbs the combined
+  // GPS error + position lag. Trade-off: standing right next to the parked
+  // van (≤100m) also reads as in-van — acceptable, since the failure mode
+  // we're fixing (in the van, not recognized) is the one that actually bit.
+  const IN_VAN_RADIUS_M = 100;
+
+  // Sticky in-van detection: once Mark's GPS comes within IN_VAN_RADIUS_M of
+  // the van for a given trip, lock him in until the trip ENDS — not until
+  // his GPS drifts back out. Being in the van is a ONE-WAY event for the
+  // duration of the ride: a tunnel, a metal parking garage, or any GPS
+  // glitch that briefly reads him hundreds of meters away must NOT flip the
+  // UI back to "Pickup" mid-ride. The latch persists to localStorage keyed
+  // by trip id so it also survives a full app reload / reopen, and clears
+  // only when the focal trip goes away (he's been dropped off and the trip
+  // completed) — at which point the app correctly knows he's no longer
+  // aboard. The id-match in `inVan` guarantees a stale latch from a prior
+  // trip can never mark a NEW trip as in-van.
+  const [stickyTripId, setStickyTripId] = useState<string | null>(() => {
+    try {
+      return typeof window !== "undefined"
+        ? window.localStorage.getItem(IN_VAN_LATCH_KEY)
+        : null;
+    } catch {
+      return null;
+    }
+  });
   useEffect(() => {
     if (!myGps || !pos || !mapTrip) return;
     if (stickyTripId === mapTrip.id) return; // already latched for this trip
@@ -730,12 +759,25 @@ function MapTab({
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    if (m < 10) setStickyTripId(mapTrip.id);
-  }, [mapTrip, myGps, pos, stickyTripId]);
-  // Reset the latch when the focal trip changes (or disappears).
+    if (m < IN_VAN_RADIUS_M) {
+      setStickyTripId(mapTrip.id);
+      try {
+        window.localStorage.setItem(IN_VAN_LATCH_KEY, mapTrip.id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [mapTrip, myGps, pos, stickyTripId, IN_VAN_RADIUS_M]);
+  // Reset the latch when the focal trip disappears (dropped off → trip
+  // completed → no active trip). This is the ONLY thing that clears in-van.
   useEffect(() => {
     if (mapTrip?.id !== stickyTripId && stickyTripId != null && mapTrip?.id == null) {
       setStickyTripId(null);
+      try {
+        window.localStorage.removeItem(IN_VAN_LATCH_KEY);
+      } catch {
+        /* ignore */
+      }
     }
   }, [mapTrip, stickyTripId]);
 
@@ -743,11 +785,11 @@ function MapTab({
   //   1. Trip status says onboard / at_dropoff       → yes (legacy single-pickup trips)
   //   2. My stop has arrived_at set (server-derived) → yes — survives reload
   //   3. Sticky latch tripped during this trip       → yes — covers the few seconds
-  //                                                    between getting within 10m
-  //                                                    and the server stamping
-  //                                                    arrived_at
-  //   4. Current GPS within 10m of van               → yes — transient signal
-  // Pickup is a ONE-WAY event: once Mark has been within 10m of the van during
+  //                                                    between getting within
+  //                                                    IN_VAN_RADIUS_M and the
+  //                                                    server stamping arrived_at
+  //   4. Current GPS within IN_VAN_RADIUS_M of van    → yes — transient signal
+  // Pickup is a ONE-WAY event: once Mark has been within IN_VAN_RADIUS_M of the van during
   // this trip, every reload should still show Dropoff (server-persisted via
   // arrived_at). Otherwise GPS jitter / a page reload would briefly flip the UI
   // back to "Pickup" mid-ride. Joining passengers far from the van fail all
@@ -765,8 +807,8 @@ function MapTab({
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(myGps.lat)) * Math.cos(toRad(pos.lat)) * Math.sin(dLng / 2) ** 2;
     const m = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return m < 10;
-  }, [live, mapTrip, stickyTripId, myGps, pos, myStop]);
+    return m < IN_VAN_RADIUS_M;
+  }, [live, mapTrip, stickyTripId, myGps, pos, myStop, IN_VAN_RADIUS_M]);
 
   // Enter pickup mode. If I already have a stop on this trip
   // (created_by_token match), start the pin at THAT stop so I can
@@ -955,23 +997,46 @@ function MapTab({
     }
   };
 
-  // Commit a dropoff change — PATCH the live trip's dropoff fields. Mark
-  // is by definition in the van, so a live trip must exist.
+  // Commit a dropoff change. Two paths:
+  //   1. A trip already exists → PATCH its dropoff fields.
+  //   2. No trip yet, but Mark is in the van — he never set a trip, got in,
+  //      and now wants a destination (the real everyday case). Bootstrap a
+  //      trip via quick-pickup whose PICKUP is the van's CURRENT position
+  //      (so the GPS state machine flips it straight to onboard) and whose
+  //      DROPOFF is the destination he just set. Pickup falls back to his
+  //      phone GPS if the van position is momentarily unknown.
   const commitDropoff = async () => {
     if (!editPin || editBusy) return;
     setEditBusy(true);
     try {
+      const dropoffAddress =
+        editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`;
       const trip = live ?? mapTrip;
-      if (!trip) return;
-      await fetch(`/api/trips/${trip.id}`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (trip) {
+        await fetch(`/api/trips/${trip.id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dropoff_lat: editPin.lat,
+            dropoff_lng: editPin.lng,
+            dropoff_address: dropoffAddress,
+          }),
+        });
+      } else {
+        const origin = pos ?? myGps;
+        if (!origin) return;
+        await postJson(token, "/api/quick-pickup", {
+          lat: origin.lat,
+          lng: origin.lng,
           dropoff_lat: editPin.lat,
           dropoff_lng: editPin.lng,
-          dropoff_address: editAddress ?? `${editPin.lat.toFixed(5)}, ${editPin.lng.toFixed(5)}`,
-        }),
-      });
+          dropoff_address: dropoffAddress,
+          scheduled_at: new Date().toISOString(),
+          passenger: name,
+          created_by_token: token,
+          notes: "In the van — destination set",
+        });
+      }
       exitEdit();
       refresh();
     } catch (err) {
