@@ -42,6 +42,7 @@ import {
   Trash2,
   UserPlus,
   Share2,
+  Check,
 } from "lucide-react";
 
 type Tab = "map" | "trip" | "chat" | "help" | "settings";
@@ -2110,6 +2111,39 @@ function TripSheet({
     }
   };
 
+  // Manually mark a stop as picked-up / reached — for when the van served a
+  // stop the GPS proximity check missed (e.g. a street-name-only pickup that
+  // geocoded ~1km from the real spot, so the van never came within the arrival
+  // radius). Stamps arrived_at so the stop drops off the list and the trip
+  // advances, exactly as an automatic arrival would. optimize:false so adding
+  // the flag can't reorder the remaining stops.
+  const markReached = async (id: string) => {
+    if (reorderBusy) return;
+    if (id.startsWith("__")) return; // the dropoff isn't in stops[]
+    setReorderErr(null);
+    setReorderBusy(true);
+    try {
+      const next = stops.map((s) =>
+        s.id === id ? { ...s, arrived_at: new Date().toISOString() } : s,
+      );
+      const res = await fetch(`/api/trips/${trip.id}/stops`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stops: next, optimize: false }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`mark reached ${res.status}: ${body.slice(0, 200)}`);
+      }
+      refresh();
+    } catch (err) {
+      console.warn("[MarkApp] markReached failed", err);
+      setReorderErr((err as Error).message);
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
   // Promote a destination to be the LAST one (the trip's final
   // dropoff). Move it to the end of the destinations array; whatever
   // WAS the dropoff slides into its old position.
@@ -2217,6 +2251,17 @@ function TripSheet({
                         <UserPlus size={18} />
                       </button>
                     </>
+                  )}
+                  {!d.id.startsWith("__") && (
+                    <button
+                      onClick={() => markReached(d.id)}
+                      disabled={reorderBusy}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-900/60 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-900/40 disabled:opacity-25"
+                      aria-label="Mark as picked up / reached"
+                      title="Mark as picked up / reached"
+                    >
+                      <Check size={18} />
+                    </button>
                   )}
                   {!isLast && !d.id.startsWith("__") && (
                     <button
