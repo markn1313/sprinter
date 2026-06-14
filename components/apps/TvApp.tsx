@@ -98,38 +98,16 @@ export default function TvApp({ token }: { token: string }) {
 
   return (
     <div className="fixed inset-0 flex bg-zinc-950 text-zinc-100 overflow-hidden">
-      {/* Split-screen map. LEFT = full remaining route fit-to-bounds
-          (navigation-night vector) so Mark sees the whole path to the
-          destination — van + every upcoming waypoint + the polyline.
-          RIGHT = satellite close-up centered on the current van location
-          (follow-cam, top-down, high zoom) for street-level detail of
-          where the van is right now. Both stay north-up
-          (followCamRotate={false}) so the van icon's heading is
-          meaningful — without that the right side was locking the icon
-          to point north regardless of travel direction. */}
+      {/* Split-screen map. LEFT = satellite close-up centered on the current
+          van location (follow-cam, top-down, high zoom) for street-level
+          detail of the next stop coming up. RIGHT = full remaining route
+          fit-to-bounds (navigation-night vector) so Mark sees the whole path
+          to the final destination — van + every upcoming waypoint + the
+          polyline. Both stay north-up (followCamRotate={false}) so the van
+          icon's heading is meaningful — without that the close-up was locking
+          the icon to point north regardless of travel direction. */}
       <div className="absolute inset-0 flex">
-        <ClientMap
-          position={pos}
-          pins={pins}
-          polyline={polyline}
-          congestion={congestion}
-          mapStyle="mapbox://styles/mapbox/navigation-night-v1"
-          className="h-full flex-1 border-r border-zinc-700"
-          fitBounds={true}
-          fitPadding={{
-            top: 110,
-            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
-            left: 50,
-            right: 50,
-          }}
-          fitMaxZoom={17}
-          routeLineWidth={8}
-          routeGlowWidth={20}
-          vanIconSize={36}
-          pinScale={2.8}
-          followCam={false}
-        />
-        <div className="relative flex-1">
+        <div className="relative flex-1 border-r border-zinc-700">
           <ClientMap
             position={pos}
             pins={pins}
@@ -148,6 +126,27 @@ export default function TvApp({ token }: { token: string }) {
             followCamRotate={false}
           />
         </div>
+        <ClientMap
+          position={pos}
+          pins={pins}
+          polyline={polyline}
+          congestion={congestion}
+          mapStyle="mapbox://styles/mapbox/navigation-night-v1"
+          className="h-full flex-1"
+          fitBounds={true}
+          fitPadding={{
+            top: 110,
+            bottom: eta && (eta.to_next || eta.to_final) ? 130 : 60,
+            left: 50,
+            right: 50,
+          }}
+          fitMaxZoom={17}
+          routeLineWidth={8}
+          routeGlowWidth={20}
+          vanIconSize={36}
+          pinScale={2.8}
+          followCam={false}
+        />
       </div>
 
       {/* Branding strip — top-left */}
@@ -185,11 +184,11 @@ export default function TvApp({ token }: { token: string }) {
       )}
 
       {/* ETA cards — bottom. Each card sits under the map it describes:
-          LEFT = final destination (the left map is the full route, which always
-          ends at the final destination); RIGHT = next stop (the right map is the
-          zoomed-in close-up of what's coming up next). When the next stop IS the
-          final destination (single-leg trip), the right card collapses and the
-          final-destination card sits on the left. */}
+          LEFT = next stop (the left map is the zoomed-in close-up of what's
+          coming up next); RIGHT = final destination (the right map is the full
+          route, which always ends at the final destination). When the next stop
+          IS the final destination (single-leg trip), the left card collapses and
+          the final-destination card sits on the right. */}
       {(() => {
         if (!eta || (!eta.to_next && !eta.to_final)) return null;
         // Hide the next-stop card when it's not actionable info:
@@ -210,24 +209,13 @@ export default function TvApp({ token }: { token: string }) {
             eta.to_next.distance_miles < 0.3
           );
         // Each card is half the screen wide and sits under its matching map.
-        // LEFT = Final destination (under the full-route map). RIGHT = Next stop
-        // (under the zoomed-in close-up). When there's no meaningful Next Stop,
-        // the right slot is empty and Final Destination sits alone on the left.
+        // LEFT = Next stop (under the zoomed-in close-up). RIGHT = Final
+        // destination (under the full-route map). When there's no meaningful
+        // Next Stop, the left slot is empty and Final Destination sits alone on
+        // the right.
         const showNext = !sameTarget && !!eta.to_next;
         return (
           <div className="absolute bottom-0 left-0 right-0 z-30 grid grid-cols-2 gap-4 px-6 pb-3">
-            {eta.to_final ? (
-              <EtaCard
-                kind="dropoff"
-                label={stripZip(eta.to_final.label)}
-                minutes={eta.to_final.eta_minutes}
-                miles={eta.to_final.distance_miles}
-                titleOverride="Final destination"
-                primary={!showNext}
-              />
-            ) : (
-              <div aria-hidden />
-            )}
             {showNext ? (
               <EtaCard
                 kind="stop"
@@ -236,6 +224,18 @@ export default function TvApp({ token }: { token: string }) {
                 miles={eta.to_next!.distance_miles}
                 primary
                 titleOverride="Next stop"
+              />
+            ) : (
+              <div aria-hidden />
+            )}
+            {eta.to_final ? (
+              <EtaCard
+                kind="dropoff"
+                label={stripZip(eta.to_final.label)}
+                minutes={eta.to_final.eta_minutes}
+                miles={eta.to_final.distance_miles}
+                titleOverride="Final destination"
+                primary={!showNext}
               />
             ) : (
               <div aria-hidden />
