@@ -184,10 +184,12 @@ export default function TvApp({ token }: { token: string }) {
         </div>
       )}
 
-      {/* ETA cards — bottom. Left = next stop, right = final destination.
-          When the next stop IS the final destination (single-leg trip), the
-          next-stop card collapses and the final-destination card spans the
-          full width. */}
+      {/* ETA cards — bottom. Each card sits under the map it describes:
+          LEFT = final destination (the left map is the full route, which always
+          ends at the final destination); RIGHT = next stop (the right map is the
+          zoomed-in close-up of what's coming up next). When the next stop IS the
+          final destination (single-leg trip), the right card collapses and the
+          final-destination card sits on the left. */}
       {(() => {
         if (!eta || (!eta.to_next && !eta.to_final)) return null;
         // Hide the next-stop card when it's not actionable info:
@@ -207,13 +209,25 @@ export default function TvApp({ token }: { token: string }) {
             /current\s+location|my\s+location/i.test(eta.to_next.label) ||
             eta.to_next.distance_miles < 0.3
           );
-        // Each card is half the screen wide. When only Final Destination
-        // remains, the left slot is empty so the card sits on the right
-        // half. When there's a meaningful Next Stop, it goes in the left
-        // slot with Final on the right.
+        // Each card is half the screen wide and sits under its matching map.
+        // LEFT = Final destination (under the full-route map). RIGHT = Next stop
+        // (under the zoomed-in close-up). When there's no meaningful Next Stop,
+        // the right slot is empty and Final Destination sits alone on the left.
         const showNext = !sameTarget && !!eta.to_next;
         return (
           <div className="absolute bottom-0 left-0 right-0 z-30 grid grid-cols-2 gap-4 px-6 pb-3">
+            {eta.to_final ? (
+              <EtaCard
+                kind="dropoff"
+                label={stripZip(eta.to_final.label)}
+                minutes={eta.to_final.eta_minutes}
+                miles={eta.to_final.distance_miles}
+                titleOverride="Final destination"
+                primary={!showNext}
+              />
+            ) : (
+              <div aria-hidden />
+            )}
             {showNext ? (
               <EtaCard
                 kind="stop"
@@ -225,16 +239,6 @@ export default function TvApp({ token }: { token: string }) {
               />
             ) : (
               <div aria-hidden />
-            )}
-            {eta.to_final && (
-              <EtaCard
-                kind="dropoff"
-                label={stripZip(eta.to_final.label)}
-                minutes={eta.to_final.eta_minutes}
-                miles={eta.to_final.distance_miles}
-                titleOverride="Final destination"
-                primary={!showNext}
-              />
             )}
           </div>
         );
