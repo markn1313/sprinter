@@ -722,11 +722,10 @@ function MapTab({
   // physical spot — each carries 10–30m of error, and the van's reported
   // position lags (Bouncie pings every ~15–30s, and a parked van's last
   // fix can be stale). 10m was too tight: Mark sat in the van and the app
-  // never flipped out of Pickup mode. 100m comfortably absorbs the combined
-  // GPS error + position lag. Trade-off: standing right next to the parked
-  // van (≤100m) also reads as in-van — acceptable, since the failure mode
-  // we're fixing (in the van, not recognized) is the one that actually bit.
-  const IN_VAN_RADIUS_M = 100;
+  // never flipped out of Pickup mode. 50m absorbs the combined GPS error +
+  // position lag while staying tight enough that standing well away from the
+  // parked van doesn't read as in-van.
+  const IN_VAN_RADIUS_M = 50;
 
   // Sticky in-van detection: once Mark's GPS comes within IN_VAN_RADIUS_M of
   // the van for a given trip, lock him in until the trip ENDS — not until
