@@ -160,6 +160,33 @@ export async function advanceTripStateForBatch(
       });
     }
   }
+  // SEQUENCE BACKSTOP — if any stop is now marked arrived, every EARLIER stop
+  // in the (optimizer-ordered) visit list must have been passed too: the van
+  // can't reach a later waypoint without driving past the earlier ones. This
+  // catches stops the proximity check missed because the pin was geocoded far
+  // from the real spot — e.g. a street-name-only pickup ~1km off, where the
+  // van's closest approach to the pin was hundreds of meters. Without it a
+  // missed early stop lingers on the map forever.
+  let lastArrivedIdx = -1;
+  for (let i = 0; i < stopsArr.length; i++) {
+    if (stopsArr[i].arrived_at) lastArrivedIdx = i;
+  }
+  for (let i = 0; i < lastArrivedIdx; i++) {
+    const s = stopsArr[i];
+    if (!s.arrived_at && s.lat != null && s.lng != null) {
+      stopsArr[i] = { ...s, arrived_at: now };
+      stopsDirty = true;
+      logTripEvent({
+        trip_id: t.id,
+        kind: "auto_at_stop",
+        payload: {
+          stop_id: s.id,
+          address: s.address,
+          reason: "sequence backstop (a later waypoint was reached)",
+        },
+      });
+    }
+  }
   if (stopsDirty) {
     await sb.from("trips").update({ stops: stopsArr }).eq("id", t.id);
   }
@@ -240,12 +267,19 @@ export async function advanceTripStateForBatch(
       if (d < minDist) minDist = d;
     }
     if (minDist < ARRIVE_M) {
+      // Reaching the final destination means every intermediate stop was
+      // passed — mark any still-pending ones arrived so closeout/history is
+      // consistent even when their pins were geocoded off the real spot.
+      const finalStops = stopsArr.map((s) =>
+        s.arrived_at || s.lat == null || s.lng == null ? s : { ...s, arrived_at: now },
+      );
       await sb
         .from("trips")
         .update({
           status: "complete",
           arrived_at_dropoff_at: now,
           completed_at: now,
+          stops: finalStops,
         })
         .eq("id", t.id)
         .in("status", ["onboard", "at_dropoff"]);
