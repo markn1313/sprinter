@@ -3,20 +3,21 @@
 import { useState } from "react";
 
 export default function LoginForm() {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password || loading) return;
+    if (!username || !password || loading) return;
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -40,8 +41,16 @@ export default function LoginForm() {
 
         <form onSubmit={submit} className="mt-6 space-y-3">
           <input
-            type="password"
+            type="text"
             autoFocus
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-center text-zinc-100 outline-none focus:border-zinc-500"
+          />
+          <input
+            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -51,7 +60,7 @@ export default function LoginForm() {
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button
             type="submit"
-            disabled={loading || !password}
+            disabled={loading || !username || !password}
             className="w-full rounded-lg bg-zinc-100 px-4 py-3 font-medium text-zinc-900 disabled:opacity-50"
           >
             {loading ? "Signing in…" : "Sign in"}
