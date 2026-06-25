@@ -1,16 +1,17 @@
-export default function Home() {
-  return (
-    <main className="flex min-h-screen items-center justify-center p-8">
-      <div className="max-w-md text-center">
-        <div className="mb-4 text-5xl">🚐</div>
-        <h1 className="text-2xl font-semibold text-zinc-100">Sprinter Ops</h1>
-        <p className="mt-3 text-sm text-zinc-400">
-          Live operational dashboard for the Sprinter. Access is by personal link only.
-        </p>
-        <p className="mt-6 text-xs text-zinc-600">
-          If you arrived here without a link, ask Mark.
-        </p>
-      </div>
-    </main>
-  );
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { requireMark } from "@/lib/auth";
+import { SESSION_COOKIE } from "@/app/api/login/route";
+import LoginForm from "@/components/LoginForm";
+
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  // Already signed in? Bounce straight to the dashboard.
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (token) {
+    const ctx = await requireMark(token);
+    if (ctx) redirect(`/m/${ctx.token}`);
+  }
+  return <LoginForm />;
 }
