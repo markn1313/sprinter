@@ -21,21 +21,27 @@ function safeEqual(a: string, b: string): boolean {
 // The token is the real credential the dashboard checks (see lib/auth), so the
 // cookie is httpOnly to keep it out of client-side JS.
 export async function POST(req: Request) {
-  const expected = process.env.SPRINTER_PASSWORD;
-  if (!expected) {
+  const expectedPassword = process.env.SPRINTER_PASSWORD;
+  const expectedUsername = process.env.SPRINTER_USERNAME || "mark";
+  if (!expectedPassword) {
     return NextResponse.json({ error: "Login is not configured yet." }, { status: 500 });
   }
 
+  let username = "";
   let password = "";
   try {
     const body = await req.json();
+    username = typeof body?.username === "string" ? body.username : "";
     password = typeof body?.password === "string" ? body.password : "";
   } catch {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  if (!password || !safeEqual(password, expected)) {
-    return NextResponse.json({ error: "Incorrect password" }, { status: 401 });
+  // Username compare is case-insensitive; password is exact, constant-time.
+  const okUser = safeEqual(username.trim().toLowerCase(), expectedUsername.toLowerCase());
+  const okPass = !!password && safeEqual(password, expectedPassword);
+  if (!okUser || !okPass) {
+    return NextResponse.json({ error: "Incorrect username or password" }, { status: 401 });
   }
 
   // Use the newest active Mark link as the session token, so this keeps working
